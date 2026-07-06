@@ -50,9 +50,21 @@ Hook 接线(dogfood 用;不随 v1 安装器分发):把 PreToolUse/Stop 指到
 
 协作式 fail-open。硬担保只有一条且刻意收窄:**环境健康、状态文件未被直接
 改写时,红判据不可能把任务收成 done**——因为写 done 的两条路(stop 闸门、
-`done` 动词)都现场跑判据,没有第三条路。判据输入文件在绿判时比对指纹,
-变更记入结局账(`criterion_input_drift`),警告不拦截。刻意规避的 agent
-可以改 `.taskloop/` 状态,这超出本系统能力,不承诺。
+`done` 动词)都现场跑判据,没有第三条路。两组独立 fresh-context 审计尽力
+攻击后确认此不变量成立(报告见本会话记录)。
+
+围绕不变量的**缓解**经审计加固:判据输入文件在绿判时比对指纹,glob 引用的
+检查文件也会被展开指纹(不再能靠 `check1.cjs`→`check*.cjs` 一字之差绕过),
+无法枚举的多层 glob 标记 `criterion_input_coverage: partial` 并诚实记入
+结局账;`done` 红判计入轮次,flaky 判据不能靠免费重试钓假绿;命令级安全门
+(远程执行 `curl|sh`、网络、install、secret dump、destructive)在 write-shaped
+短路**之前**对所有命令执行,读与验证命令永不受影响。
+
+**明确不防**(威胁模型让步,非缺陷):刻意规避的 agent 直接改 `.taskloop/`
+状态;规避性判据(如 `realcheck || test -f skip.txt` 靠新建文件翻绿——done
+时判据确实 exit 0,属判据质量问题,由 alignment 与判据幂等性纪律承接);
+shell 变量间接绕过(`x=push; git $x`)。安全门是抬高成本的协作式 guardrail,
+不是 sandbox。
 
 ## 测试
 

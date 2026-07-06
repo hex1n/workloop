@@ -90,6 +90,7 @@ function appendLedger(repo, task, extra = {}) {
       writes: task.evidence?.writes ?? 0,
       episodes: Array.isArray(task.episodes) ? task.episodes.length : 0,
       criterion_input_drift: Boolean(task.evidence?.criterion_input_drift),
+      criterion_input_coverage: task.criterion_input_coverage ?? "full",
       ...extra,
     };
     fs.appendFileSync(path.join(dir, LEDGER_FILE), JSON.stringify(row) + "\n", "utf8");
@@ -151,34 +152,70 @@ function repoRelative(repo, raw) {
   return s;
 }
 
+// Expand one criterion token to the repo files it names. A literal path
+// resolves to itself; a single-directory glob (docs/check*.cjs) is read from
+// its directory. A multi-level glob (docs/**/c.cjs) or a glob in the directory
+// part cannot be enumerated cheaply and returns partial=true so the caller can
+// record honest coverage instead of a false all-clear.
+function expandCriterionToken(token, root) {
+  const rel = token.replace(/\\/g, "/");
+  if (!/[*?]/.test(rel)) {
+    const abs = path.resolve(root, rel);
+    if (abs !== root && abs.startsWith(root + path.sep)) {
+      try {
+        if (fs.statSync(abs).isFile()) return { files: [abs.slice(root.length + 1).replace(/\\/g, "/")], partial: false };
+      } catch {
+        /* not a file: nothing to fingerprint */
+      }
+    }
+    return { files: [], partial: false };
+  }
+  const slash = rel.lastIndexOf("/");
+  const dir = slash === -1 ? "" : rel.slice(0, slash);
+  const base = slash === -1 ? rel : rel.slice(slash + 1);
+  if (/[*?]/.test(dir)) return { files: [], partial: true }; // glob in the directory part: not enumerable here
+  const absDir = path.resolve(root, dir);
+  if (absDir !== root && !absDir.startsWith(root + path.sep)) return { files: [], partial: true };
+  let entries;
+  try {
+    entries = fs.readdirSync(absDir, { withFileTypes: true });
+  } catch {
+    return { files: [], partial: true };
+  }
+  const re = globToRegExp(base);
+  const files = [];
+  for (const ent of entries) {
+    if (ent.isFile() && re.test(ent.name)) files.push((dir ? dir + "/" : "") + ent.name);
+  }
+  return { files, partial: false };
+}
+
 // Path-shaped tokens in the criterion that resolve to repo files: the check's
 // own inputs, fingerprinted so a check weakened mid-task is visible at green.
+// Glob-referenced checks are expanded (not skipped) so the drift flag cannot be
+// dodged by a one-character rename; anything that cannot be enumerated marks
+// the coverage partial rather than reading as a false all-clear.
 function criterionInputs(criterion, repo) {
   const root = path.resolve(String(repo));
   const inputs = [];
   const seen = new Set();
+  let partial = false;
   for (const rawToken of String(criterion ?? "").split(/[\s"'();|&<>]+/)) {
     const token = rawToken.replace(/^--?[\w-]+=/, "");
-    if (!token || token.startsWith("-") || !/[\\/.]/.test(token) || /[*?]/.test(token)) continue;
-    const abs = path.resolve(root, token.replace(/\\/g, "/"));
-    if (abs === root || !abs.startsWith(root + path.sep)) continue;
-    let stat;
-    try {
-      stat = fs.statSync(abs);
-    } catch {
-      continue;
-    }
-    if (!stat.isFile()) continue;
-    const rel = abs.slice(root.length + 1).replace(/\\/g, "/");
-    if (seen.has(rel)) continue;
-    seen.add(rel);
-    try {
-      inputs.push({ path: rel, hash: fnv1aHex(fs.readFileSync(abs, "latin1")) });
-    } catch {
-      /* unreadable input: skip */
+    if (!token || token.startsWith("-") || !/[\\/.]/.test(token)) continue;
+    const { files, partial: tokenPartial } = expandCriterionToken(token, root);
+    if (tokenPartial) partial = true;
+    for (const rel of files) {
+      if (seen.has(rel)) continue;
+      seen.add(rel);
+      try {
+        inputs.push({ path: rel, hash: fnv1aHex(fs.readFileSync(path.resolve(root, rel), "latin1")) });
+      } catch {
+        /* unreadable input: skip */
+      }
     }
   }
-  return inputs;
+  return { inputs, partial };
 }
 
 function criterionInputDrift(task, repo) {
@@ -249,6 +286,38 @@ function gitOps(mapping) {
     while ((m = GIT_WRITE_RE.exec(command)) !== null) ops.add(m[1].toLowerCase());
   }
   return [...ops];
+}
+
+// Command-level safety, evaluated on EVERY command-bearing call before the
+// write-shaped short-circuit: remote-exec, network, install, secret-dump, and
+// destructive commands are dangerous whether or not they touch a tracked file.
+// Conservative by design (a shell can always obscure intent via variables) and
+// collaborative — it raises the cost of the obvious dangerous forms, it is not
+// a sandbox. Reads and verification runs match none of these.
+function commandSafetyFailure(task, command) {
+  const env = task.envelope;
+  if (/\b(curl|wget|fetch|iwr|Invoke-WebRequest)\b[^|]*\|\s*(sh|bash|zsh|python\d?|node)\b/i.test(command)) {
+    return "remote-exec (download | shell) is denied; it needs explicit user intent and envelope.network_allowed";
+  }
+  if (!env.network_allowed && /\b(curl|wget|Invoke-WebRequest)\b/i.test(command)) {
+    return "network command requires envelope.network_allowed";
+  }
+  if (!env.install_scripts_allowed && (/\b(npm|pnpm|yarn|bun)\s+(i|install|add)\b/i.test(command) || /\bpip3?\s+install\b/i.test(command))) {
+    return "package install requires envelope.install_scripts_allowed";
+  }
+  if (/(^|[\s;&|(])(printenv|env)(\s*$|\s*\|)/.test(command) || /\b(cat|less|more|head|tail)\b[^|;&]*(\.env\b|id_rsa|id_ed25519|\.pem\b|credentials)/i.test(command)) {
+    return "environment/secret dump is denied by default";
+  }
+  if (
+    !env.destructive_allowed &&
+    (/\brm\s+(-\S*[rf]|--(recursive|force|dir))/i.test(command) ||
+      /\bfind\b[^|]*\s-delete\b/i.test(command) ||
+      /\bgit\s+clean\b/i.test(command) ||
+      /\b(DROP\s+TABLE|TRUNCATE|DELETE\s+FROM)\b/i.test(command))
+  ) {
+    return "destructive command requires envelope.destructive_allowed (user-approved)";
+  }
+  return null;
 }
 
 function looksLikeWrite(tool, mapping) {
@@ -386,6 +455,7 @@ const CLI_OPTIONS = {
     "criterion-timeout-seconds": { type: "string", default: String(CRITERION_TIMEOUT_SECONDS) },
     "destructive-allowed": { type: "boolean", default: false },
     "network-allowed": { type: "boolean", default: false },
+    "install-scripts-allowed": { type: "boolean", default: false },
     "keep-green": { type: "boolean", default: false },
     reason: { type: "string" },
     force: { type: "boolean", default: false },
@@ -485,7 +555,10 @@ function cmdOpen(values) {
     goal: String(values.goal).trim(),
     criterion,
     criterion_hash: fnv1aHex(criterion),
-    criterion_inputs: criterionInputs(criterion, repo),
+    ...(() => {
+      const { inputs, partial } = criterionInputs(criterion, repo);
+      return { criterion_inputs: inputs, criterion_input_coverage: partial ? "partial" : "full" };
+    })(),
     criterion_timeout_seconds: timeoutSec,
     alignment: String(values.alignment).trim(),
     progress: String(values.progress ?? "").trim() || null,
@@ -499,6 +572,7 @@ function cmdOpen(values) {
       },
       destructive_allowed: Boolean(values["destructive-allowed"]),
       network_allowed: Boolean(values["network-allowed"]),
+      install_scripts_allowed: Boolean(values["install-scripts-allowed"]),
     },
     budget: {
       rounds: Number.parseInt(String(values.rounds), 10) || DEFAULT_ROUNDS,
@@ -548,12 +622,19 @@ function cmdDone(values) {
   if (!task) return 1;
   const verdict = runCriterion(task.criterion, repo, task.criterion_timeout_seconds);
   if (verdict.verdict === "fail") {
+    // Metered like a blocked stop: a refused done burns a round, so retrying
+    // `done` against a flaky criterion cannot fish for a false green for free.
+    task.spent.rounds += 1;
+    saveTask(repo, task);
+    const overBudget = task.spent.rounds >= task.budget.rounds;
     const tail = outputTail(verdict.output);
     process.stderr.write(
-      `done refused: the criterion is red: ${task.criterion}\n` +
+      `done refused: the criterion is red (round ${task.spent.rounds}/${task.budget.rounds}): ${task.criterion}\n` +
         (tail ? `--- criterion output (tail) ---\n${tail}\n` : "") +
-        "there is no claim-based success; fix the work, amend the criterion with a reason, " +
-        "or suspend/abandon honestly.\n",
+        (overBudget
+          ? "round budget spent — suspend --judgment or amend --rounds --reason; do not retry done.\n"
+          : "there is no claim-based success; fix the work, amend the criterion with a reason, " +
+            "or suspend/abandon honestly.\n"),
     );
     return 1;
   }
@@ -649,7 +730,9 @@ function cmdAmend(values) {
     amendment.criterion = { from_hash: task.criterion_hash, to: next };
     task.criterion = next;
     task.criterion_hash = fnv1aHex(next);
-    task.criterion_inputs = criterionInputs(next, repo);
+    const refp = criterionInputs(next, repo);
+    task.criterion_inputs = refp.inputs;
+    task.criterion_input_coverage = refp.partial ? "partial" : "full";
     task.stall = { signature: null, count: 0, history: [] };
   }
   if (addFiles.length) {
@@ -728,23 +811,24 @@ function hookPretool(payload, repo, task) {
     );
   }
 
+  // Safety runs on every command-bearing call, ahead of the write-shaped
+  // short-circuit: a pipe-to-shell or an env dump is dangerous even though it
+  // touches no tracked file. This is the fix for the audit's leak where
+  // `curl | sh` slipped past because it was not "write-shaped".
+  for (const command of commandValues(mapping)) {
+    const failure = commandSafetyFailure(task, command);
+    if (failure) {
+      saveTask(repo, task);
+      return deny(`taskloop: ${failure}`);
+    }
+  }
+
   const writeShaped = ops.length > 0 || looksLikeWrite(tool, mapping);
   if (!writeShaped) {
     // Reads and verification commands are never blocked and never counted:
     // an over-budget task can always still verify, suspend, or close.
     saveTask(repo, task);
     return 0;
-  }
-
-  for (const command of commandValues(mapping)) {
-    if (!task.envelope.destructive_allowed && /\b(rm\s+-rf?|DROP\s+TABLE|TRUNCATE\b|DELETE\s+FROM|git\s+clean)\b/i.test(command)) {
-      saveTask(repo, task);
-      return deny("taskloop: destructive command requires envelope.destructive_allowed (user-approved)");
-    }
-    if (!task.envelope.network_allowed && /\b(curl|wget|Invoke-WebRequest)\b/i.test(command)) {
-      saveTask(repo, task);
-      return deny("taskloop: network command requires envelope.network_allowed");
-    }
   }
 
   const targets = writeFileTargets(tool, mapping);
