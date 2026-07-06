@@ -5,8 +5,8 @@
 // wired as the PreToolUse/Stop hooks by bootstrap/install.mjs.
 //
 // Object model: the TASK is the durable unit (goal, criterion, alignment,
-// envelope, budgets, evidence); EPISODES come and go underneath it. Budgets
-// live on the task and are never refilled by starting a new episode.
+// envelope, budgets, evidence, reviews); EPISODES come and go underneath it.
+// Budgets live on the task and are never refilled by starting a new episode.
 // Success has exactly one path: a fresh green criterion. Suspension is a
 // normal intermediate state; only a human closes a task any other way
 // (abandon --reason, not-needed --evidence).
@@ -602,6 +602,7 @@ function cmdOpen(values) {
     snapshot: { judgment: null },
     episodes: [],
     amendments: [],
+    reviews: [],
   };
   saveTask(repo, task);
   process.stdout.write(`opened ${taskPath(repo)} (budget: ${task.budget.rounds} rounds)\n`);
@@ -734,6 +735,10 @@ function cmdNotNeeded(values) {
 // independence level. The finding itself is fed back into the loop body (the
 // agent reads it and fixes or rebuts) — this only records the provenance so the
 // ledger shows how independently a task was checked before it closed.
+// Caveat: this is the strongest level EVER recorded, not tied to the closed
+// state — a high-level review of an early state followed by more edits still
+// stamps that level, so it can slightly overstate the independence of what
+// actually closed. A coarse meta-loop correlation signal, not a proof.
 function strongestReviewLevel(task) {
   const reviews = Array.isArray(task.reviews) ? task.reviews : [];
   let best = -1;
