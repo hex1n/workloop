@@ -93,6 +93,7 @@ function appendLedger(repo, task, extra = {}) {
     const row = {
       ts: utcNow(),
       repo: String(repo),
+      id: task.id ?? null,
       state: task.state,
       goal: task.goal ?? null,
       criterion: task.criterion ?? null,
@@ -635,6 +636,9 @@ function cmdOpen(values) {
 
   const task = {
     version: 1,
+    // The id joins this task's open row to its terminal row on the ledger;
+    // an open that never reaches a close is the trace of a vanished task.
+    id: fnv1aHex(`${utcNow()}|${values.goal}|${criterion}|${process.hrtime.bigint()}`),
     state: "open",
     goal: String(values.goal).trim(),
     criterion,
@@ -675,6 +679,7 @@ function cmdOpen(values) {
     attempts: [],
   };
   saveTask(repo, task);
+  appendLedger(repo, task);
   process.stdout.write(`opened ${taskPath(repo)} (budget: ${task.budget.rounds} rounds)\n`);
   return 0;
 }
