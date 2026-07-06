@@ -35,6 +35,32 @@
 - **无 partitioned 模式**:并行 = 每 worktree 一个 `.taskloop/` + 人做集成
   (设计的"不做"清单)。
 
+## 第一个循环(on-ramp)
+
+三问选任务:**你是不是瓶颈**(这件事总卡在等你)?**检查写得出来吗**
+(一条命令,今天红、做完绿)?**目标说得清吗**(一行 goal,不含实现)?
+三个都是,就值得开循环;检查写不出来的,先用 `judgment-loop` 的评分卡,
+或者直接做,别发明橡皮图章判据。
+
+```bash
+# 1. 先让红存在:写一个现在会失败的检查(测试、grep、脚本皆可)
+node --test tests/my-feature.test.mjs        # 现在:红
+
+# 2. 开任务(open 会跑一遍判据,拒绝绿出生)
+node ~/bin/taskloop.mjs open --repo . \
+  --goal "……一行说清结果" \
+  --criterion "node --test tests/my-feature.test.mjs" \
+  --alignment "green ⇒ goal because 测试覆盖了 X;not covered: Y" \
+  --files "src/**,tests/**"
+
+# 3. 干活。写出圈会被拒;每次 Stop 判据自动跑,绿即收 done
+# 4. 读收口报告:结局账 ~/.taskloop/outcomes.jsonl 多了一行
+```
+
+跑完看两处:判据红了几轮才绿(`rounds`),死路清单里有没有你重复撞的墙
+(`attempts`)。哪里卡,哪里就是下一个要改进的对象——这就是 meta-loop 的
+入口。
+
 ## 用法
 
 ```bash
