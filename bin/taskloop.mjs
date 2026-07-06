@@ -848,10 +848,14 @@ function cmdVerify(values) {
 
 function repoFromPayload(payload) {
   const cwd = String(payload.cwd ?? process.cwd());
-  // Walk up looking for an existing .taskloop/ so hooks work from subdirs.
+  // Walk up looking for an existing .taskloop/ so hooks work from subdirs,
+  // but never past a git boundary: a nested repo (vendored checkout, test
+  // fixture, worktree) is its own project and must not be captured by an
+  // enclosing directory's task.
   let dir = path.resolve(cwd);
   for (;;) {
     if (fs.existsSync(path.join(dir, STATE_DIR, TASK_FILE))) return dir;
+    if (fs.existsSync(path.join(dir, ".git"))) return dir;
     const parent = path.dirname(dir);
     if (parent === dir) return path.resolve(cwd);
     dir = parent;
