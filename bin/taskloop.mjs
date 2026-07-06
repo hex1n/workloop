@@ -407,6 +407,7 @@ const CLI_OPTIONS = {
   done: { repo: { type: "string" } },
   abandon: { repo: { type: "string" }, reason: { type: "string" } },
   "not-needed": { repo: { type: "string" }, evidence: { type: "string" } },
+  hooks: { repo: { type: "string" } },
 };
 
 function repoFromArg(value) {
@@ -873,6 +874,56 @@ function hookStop(payload, repo, task) {
   );
 }
 
+// Paste-ready hook wiring for dogfooding. Safe alongside the v1 agent-loop
+// hooks: each supervisor is inert in a repo without its own state dir
+// (.taskloop/ here, .agent-loop/ there), so both can stay registered.
+function cmdHooks() {
+  const script = path.resolve(process.argv[1] ?? "taskloop.mjs");
+  const command = `node "${script}"`;
+  process.stdout.write(
+    "# taskloop hook wiring — coexists with the agent-loop v1 hooks (each is\n" +
+      "# inert without its own state dir; no repo triggers both by accident).\n\n" +
+      '# Claude Code — merge into the "hooks" object of ~/.claude/settings.json:\n' +
+      JSON.stringify(
+        {
+          hooks: {
+            PreToolUse: [
+              {
+                matcher: "Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*",
+                hooks: [{ type: "command", command, timeout: 20 }],
+              },
+            ],
+            Stop: [{ matcher: "*", hooks: [{ type: "command", command, timeout: 300 }] }],
+          },
+        },
+        null,
+        2,
+      ) +
+      "\n\n# Codex — append to ~/.codex/config.toml:\n" +
+      [
+        "[[hooks.PreToolUse]]",
+        'matcher = ".*"',
+        "",
+        "[[hooks.PreToolUse.hooks]]",
+        'type = "command"',
+        `command = ${JSON.stringify(command)}`,
+        "timeout = 20",
+        'statusMessage = "Checking taskloop envelope"',
+        "",
+        "[[hooks.Stop]]",
+        'matcher = ".*"',
+        "",
+        "[[hooks.Stop.hooks]]",
+        'type = "command"',
+        `command = ${JSON.stringify(command)}`,
+        "timeout = 300",
+        'statusMessage = "Checking taskloop stop gate"',
+      ].join("\n") +
+      "\n",
+  );
+  return 0;
+}
+
 // ---------- main ----------
 
 function cmdHelp() {
@@ -890,6 +941,7 @@ function cmdHelp() {
       '  abandon  --reason "<why>"\n' +
       '  not-needed --evidence "<read-only check>"\n' +
       '  amend    --criterion/--files/--rounds --reason "<why>"\n\n' +
+      "  hooks                      # print paste-ready Claude/Codex hook wiring\n\n" +
       "hooks: pipe the runtime's PreToolUse/Stop JSON payload on stdin.\n" +
       "state: .taskloop/task.json (private, gitignore it); ledger: ~/.taskloop/outcomes.jsonl\n",
   );
@@ -906,6 +958,7 @@ function main() {
     } catch (err) {
       return cliError(err.message);
     }
+    if (argv[0] === "hooks") return cmdHooks();
     if (argv[0] === "open") return cmdOpen(values);
     if (argv[0] === "status") return cmdStatus(values);
     if (argv[0] === "verify") return cmdVerify(values);
