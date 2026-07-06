@@ -49,6 +49,25 @@ Hook 接线由 `bootstrap/install.mjs` 自动注册;手动接线跑 `taskloop.mj
 重复一份——它们就是分发的 skills:`converge`、`workloop`、`judgment-loop`、
 `meta-loop`,共享参考见 [../skills/loop-core/REFERENCE.md](../skills/loop-core/REFERENCE.md)。
 
+## 驱动器与接缝:taskloop 是停机门,不是驱动器
+
+循环有两半:**驱动器**(谁让下一回合发生)和**停机门**(谁裁决这一回合
+能不能收)。taskloop 刻意只做后者——这是设计边界,不是缺口。驱动器由
+运行时提供,按自治程度递进:
+
+| 驱动器 | 触发 | 与 taskloop 的组合 |
+| --- | --- | --- |
+| 用户逐条提示 | 人 | 每回合的写受 envelope 约束,Stop 时判据裁决 |
+| `/goal`(目标驱动) | 评估器打回 | 评估器管"继续不继续",taskloop 管"能不能收 done"——两个信任锚互补:前者是模型判断,后者是判据退出码 |
+| `/loop` / routines(定时、API、GitHub 事件) | 日程/事件 | routine 的每次触发落进同一个 task 的新 episode;**预算挂任务上,routine 重触发不回填** |
+
+组合规则一条:驱动器负责"再来一回合",taskloop 负责"这回合的写不出圈、
+收口必须新鲜绿"。两者无共享状态,接缝就是 hook payload。
+
+已知的隐性依赖,在此点名:`meta-loop` 假设存在某个日程驱动器(cron 或
+routine)定期拉起分析任务;taskloop 自身不提供调度——给 meta-loop 接一个
+routine/cron 即可,不要往 taskloop 里加调度器(那会破坏本节的边界)。
+
 ## 担保边界(与 v1 同一信任模型,更少的门)
 
 协作式 fail-open。硬担保只有一条且刻意收窄:**环境健康、状态文件未被直接
