@@ -83,6 +83,18 @@ function loadTask(repo) {
 function saveTask(repo, task) {
   const dir = path.join(repo, STATE_DIR);
   fs.mkdirSync(dir, { recursive: true });
+  // The state dir ignores itself: task state and session-authored checkers
+  // must never surface in a target repo's diff (observed live: .taskloop/
+  // scripts sitting untracked in a repo whose team had never heard of the
+  // loop). Help-text advice did not create the ignore; the dir carries it.
+  const ignore = path.join(dir, ".gitignore");
+  if (!fs.existsSync(ignore)) {
+    try {
+      fs.writeFileSync(ignore, "*\n", "utf8");
+    } catch {
+      /* advisory: a read-only checkout still gets a working task file */
+    }
+  }
   fs.writeFileSync(taskPath(repo), JSON.stringify(task, null, 2) + "\n", "utf8");
 }
 
@@ -102,6 +114,7 @@ function appendLedger(repo, task, extra = {}) {
       episodes: Array.isArray(task.episodes) ? task.episodes.length : 0,
       criterion_input_drift: Boolean(task.evidence?.criterion_input_drift),
       criterion_input_coverage: task.criterion_input_coverage ?? "full",
+      criterion_provenance: task.criterion_provenance ?? "repo",
       review_level: strongestReviewLevel(task),
       self_granted: (Array.isArray(task.grants) ? task.grants : []).filter((g) => g?.granted_by === "self").length,
       output_tokens_estimate: spentTokens(task),
@@ -124,6 +137,69 @@ function hasShellSyntax(command) {
   return /[|&;<>$`*?()[\]{}"'\\]/.test(String(command ?? ""));
 }
 
+// The child env can be stripped by the calling harness (observed live: a Codex
+// session whose hooks ran with no usable PATH/COMSPEC, so every bare command
+// name was a spawn error and only absolute executable paths worked). Give the
+// criterion an env floor: the running node's own directory plus the platform's
+// system bins, appended after any PATH the parent did provide.
+function criterionSpawnEnv() {
+  const env = { ...process.env };
+  const floor = [path.dirname(process.execPath)];
+  if (process.platform === "win32") {
+    const sysRoot = env.SystemRoot || env.windir || "C:\\Windows";
+    floor.push(path.join(sysRoot, "System32"), sysRoot);
+    if (!env.COMSPEC) env.COMSPEC = path.join(sysRoot, "System32", "cmd.exe");
+  } else {
+    floor.push("/usr/local/bin", "/usr/bin", "/bin");
+  }
+  const have = String(env.PATH ?? env.Path ?? "");
+  env.PATH = have ? have + path.delimiter + floor.join(path.delimiter) : floor.join(path.delimiter);
+  return env;
+}
+
+// cmd.exe never expands globs, so on Windows a glob-referenced check
+// (node docs/check*.cjs) reads MODULE_NOT_FOUND exit 1 as a permanent false
+// red: it opens, then can never turn green. Expand repo-resolvable glob tokens
+// with the same machinery the fingerprint uses, so execution and drift
+// tracking see the same files. A shell-literate line (quotes, pipes, $) is
+// left verbatim — its author addressed a shell on purpose.
+function win32CriterionCommand(criterion, repo) {
+  const line = String(criterion);
+  if (/[|&;<>$`()[\]{}"']/.test(line)) return line;
+  const root = path.resolve(String(repo));
+  return line.replace(/\S+/g, (token) => {
+    if (!/[*?]/.test(token) || token.startsWith("-")) return token;
+    const { files } = expandCriterionToken(token, root);
+    if (!files.length) return token;
+    return files.map((f) => (/\s/.test(f) ? `"${f}"` : f)).join(" ");
+  });
+}
+
+// A bare command line (no shell syntax) historically refused when its
+// executable did not exist (execFile ENOENT). The unified cmd.exe path keeps
+// that boundary deterministically: resolve the first token against
+// PATH/PATHEXT before spawning — cmd's localized "not recognized" text and
+// its exit 1 cannot tell not-found apart from a legitimate red.
+function win32ResolvesExecutable(line, env, root) {
+  const m = String(line).trim().match(/^"([^"]+)"|^(\S+)/);
+  const token = m ? (m[1] ?? m[2]) : "";
+  if (!token) return false;
+  const exts = String(env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean);
+  const isFile = (p) => {
+    try {
+      return fs.statSync(p).isFile();
+    } catch {
+      return false;
+    }
+  };
+  const hits = (base) => [base, ...exts.map((e) => base + e), ...exts.map((e) => base + e.toLowerCase())].some(isFile);
+  if (/[\\/]/.test(token) || /^[A-Za-z]:/.test(token)) return hits(path.resolve(String(root), token));
+  return String(env.PATH ?? "")
+    .split(path.delimiter)
+    .filter(Boolean)
+    .some((dir) => hits(path.join(dir, token)));
+}
+
 function runCriterion(criterion, repo, timeoutSec = CRITERION_TIMEOUT_SECONDS) {
   const opts = {
     cwd: repo,
@@ -131,12 +207,28 @@ function runCriterion(criterion, repo, timeoutSec = CRITERION_TIMEOUT_SECONDS) {
     timeout: timeoutSec * 1000,
     stdio: ["ignore", "pipe", "pipe"],
     maxBuffer: 10 * 1024 * 1024,
+    env: criterionSpawnEnv(),
   };
-  const simple = !hasShellSyntax(criterion);
+  const win = process.platform === "win32";
+  let command = String(criterion);
+  if (win) {
+    command = win32CriterionCommand(command, repo);
+    // An absolute shell spawns even when the parent stripped PATH entirely.
+    opts.shell = opts.env.COMSPEC;
+    if (!/[|&;<>$`()[\]{}"']/.test(command) && !win32ResolvesExecutable(command, opts.env, repo)) {
+      return {
+        verdict: "not_executable",
+        exit: null,
+        output: "",
+        detail: "cannot execute (command or shell not found in this environment; try an absolute executable path)",
+      };
+    }
+  }
+  const simple = !win && !hasShellSyntax(command);
   try {
     const stdout = simple
-      ? execFileSync(String(criterion).trim().split(/\s+/)[0], String(criterion).trim().split(/\s+/).slice(1), opts)
-      : execSync(criterion, opts);
+      ? execFileSync(command.trim().split(/\s+/)[0], command.trim().split(/\s+/).slice(1), opts)
+      : execSync(command, opts);
     return { verdict: "pass", exit: 0, output: String(stdout ?? "") };
   } catch (err) {
     const output = String(err.stdout ?? "") + String(err.stderr ?? "");
@@ -144,8 +236,14 @@ function runCriterion(criterion, repo, timeoutSec = CRITERION_TIMEOUT_SECONDS) {
       return { verdict: "fail", exit: null, output, detail: `timed out after ${timeoutSec}s` };
     }
     const status = typeof err.status === "number" ? err.status : null;
-    if (status === null || status === 126 || status === 127) {
-      return { verdict: "not_executable", exit: status, output, detail: `cannot execute (exit ${status ?? "spawn error"})` };
+    // 9009 is cmd.exe's "not recognized" — Windows' 127. A nonexistent binary
+    // must refuse as not-executable, not pass for a legitimate birth red.
+    const notFound = status === null || status === 127 || (win && status === 9009);
+    if (notFound || status === 126) {
+      const hint = notFound
+        ? "command or shell not found in this environment; try an absolute executable path"
+        : `exit ${status}`;
+      return { verdict: "not_executable", exit: status, output, detail: `cannot execute (${hint})` };
     }
     return { verdict: "fail", exit: status, output };
   }
@@ -230,6 +328,19 @@ function criterionInputs(criterion, repo) {
     }
   }
   return { inputs, partial };
+}
+
+// Where the checker itself lives. A checker inside the loop's own state dir
+// was written by the session that opened the task (observed live: a unit-test
+// criterion blocked by an unrelated module baseline degraded into a
+// .taskloop/*.mjs asserting the author's own source strings — runnable, green
+// on schedule, and proof of nothing but authorship). The engine cannot judge
+// a check's semantics, so it records where the check lives and lets the flag
+// ride the warning, the close reminder, and the ledger — never a gate.
+function criterionProvenance(inputs) {
+  const prefix = STATE_DIR + "/";
+  const inside = (Array.isArray(inputs) ? inputs : []).some((entry) => String(entry?.path ?? "").startsWith(prefix));
+  return inside ? "state-dir" : "repo";
 }
 
 function criterionInputDrift(task, repo) {
@@ -561,6 +672,7 @@ const CLI_OPTIONS = {
     criterion: { type: "string" },
     files: { type: "string", multiple: true },
     rounds: { type: "string" },
+    "criterion-timeout-seconds": { type: "string" },
     reason: { type: "string" },
     "granted-by": { type: "string", default: "self" },
   },
@@ -695,7 +807,11 @@ function cmdOpen(values) {
     criterion_hash: fnv1aHex(criterion),
     ...(() => {
       const { inputs, partial } = criterionInputs(criterion, repo);
-      return { criterion_inputs: inputs, criterion_input_coverage: partial ? "partial" : "full" };
+      return {
+        criterion_inputs: inputs,
+        criterion_input_coverage: partial ? "partial" : "full",
+        criterion_provenance: criterionProvenance(inputs),
+      };
     })(),
     criterion_timeout_seconds: timeoutSec,
     keep_green: Boolean(values["keep-green"]),
@@ -731,6 +847,13 @@ function cmdOpen(values) {
   };
   saveTask(repo, task);
   appendLedger(repo, task);
+  if (task.criterion_provenance === "state-dir") {
+    process.stderr.write(
+      "criterion provenance: state-dir — a session-authored checker guards this task. " +
+        "If the true criterion is blocked, suspend --outcome needs_input or name the degradation in --alignment; " +
+        "the flag rides the ledger and the close will ask for an independent review.\n",
+    );
+  }
   process.stdout.write(`opened ${taskPath(repo)} (budget: ${task.budget.rounds} rounds)\n`);
   return 0;
 }
@@ -764,6 +887,19 @@ function gateOnInputDrift(task, repo, sink = process.stderr) {
     );
   }
   return drift;
+}
+
+// The card asks weak-criterion work to take an independent review before the
+// close. The engine cannot enforce taste, so an unreviewed session-authored
+// green closes with its smell said out loud instead of silently — a nudge at
+// the exact moment the false-success would otherwise pass unremarked.
+function remindUnreviewedSelfCheck(task, sink = process.stderr) {
+  if (task.criterion_provenance !== "state-dir") return;
+  if ((Array.isArray(task.reviews) ? task.reviews : []).length > 0) return;
+  sink.write(
+    "note: this green came from a session-authored checker and no independent review is recorded " +
+      "(review --level second-model|fresh-context) — closing anyway; provenance rides the ledger.\n",
+  );
 }
 
 function cmdDone(values) {
@@ -806,6 +942,7 @@ function cmdDone(values) {
   task.closed_at = utcNow();
   saveTask(repo, task);
   appendLedger(repo, task);
+  remindUnreviewedSelfCheck(task);
   process.stdout.write(`done: criterion green (${task.spent.rounds} rounds, ${task.episodes.length} episodes)\n`);
   return 0;
 }
@@ -921,8 +1058,9 @@ function cmdAmend(values) {
   const next = String(values.criterion ?? "").trim();
   const addFiles = (values.files ?? []).map(String).filter(Boolean);
   const rounds = String(values.rounds ?? "").trim();
-  if (!next && !addFiles.length && !rounds) {
-    return cliError("amend requires --criterion, --files, and/or --rounds");
+  const timeoutRaw = String(values["criterion-timeout-seconds"] ?? "").trim();
+  if (!next && !addFiles.length && !rounds && !timeoutRaw) {
+    return cliError("amend requires --criterion, --files, --rounds, and/or --criterion-timeout-seconds");
   }
   const amendment = { at: utcNow(), reason };
   if (next) {
@@ -932,6 +1070,7 @@ function cmdAmend(values) {
     const refp = criterionInputs(next, repo);
     task.criterion_inputs = refp.inputs;
     task.criterion_input_coverage = refp.partial ? "partial" : "full";
+    task.criterion_provenance = criterionProvenance(refp.inputs);
     task.stall = { signature: null, count: 0, history: [] };
   }
   if (addFiles.length) {
@@ -947,6 +1086,15 @@ function cmdAmend(values) {
   if (rounds) {
     amendment.rounds = { from: task.budget.rounds, to: Number.parseInt(rounds, 10) || task.budget.rounds };
     task.budget.rounds = amendment.rounds.to;
+  }
+  if (timeoutRaw) {
+    const to = Number.parseInt(timeoutRaw, 10);
+    if (!Number.isInteger(to) || to <= 0) return cliError("--criterion-timeout-seconds must be a positive integer");
+    // The timeout is part of the sensor's execution contract: a criterion that
+    // legitimately grew (more tests) needs a blessable move, exactly like the
+    // criterion string itself.
+    amendment.criterion_timeout_seconds = { from: task.criterion_timeout_seconds, to };
+    task.criterion_timeout_seconds = to;
   }
   task.amendments.push(amendment);
   saveTask(repo, task);
@@ -1126,6 +1274,7 @@ function hookStop(payload, repo, task) {
     task.closed_at = utcNow();
     saveTask(repo, task);
     appendLedger(repo, task);
+    remindUnreviewedSelfCheck(task);
     process.stderr.write(
       `taskloop: criterion green — task done (${task.spent.rounds} rounds, ${task.episodes.length} episodes)\n`,
     );
@@ -1194,7 +1343,10 @@ function hookStop(payload, repo, task) {
 // The supervisor is inert in any repo without a .taskloop/ task, so it is safe
 // to leave registered globally.
 function cmdHooks() {
-  const script = path.resolve(process.argv[1] ?? "taskloop.mjs");
+  // Forward slashes on every platform: Windows backslashes get JSON-escaped in
+  // the snippet (C:\\Users\\...), which breaks copy-paste greps and the test's
+  // absolute-path assertion; forward-slash paths are valid on all platforms.
+  const script = path.resolve(process.argv[1] ?? "taskloop.mjs").replace(/\\/g, "/");
   const command = `node "${script}"`;
   process.stdout.write(
     "# taskloop hook wiring — install.mjs wires this for you; this is the manual\n" +
@@ -1258,10 +1410,10 @@ function cmdHelp() {
       '  not-needed --evidence "<read-only check>"\n' +
       '  review   --level second-model|fresh-context|self-reread [--reviewer <id>] [--findings N]\n' +
       "             # records review provenance (not a verdict); ledger shows the strongest level\n" +
-      '  amend    --criterion/--files/--rounds --reason "<why>"\n\n' +
+      '  amend    --criterion/--files/--rounds/--criterion-timeout-seconds --reason "<why>"\n\n' +
       "  hooks                      # print paste-ready Claude/Codex hook wiring\n\n" +
       "hooks: pipe the runtime's PreToolUse/Stop JSON payload on stdin.\n" +
-      "state: .taskloop/task.json (private, gitignore it); ledger: ~/.taskloop/outcomes.jsonl\n",
+      "state: .taskloop/task.json (private; the dir gitignores itself); ledger: ~/.taskloop/outcomes.jsonl\n",
   );
   return 0;
 }
@@ -1269,12 +1421,14 @@ function cmdHelp() {
 function main() {
   const argv = process.argv.slice(2);
   if (argv.length && ["help", "--help", "-h"].includes(argv[0])) return cmdHelp();
+  // Verb-level help: `amend --help` must print usage, not "Unknown option".
+  if (argv.some((a) => a === "--help" || a === "-h")) return cmdHelp();
   if (argv.length && Object.hasOwn(CLI_OPTIONS, argv[0])) {
     let values;
     try {
       ({ values } = parseArgs({ args: argv.slice(1), options: CLI_OPTIONS[argv[0]], allowPositionals: false }));
     } catch (err) {
-      return cliError(err.message);
+      return cliError(`${err.message}\nusage: node taskloop.mjs help  (shows every '${argv[0]}' option)`);
     }
     if (argv[0] === "hooks") return cmdHooks();
     if (argv[0] === "open") return cmdOpen(values);

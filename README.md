@@ -61,6 +61,23 @@ node ~/bin/taskloop.mjs open --repo . \
 (`attempts`)。哪里卡,哪里就是下一个要改进的对象——这就是 meta-loop 的
 入口。
 
+## 判据降级的受祝福路径(criterion provenance)
+
+真判据被环境挡死(基线编译坏、依赖起不来)时,诚实出口有两个:
+`suspend --outcome needs_input`(等人修基线或拍板),或降级为**适配器
+脚本**——放 `.taskloop/` 下,criterion 指向它。引擎按判据输入文件的
+落点记 `criterion_provenance`:输入落在状态目录内 = `state-dir`(本
+session 现写的检查器,open 时警告但不拒绝),否则 `repo`。该字段随
+task.json 与结局账走;`state-dir` 判据在 `reviews` 为空时收绿,两个收口
+点(`done` 动词、stop 闸门)各打一行提醒。提醒不是闸门:引擎判不了
+判据语义的强弱(测试和文本断言在外部不可区分),它保证的是弱判据
+收口**在账上留痕**、被 meta-loop 看见。`.taskloop/` 自带 `*` gitignore,
+适配器不会落进目标仓库的 diff。
+
+(此节源自一次真实失败:单测判据被无关模块基线挡死,agent 的最省力
+路径是现写一个断言自己源码字符串的脚本——能跑、按时转绿,但绿只
+证明"作者写了作者写的东西"。)
+
 ## 用法
 
 ```bash
