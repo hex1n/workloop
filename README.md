@@ -51,7 +51,7 @@ node ~/bin/taskloop.mjs open --repo . \
   --goal "……一行说清结果" \
   --criterion "node --test tests/my-feature.test.mjs" \
   --alignment "green ⇒ goal because 测试覆盖了 X;not covered: Y" \
-  --files "src/**,tests/**"
+  --files "src/**" --files "tests/**"   # 每个 glob 一个 --files;逗号串会被拒
 
 # 3. 干活。写出圈会被拒;每次 Stop 判据自动跑,绿即收 done
 # 4. 读收口报告:结局账 ~/.taskloop/outcomes.jsonl 多了一行

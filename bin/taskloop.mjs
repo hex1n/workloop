@@ -117,7 +117,22 @@ function appendLedger(repo, task, extra = {}) {
       criterion_provenance: task.criterion_provenance ?? "repo",
       review_level: strongestReviewLevel(task),
       self_granted: (Array.isArray(task.grants) ? task.grants : []).filter((g) => g?.granted_by === "self").length,
+      // Only stamp kind when the task actually carries one. A pre-schema task has
+      // no kind; fabricating "task" here would let audit's explicit-kind trust
+      // misread an old scratchpad probe as real. No kind → audit falls back to
+      // the heuristic, which is the honest classification for a pre-schema row.
+      ...(task.kind === "probe" || task.kind === "task" ? { kind: task.kind } : {}),
+      // Same fidelity rule as kind: opened_dirty is a birth snapshot, so a task
+      // opened before the field existed has no honest value — omit rather than
+      // fabricate a "confirmed clean" false.
+      ...(typeof task.opened_dirty === "boolean" ? { opened_dirty: task.opened_dirty } : {}),
+      provisional: Boolean(task.provisional),
       output_tokens_estimate: spentTokens(task),
+      // The estimate sums output_tokens over the episode's transcript window; a
+      // runtime that re-emits streaming usage snapshots double-counts, and the
+      // window includes turns unrelated to this task. Read it as a loose upper
+      // bound, not a task-attributed or cross-task-comparable number.
+      output_tokens_scope: "episode-transcript-window; may double-count streaming usage; not task-attributed",
       ...extra,
     };
     fs.appendFileSync(path.join(dir, LEDGER_FILE), JSON.stringify(row) + "\n", "utf8");
@@ -226,9 +241,8 @@ function runCriterion(criterion, repo, timeoutSec = CRITERION_TIMEOUT_SECONDS) {
   }
   const simple = !win && !hasShellSyntax(command);
   try {
-    const stdout = simple
-      ? execFileSync(command.trim().split(/\s+/)[0], command.trim().split(/\s+/).slice(1), opts)
-      : execSync(command, opts);
+    const argv = command.trim().split(/\s+/);
+    const stdout = simple ? execFileSync(argv[0], argv.slice(1), opts) : execSync(command, opts);
     return { verdict: "pass", exit: 0, output: String(stdout ?? "") };
   } catch (err) {
     const output = String(err.stdout ?? "") + String(err.stderr ?? "");
@@ -419,9 +433,7 @@ const GIT_WRITE_RE = /\bgit\s+(push|commit|add|reset|restore|checkout|clean|merg
 function gitOps(mapping) {
   const ops = new Set();
   for (const command of commandValues(mapping)) {
-    let m;
-    GIT_WRITE_RE.lastIndex = 0;
-    while ((m = GIT_WRITE_RE.exec(command)) !== null) ops.add(m[1].toLowerCase());
+    for (const m of command.matchAll(GIT_WRITE_RE)) ops.add(m[1].toLowerCase());
   }
   return [...ops];
 }
@@ -517,6 +529,39 @@ function globToRegExp(pattern) {
 
 function insideEnvelope(rel, patterns) {
   return patterns.some((pattern) => globToRegExp(pattern).test(rel));
+}
+
+// The envelope matches each glob literally (globToRegExp treats a comma as an
+// ordinary character), so "src/**,tests/**" is one pattern that matches nothing
+// real — a silently toothless envelope. Reject it at the door and point at the
+// repeat-the-flag form instead.
+function commaFileOffender(files) {
+  return files.find((f) => String(f).includes(",")) ?? null;
+}
+function commaFilesMessage(offender) {
+  return (
+    `--files "${offender}" contains a comma: the envelope matches each glob literally, ` +
+    "so a comma-joined string matches no real file. Repeat --files for each glob instead."
+  );
+}
+
+// A birth snapshot: were any envelope files already dirty when the task opened?
+// It never gates — it rides the ledger so an audit can tell a from-clean open
+// (the criterion earns its red) from one layered onto pre-existing edits (the
+// "wrote first, opened after" pattern the review flagged). Git absent or this
+// not being a repo degrades to false; the snapshot is telemetry, never a trap.
+function envelopeDirty(repo, files) {
+  try {
+    const out = execFileSync("git", ["status", "--porcelain"], { cwd: repo, encoding: "utf8" });
+    for (const line of out.split("\n")) {
+      const rel = line.slice(3).trim();
+      if (!rel) continue;
+      if (insideEnvelope(rel.replace(/\\/g, "/"), files)) return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 // ---------- episodes ----------
@@ -651,12 +696,24 @@ function resumeBanner(task) {
 
 // ---------- deny/block responses ----------
 
+// The one PreToolUse deny shape BOTH runtimes accept (Claude Code docs and the
+// Codex hook protocol agree): permissionDecision nested in hookSpecificOutput.
+// A top-level decision/permissionDecision/message fails Claude's validator —
+// "(root): Invalid input", observed live. Exit 0 is load-bearing: Claude only
+// processes the JSON on exit 0 (exit 2 ignores stdout and falls back to
+// stderr), and the working Codex hooks exit 0 too.
 function deny(message) {
   process.stdout.write(
-    JSON.stringify({ decision: "deny", permissionDecision: "deny", reason: message, message }) + "\n",
+    JSON.stringify({
+      hookSpecificOutput: {
+        hookEventName: "PreToolUse",
+        permissionDecision: "deny",
+        permissionDecisionReason: message,
+      },
+    }) + "\n",
   );
   process.stderr.write(message + "\n");
-  return 2;
+  return 0;
 }
 
 function block(message) {
@@ -690,6 +747,7 @@ const CLI_OPTIONS = {
     "keep-green": { type: "boolean", default: false },
     "granted-by": { type: "string", default: "self" },
     reason: { type: "string" },
+    probe: { type: "boolean", default: false },
     force: { type: "boolean", default: false },
   },
   status: { repo: { type: "string" } },
@@ -700,6 +758,8 @@ const CLI_OPTIONS = {
     files: { type: "string", multiple: true },
     rounds: { type: "string" },
     "criterion-timeout-seconds": { type: "string" },
+    "git-allowed": { type: "string", multiple: true },
+    "git-reason": { type: "string" },
     reason: { type: "string" },
     "granted-by": { type: "string", default: "self" },
   },
@@ -708,7 +768,7 @@ const CLI_OPTIONS = {
     outcome: { type: "string", default: "needs_input" },
     judgment: { type: "string" },
   },
-  done: { repo: { type: "string" } },
+  done: { repo: { type: "string" }, provisional: { type: "boolean", default: false } },
   abandon: { repo: { type: "string" }, reason: { type: "string" } },
   "not-needed": { repo: { type: "string" }, evidence: { type: "string" } },
   review: {
@@ -718,6 +778,7 @@ const CLI_OPTIONS = {
     findings: { type: "string" },
   },
   hooks: { repo: { type: "string" } },
+  audit: { since: { type: "string" } },
 };
 
 function repoFromArg(value) {
@@ -733,15 +794,18 @@ function repoFromArg(value) {
 const GRANT_PROVENANCES = new Set(["self", "user"]);
 const WHOLE_REPO_GLOB = /^(\*\*(\/\*)?|\.|\*)$/;
 
-function collectGrants({ grantedBy, values, files, sink = process.stderr }) {
+// Explicit inputs, not the raw CLI `values` bag: flag names belong to the
+// parser layer, and callers granting only one kind (amend adds files OR git
+// ops) should not have to fabricate a values object to satisfy the rest.
+function collectGrants({ grantedBy, flags = null, gitOps = [], gitReason = null, files = [], sink = process.stderr }) {
   const grants = [];
   const at = utcNow();
   const push = (scope, reason = null) => grants.push({ at, scope, granted_by: grantedBy, reason });
-  if (values["destructive-allowed"]) push("destructive");
-  if (values["network-allowed"]) push("network");
-  if (values["install-scripts-allowed"]) push("install-scripts");
-  for (const op of (values["git-allowed"] ?? []).map((o) => String(o).toLowerCase())) {
-    push(`git:${op}`, String(values["git-reason"] ?? "").trim() || null);
+  if (flags?.destructive) push("destructive");
+  if (flags?.network) push("network");
+  if (flags?.installScripts) push("install-scripts");
+  for (const op of gitOps.map((o) => String(o).toLowerCase())) {
+    push(`git:${op}`, String(gitReason ?? "").trim() || null);
   }
   for (const glob of files) {
     if (!WHOLE_REPO_GLOB.test(String(glob).trim())) continue;
@@ -774,6 +838,8 @@ function cmdOpen(values) {
   }
   const files = (values.files ?? []).map(String).filter(Boolean);
   if (!files.length) return cliError("--files is required: the envelope needs at least one glob");
+  const openCommaOffender = commaFileOffender(files);
+  if (openCommaOffender) return cliError(commaFilesMessage(openCommaOffender));
   if ((values["git-allowed"] ?? []).length && !String(values["git-reason"] ?? "").trim()) {
     return cliError("--git-reason is required when --git-allowed is used");
   }
@@ -806,6 +872,11 @@ function cmdOpen(values) {
 
   const criterion = String(values.criterion).trim();
   const timeoutSec = Number.parseInt(String(values["criterion-timeout-seconds"]), 10) || CRITERION_TIMEOUT_SECONDS;
+  // Snapshot dirtiness BEFORE running the criterion: a birth criterion that
+  // writes under the envelope (a snapshot/check script) must not read back as
+  // "already dirty when the task opened". This distinguishes pre-existing edits
+  // from the criterion dirtying the tree during open.
+  const openedDirty = envelopeDirty(repo, files);
   const verdict = runCriterion(criterion, repo, timeoutSec);
   if (verdict.verdict === "not_executable") {
     process.stderr.write(
@@ -842,6 +913,8 @@ function cmdOpen(values) {
     })(),
     criterion_timeout_seconds: timeoutSec,
     keep_green: Boolean(values["keep-green"]),
+    kind: values.probe ? "probe" : "task",
+    opened_dirty: openedDirty,
     alignment: String(values.alignment).trim(),
     progress: String(values.progress ?? "").trim() || null,
     envelope: {
@@ -869,7 +942,17 @@ function cmdOpen(values) {
     episodes: [],
     amendments: [],
     reviews: [],
-    grants: collectGrants({ grantedBy, values, files }),
+    grants: collectGrants({
+      grantedBy,
+      flags: {
+        destructive: Boolean(values["destructive-allowed"]),
+        network: Boolean(values["network-allowed"]),
+        installScripts: Boolean(values["install-scripts-allowed"]),
+      },
+      gitOps: values["git-allowed"] ?? [],
+      gitReason: values["git-reason"],
+      files,
+    }),
     attempts: [],
   };
   saveTask(repo, task);
@@ -965,13 +1048,14 @@ function cmdDone(values) {
     process.stderr.write("done refused: drift green — see above for the amend --criterion --reason path.\n");
     return 1;
   }
-  closeEpisode(task, "green");
-  task.state = "done";
-  task.closed_at = utcNow();
-  saveTask(repo, task);
-  appendLedger(repo, task);
-  remindUnreviewedSelfCheck(task);
-  process.stdout.write(`done: criterion green (${task.spent.rounds} rounds, ${task.episodes.length} episodes)\n`);
+  if (weakCloseBlocked(task, values.provisional)) {
+    saveTask(repo, task);
+    process.stderr.write(`done refused: ${WEAK_CLOSE_MESSAGE}\n`);
+    return 1;
+  }
+  if (values.provisional) task.provisional = true;
+  const spent = closeGreen(repo, task);
+  process.stdout.write(`done: criterion green (${spent}${task.provisional ? ", provisional" : ""})\n`);
   return 0;
 }
 
@@ -1051,6 +1135,49 @@ function strongestReviewLevel(task) {
   return best >= 0 ? REVIEW_LEVELS[best] : "none";
 }
 
+// The weak-close gate: a state-dir (session-authored) criterion is the author
+// grading their own exam. Green alone must not close it — require at least a
+// fresh-context review, or an explicit --provisional that rides the ledger so
+// the soft close stays auditable. A repo-owned criterion is not author-graded
+// and never trips this.
+// Only reviews of the CURRENT criterion count toward the gate. A review is of a
+// specific check state; once `amend --criterion` changes the check, the prior
+// review no longer vouches for what will close, so the gate must ignore it. A
+// pre-hash review (no stamped criterion_hash) is treated as not-current.
+function currentCriterionReviewLevel(task) {
+  const reviews = Array.isArray(task.reviews) ? task.reviews : [];
+  let best = -1;
+  for (const r of reviews) {
+    if (r?.criterion_hash !== task.criterion_hash) continue;
+    const i = REVIEW_LEVELS.indexOf(String(r?.level ?? ""));
+    if (i > best) best = i;
+  }
+  return best >= 0 ? REVIEW_LEVELS[best] : "none";
+}
+
+function weakCloseBlocked(task, provisional) {
+  if (provisional) return false;
+  if (task.criterion_provenance !== "state-dir") return false;
+  return REVIEW_LEVELS.indexOf(currentCriterionReviewLevel(task)) < REVIEW_LEVELS.indexOf("fresh-context");
+}
+const WEAK_CLOSE_MESSAGE =
+  "state-dir criterion with no fresh-context review — a session-authored check cannot close on its own authorship.\n" +
+  "Add `review --level fresh-context|second-model`, or `done --provisional` to close as provisional (rides the ledger).";
+
+// The one green-close commit sequence. Both close doors (the done verb and the
+// stop gate) route through here after their gates pass, so the doors cannot
+// drift apart — a gate added to one door but not the other was a live near-miss.
+// Returns the spend summary for the door's own success message.
+function closeGreen(repo, task) {
+  closeEpisode(task, "green");
+  task.state = "done";
+  task.closed_at = utcNow();
+  saveTask(repo, task);
+  appendLedger(repo, task);
+  remindUnreviewedSelfCheck(task);
+  return `${task.spent.rounds} rounds, ${task.episodes.length} episodes`;
+}
+
 function cmdReview(values) {
   const repo = repoFromArg(values.repo);
   const task = requireOpenTask(repo);
@@ -1063,7 +1190,9 @@ function cmdReview(values) {
     );
   }
   if (!Array.isArray(task.reviews)) task.reviews = [];
-  const record = { at: utcNow(), level };
+  // Stamp the criterion this review vouched for, so a later criterion amend
+  // does not silently carry the review's independence to a different check.
+  const record = { at: utcNow(), level, criterion_hash: task.criterion_hash };
   const reviewer = String(values.reviewer ?? "").trim();
   if (reviewer) record.reviewer = reviewer;
   const findings = Number.parseInt(String(values.findings ?? ""), 10);
@@ -1085,10 +1214,23 @@ function cmdAmend(values) {
   if (!reason) return cliError("--reason is required: every goalpost or budget move carries its why");
   const next = String(values.criterion ?? "").trim();
   const addFiles = (values.files ?? []).map(String).filter(Boolean);
+  const amendCommaOffender = commaFileOffender(addFiles);
+  if (amendCommaOffender) return cliError(commaFilesMessage(amendCommaOffender));
   const rounds = String(values.rounds ?? "").trim();
   const timeoutRaw = String(values["criterion-timeout-seconds"] ?? "").trim();
-  if (!next && !addFiles.length && !rounds && !timeoutRaw) {
-    return cliError("amend requires --criterion, --files, --rounds, and/or --criterion-timeout-seconds");
+  const gitAllowed = (values["git-allowed"] ?? []).map((o) => String(o).toLowerCase()).filter(Boolean);
+  const gitReason = String(values["git-reason"] ?? "").trim();
+  if (gitAllowed.length && !gitReason) {
+    return cliError("--git-reason is required when --git-allowed is used");
+  }
+  if (!next && !addFiles.length && !rounds && !timeoutRaw && !gitAllowed.length) {
+    return cliError(
+      "amend requires --criterion, --files, --rounds, --criterion-timeout-seconds, and/or --git-allowed",
+    );
+  }
+  const grantedBy = String(values["granted-by"] ?? "self").trim() || "self";
+  if (!GRANT_PROVENANCES.has(grantedBy)) {
+    return cliError('--granted-by must be "self" or "user" — provenance is recorded as stated, never invented');
   }
   const amendment = { at: utcNow(), reason };
   if (next) {
@@ -1104,12 +1246,8 @@ function cmdAmend(values) {
   if (addFiles.length) {
     amendment.files_added = addFiles;
     task.envelope.files = [...new Set([...task.envelope.files, ...addFiles])];
-    const grantedBy = String(values["granted-by"] ?? "self").trim() || "self";
-    if (!GRANT_PROVENANCES.has(grantedBy)) {
-      return cliError('--granted-by must be "self" or "user" — provenance is recorded as stated, never invented');
-    }
     if (!Array.isArray(task.grants)) task.grants = [];
-    task.grants.push(...collectGrants({ grantedBy, values: {}, files: addFiles }));
+    task.grants.push(...collectGrants({ grantedBy, files: addFiles }));
   }
   if (rounds) {
     amendment.rounds = { from: task.budget.rounds, to: Number.parseInt(rounds, 10) || task.budget.rounds };
@@ -1123,6 +1261,17 @@ function cmdAmend(values) {
     // criterion string itself.
     amendment.criterion_timeout_seconds = { from: task.criterion_timeout_seconds, to };
     task.criterion_timeout_seconds = to;
+  }
+  if (gitAllowed.length) {
+    // Parity with open: the contract card and the done-gate guidance both tell
+    // the user to authorize git mid-task via amend --git-allowed. Honor it here
+    // so the CLI stops contradicting its own instructions.
+    if (!task.envelope.git || typeof task.envelope.git !== "object") task.envelope.git = { allowed_ops: [], reason: "" };
+    task.envelope.git.allowed_ops = [...new Set([...(task.envelope.git.allowed_ops ?? []), ...gitAllowed])];
+    task.envelope.git.reason = gitReason;
+    if (!Array.isArray(task.grants)) task.grants = [];
+    task.grants.push(...collectGrants({ grantedBy, gitOps: gitAllowed, gitReason }));
+    amendment.git = { allowed_ops: gitAllowed, reason: gitReason };
   }
   task.amendments.push(amendment);
   saveTask(repo, task);
@@ -1160,6 +1309,129 @@ function cmdVerify(values) {
   process.stdout.write(`${verdict.verdict}\n`);
   if (verdict.verdict === "pass") return 0;
   return verdict.verdict === "fail" ? 1 : 2;
+}
+
+// A read-only pass over the outcome ledger. It turns the manual review this
+// tool grew out of into a rerunnable diagnostic — real vs probe, state /
+// provenance / review distributions, drift / provisional / open signals — and,
+// first, a field-trust self-check so a downstream stat cannot silently inherit
+// a bad counter as fact. Reads only; never a gate.
+const AUDIT_PROBE_GOALS = new Set(["probe", "g", "repro probe", "repro", "repro-probe"]);
+function auditIsProbe(t) {
+  // An explicit kind is authoritative — never let a heuristic override it. The
+  // goal/repo heuristics only classify pre-schema rows that carry no kind.
+  if (t.kind === "probe") return true;
+  if (t.kind === "task") return false;
+  return (
+    /[\\/](scratchpad|temp)[\\/]/i.test(String(t.repo ?? "")) ||
+    AUDIT_PROBE_GOALS.has(String(t.goal ?? "").trim().toLowerCase())
+  );
+}
+function cmdAudit(values) {
+  const file = path.join(home(), LEDGER_DIR, LEDGER_FILE);
+  let raw;
+  try {
+    raw = fs.readFileSync(file, "utf8");
+  } catch {
+    process.stdout.write(`no ledger at ${file}\n`);
+    return 0;
+  }
+  const since = String(values.since ?? "").trim();
+  const rows = [];
+  let malformed = 0;
+  for (const line of raw.split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const r = JSON.parse(line);
+      if (since && String(r.ts ?? "") < since) continue;
+      rows.push(r);
+    } catch {
+      // A corrupt/truncated row is itself a ledger-trust issue — count it so the
+      // field-trust block surfaces it instead of silently undercounting.
+      malformed += 1;
+    }
+  }
+  // Ledger is append-ordered; the last row for an id is its current state.
+  const byId = new Map();
+  for (const r of rows) byId.set(r.id ?? `${r.repo}|${r.goal}`, r);
+  const tasks = [...byId.values()];
+
+  const real = tasks.filter((t) => !auditIsProbe(t));
+  const probes = tasks.filter(auditIsProbe);
+  const tally = (key) => {
+    const m = new Map();
+    for (const t of tasks) {
+      const v = String(t[key] ?? "—");
+      m.set(v, (m.get(v) ?? 0) + 1);
+    }
+    return (
+      [...m.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([k, v]) => `${k} ${v}`)
+        .join("  ") || "—"
+    );
+  };
+
+  const warns = [];
+  if (malformed) {
+    warns.push(
+      `! ${malformed} malformed ledger row(s) skipped — unparseable JSONL the audit could not count; ` +
+        "the row/task totals are undercounts until the ledger is repaired",
+    );
+  }
+  const closed = tasks.filter((t) => t.state === "done");
+  const bigTok = tasks.filter((t) => Number(t.output_tokens_estimate) > 5_000_000);
+  if (bigTok.length) {
+    warns.push(
+      `! token estimate implausible: ${bigTok.length} task(s) > 5,000,000 output tokens — read ` +
+        "output_tokens_scope; the estimate double-counts streaming usage and is not task-attributed",
+    );
+  }
+  if (closed.length && closed.every((t) => Number(t.rounds ?? 0) === 0)) {
+    warns.push(
+      `! rounds counter flat: all ${closed.length} closed task(s) show rounds=0 — the gate was verified ` +
+        "outside taskloop and closed in one pass, so the round budget records nothing (not a bug)",
+    );
+  }
+  const preSchema = tasks.filter((t) => t.kind === undefined || t.opened_dirty === undefined);
+  if (preSchema.length) {
+    warns.push(`· ${preSchema.length} pre-schema row(s) lack kind/opened_dirty — probe class by heuristic`);
+  }
+  // append-only means a probe abandoned before the kind-fidelity fix keeps a
+  // fabricated kind="task" forever. explicit-kind trust counts it real; flag it
+  // so the count is not silently wrong — classification unchanged, verify by hand.
+  const suspiciousKind = tasks.filter(
+    (t) => t.kind === "task" && /[\\/](scratchpad|temp)[\\/]/i.test(String(t.repo ?? "")),
+  );
+  if (suspiciousKind.length) {
+    warns.push(
+      `! ${suspiciousKind.length} suspicious kind=task row(s) in a scratchpad/temp repo — likely a pre-fix ` +
+        "fabricated kind; counted real per explicit-kind trust, but verify by hand",
+    );
+  }
+
+  const openTasks = tasks.filter((t) => t.state === "open");
+  const drift = tasks.filter((t) => t.criterion_input_drift).length;
+  const provisional = tasks.filter((t) => t.provisional).length;
+  const dirty = tasks.filter((t) => t.opened_dirty).length;
+  const out = [
+    `taskloop audit — since ${since || "all"}  (${rows.length} rows, ${tasks.length} tasks)`,
+    "",
+    "field trust:",
+    ...(warns.length ? warns.map((w) => `  ${w}`) : ["  · no field-trust warnings"]),
+    "",
+    `tasks:      real ${real.length}  probe ${probes.length}`,
+    `state:      ${tally("state")}`,
+    `provenance: ${tally("criterion_provenance")}`,
+    `review:     ${tally("review_level")}`,
+    `signals:    drift ${drift}  provisional ${provisional}  opened-dirty ${dirty}`,
+  ];
+  if (openTasks.length) {
+    out.push("", `open (unclosed): ${openTasks.length}`);
+    for (const t of openTasks) out.push(`  ${t.id ?? "—"}  ${auditIsProbe(t) ? "[probe] " : ""}${t.goal ?? ""}`);
+  }
+  process.stdout.write(out.join("\n") + "\n");
+  return 0;
 }
 
 // ---------- hooks: the supervisor ----------
@@ -1334,10 +1606,11 @@ function hookPretool(payload, repo, task) {
     return 0;
   }
 
-  const targets = writeFileTargets(tool, mapping);
-  for (const raw of targets) {
-    const rel = repoRelative(repo, raw);
-    if (rel && !insideEnvelope(rel, task.envelope.files)) {
+  const rels = writeFileTargets(tool, mapping)
+    .map((raw) => repoRelative(repo, raw))
+    .filter(Boolean);
+  for (const rel of rels) {
+    if (!insideEnvelope(rel, task.envelope.files)) {
       saveTask(repo, task);
       return deny(
         `taskloop: write outside the envelope: ${rel}. Narrow the call, or if it belongs to the goal:\n` +
@@ -1373,9 +1646,8 @@ function hookPretool(payload, repo, task) {
   }
 
   task.evidence.writes += 1;
-  for (const raw of targets) {
-    const rel = repoRelative(repo, raw);
-    if (!rel || task.evidence.touched_files.includes(rel)) continue;
+  for (const rel of rels) {
+    if (task.evidence.touched_files.includes(rel)) continue;
     if (task.evidence.touched_files.length >= TOUCHED_FILES_CAP) break;
     task.evidence.touched_files.push(rel);
   }
@@ -1414,15 +1686,15 @@ function hookStop(payload, repo, task) {
       saveTask(repo, task);
       return 0;
     }
-    closeEpisode(task, "green");
-    task.state = "done";
-    task.closed_at = utcNow();
-    saveTask(repo, task);
-    appendLedger(repo, task);
-    remindUnreviewedSelfCheck(task);
-    process.stderr.write(
-      `taskloop: criterion green — task done (${task.spent.rounds} rounds, ${task.episodes.length} episodes)\n`,
-    );
+    if (weakCloseBlocked(task, false)) {
+      // Same hold: a green state-dir criterion with no independent review does
+      // not auto-close on Stop. The task stays open until a fresh-context
+      // review or an explicit `done --provisional`.
+      saveTask(repo, task);
+      return block(`taskloop: green held — ${WEAK_CLOSE_MESSAGE}`);
+    }
+    const spent = closeGreen(repo, task);
+    process.stderr.write(`taskloop: criterion green — task done (${spent})\n`);
     return 0;
   }
   if (verdict.verdict === "not_executable") {
@@ -1546,17 +1818,21 @@ function cmdHelp() {
       '  node taskloop.mjs open --repo <repo> --goal "<one line>" \\\n' +
       '    --criterion "<executable check, red until done>" \\\n' +
       '    --alignment "green ⇒ goal because <...>; not covered: <...>" \\\n' +
-      '    --files "<glob>" [--rounds 8] [--writes N] [--wall-clock-minutes M]\n\n' +
+      '    --files "<glob>" [--files "<glob2>" …] [--probe] [--rounds 8] [--writes N] [--wall-clock-minutes M]\n' +
+      "    # repeat --files per glob (a comma-joined string is refused); --probe marks a throwaway debug task\n\n" +
       "verbs:\n" +
       "  status | verify\n" +
       '  suspend  --outcome needs_input|stuck|out_of_budget --judgment "<remaining; failure; next>"\n' +
-      "  done                       # runs the criterion; green is the only path\n" +
+      "  done [--provisional]       # runs the criterion; green is the only path\n" +
+      "             # --provisional closes a state-dir criterion that has no fresh-context review (rides the ledger)\n" +
       '  abandon  --reason "<why>"\n' +
       '  not-needed --evidence "<read-only check>"\n' +
       '  review   --level second-model|fresh-context|self-reread [--reviewer <id>] [--findings N]\n' +
       "             # records review provenance (not a verdict); ledger shows the strongest level\n" +
-      '  amend    --criterion/--files/--rounds/--criterion-timeout-seconds --reason "<why>"\n\n' +
-      "  hooks                      # print paste-ready Claude/Codex hook wiring\n\n" +
+      '  amend    --criterion/--files/--rounds/--criterion-timeout-seconds --reason "<why>"\n' +
+      '             # to authorize git mid-task: amend --git-allowed <op> --git-reason "<why>" --reason "<why>"\n\n' +
+      "  hooks                      # print paste-ready Claude/Codex hook wiring\n" +
+      '  audit    [--since <ISO ts>]  # read-only ledger diagnostic (real vs probe, distributions, field-trust)\n\n' +
       "hooks: pipe the runtime's PreToolUse/Stop JSON payload on stdin.\n" +
       "state: .taskloop/task.json (private; the dir gitignores itself); ledger: ~/.taskloop/outcomes.jsonl\n",
   );
@@ -1576,6 +1852,7 @@ function main() {
       return cliError(`${err.message}\nusage: node taskloop.mjs help  (shows every '${argv[0]}' option)`);
     }
     if (argv[0] === "hooks") return cmdHooks();
+    if (argv[0] === "audit") return cmdAudit(values);
     if (argv[0] === "open") return cmdOpen(values);
     if (argv[0] === "status") return cmdStatus(values);
     if (argv[0] === "verify") return cmdVerify(values);
