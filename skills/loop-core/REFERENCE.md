@@ -54,7 +54,11 @@ node ~/bin/taskloop.mjs open --repo <repo> --goal "<one line>" \
 
 `taskloop open` runs the criterion once and refuses an already-green start (red at birth — an already-green criterion cannot prove the task) or one the machine cannot execute. Do not hand-write `task.json`; the CLI owns it. Prefer a **criterion adapter** over a hand-written check when the done-when reads evidence produced elsewhere; the adapter interface in [ADAPTERS.md](ADAPTERS.md) makes the known traps — vacuous pass, stale green, collapsed verdicts — unrepresentable. Adapters live with their evidence producer or consuming project; taskloop ships no format-specific adapter.
 
+Red-at-birth is the strict default, but the invariant it enforces is not "red at open" — it is *a green close requires the criterion to have been witnessed red at least once on this sensor*. When the failing check does not exist yet (the write-the-failing-check-first flow: an aggregate criterion — a test suite, an assertion set, a lint gate, whatever the project runs — still passes until you add the case that fails), open with `--earn-red --reason <why no red exists yet>`. The task opens on green but the close stays **barred** until one red is witnessed by a metered gate — a red Stop gate or a red `done` (a read-only `verify` stays free and does not flip the witness) — after which a fresh green closes it. A never-red task runs out of budget rather than closing, so the discrimination proof cannot be skipped, only deferred. `--earn-red` and `--keep-green` are opposite intents (a red still to come vs. a green steady state) and cannot combine. Amending the criterion resets the witness: the red vouched for the old sensor, so the moved one must earn its own. The state rides the ledger as `earn_red` / `red_witnessed`.
+
 The criterion's own input files are fingerprinted at open; a green whose check files changed since (editing the test instead of the code) is a moved sensor, not a proof — both close doors refuse it until the move is re-blessed through `amend --criterion --reason`, which re-fingerprints. The drift event stays on the outcome ledger as `criterion_input_drift` even after the re-bless.
+
+When the criterion reads the very file the task rewrites — a marker written into a doc, a migration whose check greps its own output — that file's change is the work, not a moved sensor. Declare it with `--criterion-subject <repo-relative file>` (at open or `amend`): its change is exempt from the drift refusal, while every other input still trips it. The exemption is a trust grant, never an inference — it names exact files (no globs), must sit inside the envelope, and can never be the criterion file itself; a checker moves only through `amend --criterion`. Envelope membership is necessary but not sufficient: write permission and proof exemption are separate authorizations, granted separately and recorded separately (`self`/`user`). The declaration rides the ledger (`criterion_subject`, `criterion_subject_changed`), the close echoes each exempt change with whether it was machine-witnessed, and amending the criterion drops the exemption bound to the old check.
 
 ## Criterion-Goal Alignment
 
@@ -113,6 +117,15 @@ Default to one writer task per worktree. For parallel work use separate git work
 Every closeout report includes the terminal state; the done-when verification result or why it cannot run; the actual touched targets (machine-observed in `evidence.touched_files`) versus the declared envelope; evidence links or command outputs for completion claims; remaining risks; and, for a suspend, the three judgment lines.
 
 Treat a task as rework when it repairs previously delivered work or resumes a prior non-green close. If the target repo has `docs/rework-log.md` or its workflow contract names that file, append a compact rework cause line; otherwise include the rework cause in the closeout report. The default round budget is eight unless the user or target repo states a different cap.
+
+## Structural Tasks (delete, rename, migrate)
+
+The visible act of a structural task — a file removed — is only one part of the
+move; a criterion that checks only that part goes green while stale references
+and the old positioning survive (the observed shape: a migration "done" with the
+old files still present and the README still pointing home). A structural
+criterion must assert the *whole* move: the removal, the absence of any live
+reference to what moved, and the new positioning stated where ownership lives.
 
 ## Generalization Samples
 

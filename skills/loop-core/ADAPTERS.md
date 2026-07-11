@@ -20,7 +20,9 @@ new plugs are built only when a real criterion-writing failure warrants one.
 Any adapter pluggable into the stop gate must satisfy all of:
 
 - **Read-only and idempotent.** The gate re-runs the criterion on every stop;
-  the adapter must never mutate state or trigger the evidence producer.
+  the adapter must never mutate state or trigger the evidence producer. A Python
+  adapter sets `PYTHONDONTWRITEBYTECODE=1` so re-running it leaves no
+  `__pycache__` in the tree.
 - **Three-way exit code.**
   - exit 0 — every required item passed on fresh evidence;
   - exit 1 — a required item failed or is missing (fix the work);

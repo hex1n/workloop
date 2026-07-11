@@ -232,6 +232,375 @@ test("an unresolved criterion cannot close without independent review or provisi
   assert.equal(readTask(fx).state, "open");
 });
 
+test("a green close surfaces the alignment's not-covered clause at both doors", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  const criterion = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+    "const fs=require('fs');process.exit(fs.existsSync('ready')?0:1)",
+  )}`;
+  assert.equal(
+    run(fx, [
+      "open", "--repo", fx.repo, "--goal", "make ready",
+      "--criterion", criterion,
+      "--alignment", "green => ready exists; not covered: whether ready means the goal is truly met",
+      "--files", "src/**",
+    ]).status,
+    0,
+  );
+  fs.writeFileSync(path.join(fx.repo, "ready"), "ok\n");
+
+  const done = run(fx, ["done", "--repo", fx.repo]);
+  assert.equal(done.status, 0, done.stderr);
+  assert.match(done.stderr, /criterion green — a machine check passed, not the goal/i);
+  assert.match(done.stderr, /not covered by the criterion: whether ready means the goal is truly met/i);
+  assert.match(done.stderr, /criterion input coverage: unknown/i); // no fingerprinted inputs here
+});
+
+test("the Stop gate surfaces the not-covered clause when it closes a task", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  const criterion = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+    "const fs=require('fs');process.exit(fs.existsSync('ready')?0:1)",
+  )}`;
+  assert.equal(
+    run(fx, [
+      "open", "--repo", fx.repo, "--goal", "make ready",
+      "--criterion", criterion,
+      "--alignment", "green => ready exists; not covered: the deployment environment",
+      "--files", "src/**",
+    ]).status,
+    0,
+  );
+  fs.writeFileSync(path.join(fx.repo, "ready"), "ok\n");
+  const stop = hook(fx, { hook_event_name: "Stop", cwd: fx.repo, session_id: "close" });
+  assert.equal(stop.status, 0, stop.stderr);
+  assert.match(stop.stderr, /not covered by the criterion: the deployment environment/i);
+});
+
+test("close reconciliation flags a declared write-area that saw no machine-witnessed write", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  const criterion = `${JSON.stringify(process.execPath)} -e ${JSON.stringify(
+    "const fs=require('fs');process.exit(fs.existsSync('ready')?0:1)",
+  )}`;
+  assert.equal(
+    run(fx, [
+      "open", "--repo", fx.repo, "--goal", "touch only src",
+      "--criterion", criterion,
+      "--alignment", "green => ready exists; not covered: the rest",
+      "--files", "src/**", "--files", "docs/**",
+    ]).status,
+    0,
+  );
+  // The machine witnesses a write under src/** but never under docs/**.
+  fs.mkdirSync(path.join(fx.repo, "src"), { recursive: true });
+  const pre = hook(fx, {
+    hook_event_name: "PreToolUse",
+    cwd: fx.repo,
+    session_id: "recon",
+    tool_name: "Write",
+    tool_input: { file_path: path.join(fx.repo, "src", "a.txt") },
+  });
+  assert.equal(pre.status, 0, pre.stderr);
+  fs.writeFileSync(path.join(fx.repo, "ready"), "ok\n");
+
+  const done = run(fx, ["done", "--repo", fx.repo]);
+  assert.equal(done.status, 0, done.stderr);
+  assert.match(done.stderr, /envelope reconciliation \(advisory telemetry, not a gate/i);
+  // docs/** was declared but never machine-witnessed as written; src/** was.
+  assert.match(done.stderr, /declared but not machine-witnessed as written: docs\/\*\*/i);
+  assert.doesNotMatch(done.stderr, /declared but not machine-witnessed as written:[^\n]*src\/\*\*/i);
+});
+
+test("close reconciliation suppresses the attribution dimension when input coverage is unknown", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  // An opaque criterion (no fingerprinted inputs) has unknown coverage — every
+  // declared area would read as "not attributed", so that dimension is silenced.
+  assert.equal(
+    run(fx, [
+      "open", "--repo", fx.repo, "--goal", "opaque check",
+      "--criterion", `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.exit(require('fs').existsSync('ready')?0:1)")}`,
+      "--alignment", "green => ready exists; not covered: the rest",
+      "--files", "src/**",
+    ]).status,
+    0,
+  );
+  fs.writeFileSync(path.join(fx.repo, "ready"), "ok\n");
+  const done = run(fx, ["done", "--repo", fx.repo]);
+  assert.equal(done.status, 0, done.stderr);
+  assert.doesNotMatch(done.stderr, /not attributed to any criterion input/i);
+});
+
+// --- --criterion-subject: an explicit, auditable drift exemption ---
+
+// A criterion that fingerprints a repo file it also treats as the work subject:
+// the token `data.md` is path-shaped and repo-local, so it enters the input
+// fingerprint; editing it would normally read as a moved sensor.
+function openSubjectFixture(fx, extra = []) {
+  fs.writeFileSync(path.join(fx.repo, "data.md"), "draft\n");
+  const code = "const fs=require('fs');process.exit(fs.readFileSync('data.md','utf8').includes('MARK')?0:1)";
+  return run(fx, [
+    "open", "--repo", fx.repo, "--goal", "write the marker into data.md",
+    "--criterion", `${JSON.stringify(process.execPath)} -e ${JSON.stringify(code)} data.md`,
+    "--alignment", "green => data.md carries MARK; not covered: whether MARK means the goal is met",
+    "--files", "**",
+    ...extra,
+  ]);
+}
+
+test("a declared work subject changes without tripping the drift refusal", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(openSubjectFixture(fx, ["--criterion-subject", "data.md"]).status, 0);
+  const task = readTask(fx);
+  assert.deepEqual(task.criterion_subject, ["data.md"]);
+  assert.ok(task.grants.some((g) => g.scope === "criterion-subject" && g.path === "data.md"));
+
+  fs.writeFileSync(path.join(fx.repo, "data.md"), "draft\nMARK\n"); // edited directly: no machine-witnessed write
+  const done = run(fx, ["done", "--repo", fx.repo]);
+  assert.equal(done.status, 0, done.stderr);
+  assert.match(done.stderr, /declared work subject changed \(drift exemption exercised/i);
+  assert.match(done.stderr, /data\.md — not machine-witnessed/i);
+
+  const closed = ledgerRows(fx).filter((r) => r.state === "done").at(-1);
+  assert.equal(closed.criterion_subject, 1);
+  assert.equal(closed.criterion_subject_changed, true);
+});
+
+test("a subject change written through the write gate is annotated as machine-witnessed", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(openSubjectFixture(fx, ["--criterion-subject", "data.md"]).status, 0);
+  const pre = hook(fx, {
+    hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "subj",
+    tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "data.md") },
+  });
+  assert.equal(pre.status, 0, pre.stderr);
+  fs.writeFileSync(path.join(fx.repo, "data.md"), "draft\nMARK\n");
+  const done = run(fx, ["done", "--repo", fx.repo]);
+  assert.equal(done.status, 0, done.stderr);
+  assert.match(done.stderr, /data\.md — machine-witnessed write/i);
+});
+
+test("without the declaration the same subject edit still refuses as drift", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(openSubjectFixture(fx).status, 0);
+  fs.writeFileSync(path.join(fx.repo, "data.md"), "draft\nMARK\n");
+  const done = run(fx, ["done", "--repo", fx.repo]);
+  assert.equal(done.status, 1);
+  assert.match(done.stderr, /changed since they were fingerprinted: data\.md/i);
+  assert.equal(readTask(fx).state, "open");
+});
+
+test("a mixed change still refuses, naming only the un-exempt sensor", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(fx.repo, "data.md"), "draft\n");
+  fs.writeFileSync(path.join(fx.repo, "sensor.md"), "baseline\n");
+  const code = "const fs=require('fs');process.exit(fs.readFileSync('data.md','utf8').includes('MARK')?0:1)";
+  assert.equal(
+    run(fx, [
+      "open", "--repo", fx.repo, "--goal", "write MARK into data.md",
+      "--criterion", `${JSON.stringify(process.execPath)} -e ${JSON.stringify(code)} data.md sensor.md`,
+      "--alignment", "green => data.md carries MARK; not covered: nothing",
+      "--files", "**", "--criterion-subject", "data.md",
+    ]).status,
+    0,
+  );
+  fs.writeFileSync(path.join(fx.repo, "data.md"), "draft\nMARK\n"); // subject: exempt
+  fs.writeFileSync(path.join(fx.repo, "sensor.md"), "tampered\n"); // real sensor: drift
+  const done = run(fx, ["done", "--repo", fx.repo]);
+  assert.equal(done.status, 1);
+  assert.match(done.stderr, /changed since they were fingerprinted: sensor\.md/i);
+  assert.doesNotMatch(done.stderr, /fingerprinted:[^\n]*data\.md/i);
+  assert.match(done.stderr, /a declared work subject also changed and is exempt: data\.md/i);
+});
+
+test("open refuses ill-formed criterion-subject declarations", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  // glob
+  assert.match(openSubjectFixture(fx, ["--criterion-subject", "*.md"]).stderr, /not a glob/i);
+  assert.equal(fs.existsSync(path.join(fx.repo, ".taskloop", "task.json")), false);
+  // state dir
+  assert.match(openSubjectFixture(fx, ["--criterion-subject", ".taskloop/x.md"]).stderr, /state dir/i);
+  // outside the envelope
+  const fx2 = fixture();
+  t.after(() => fs.rmSync(fx2.root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(fx2.repo, "data.md"), "draft\n");
+  fs.writeFileSync(path.join(fx2.repo, "outside.md"), "x\n");
+  const code = "const fs=require('fs');process.exit(fs.readFileSync('data.md','utf8').includes('MARK')?0:1)";
+  const outside = run(fx2, [
+    "open", "--repo", fx2.repo, "--goal", "g",
+    "--criterion", `${JSON.stringify(process.execPath)} -e ${JSON.stringify(code)} data.md`,
+    "--alignment", "green => x; not covered: y",
+    "--files", "data.md", "--criterion-subject", "outside.md",
+  ]);
+  assert.match(outside.stderr, /outside the envelope/i);
+});
+
+test("the criterion file itself cannot be declared a work subject", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(fx.repo, "check.mjs"), "process.exit(1);\n");
+  const refused = run(fx, [
+    "open", "--repo", fx.repo, "--goal", "g",
+    "--criterion-file", "check.mjs",
+    "--alignment", "green => x; not covered: y",
+    "--files", "**", "--criterion-subject", "check.mjs",
+  ]);
+  assert.match(refused.stderr, /cannot name the criterion file itself/i);
+  assert.equal(fs.existsSync(path.join(fx.repo, ".taskloop", "task.json")), false);
+});
+
+test("amend adds a subject, and amending the criterion drops the old exemption", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(openSubjectFixture(fx).status, 0);
+  const added = run(fx, [
+    "amend", "--repo", fx.repo, "--criterion-subject", "data.md",
+    "--reason", "data.md is the artifact this task rewrites, not a sensor",
+  ]);
+  assert.equal(added.status, 0, added.stderr);
+  assert.deepEqual(readTask(fx).criterion_subject, ["data.md"]);
+  assert.ok(readTask(fx).amendments.some((a) => Array.isArray(a.criterion_subjects_added)));
+
+  // Moving the sensor drops the exemption bound to the old check.
+  const moved = run(fx, [
+    "amend", "--repo", fx.repo,
+    "--criterion", `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.exit(0)")}`,
+    "--reason", "switch to a different check entirely",
+  ]);
+  assert.equal(moved.status, 0, moved.stderr);
+  assert.equal(readTask(fx).criterion_subject, undefined);
+});
+
+// --- --earn-red: the red's witness point generalized from open to before-close ---
+
+// A criterion-file that is green until `flag` says "fail"; it reads `flag` (no
+// extension, no slash) so `flag` is never a fingerprinted input — the checker
+// file itself never changes, keeping drift out of these tests.
+function earnRedFixture(fx, extra = []) {
+  fs.writeFileSync(
+    path.join(fx.repo, "check.mjs"),
+    "import fs from 'node:fs';process.exit(fs.existsSync('flag')&&fs.readFileSync('flag','utf8').includes('fail')?1:0);\n",
+  );
+  return run(fx, [
+    "open", "--repo", fx.repo, "--goal", "add a failing check then make it pass",
+    "--criterion-file", "check.mjs",
+    "--alignment", "green => the check passes; not covered: whether the check is meaningful",
+    "--files", "**", ...extra,
+  ]);
+}
+const setRed = (fx) => fs.writeFileSync(path.join(fx.repo, "flag"), "fail\n");
+const setGreen = (fx) => fs.writeFileSync(path.join(fx.repo, "flag"), "ok\n");
+
+test("earn-red opens on green but bars the close until a red is witnessed", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  const open = earnRedFixture(fx, ["--earn-red", "--reason", "the failing check does not exist yet"]);
+  assert.equal(open.status, 0, open.stderr);
+  assert.match(open.stderr, /earn-red: opened without a birth red/i);
+  const task = readTask(fx);
+  assert.equal(task.earn_red, true);
+  assert.equal(task.red_witnessed, false);
+
+  // A green close with no red ever witnessed is barred at both doors.
+  const early = run(fx, ["done", "--repo", fx.repo]);
+  assert.equal(early.status, 1);
+  assert.match(early.stderr, /has not been witnessed red/i);
+  assert.equal(readTask(fx).state, "open");
+
+  // Witness a red (a red `done` counts), then a fresh green closes.
+  setRed(fx);
+  const red = run(fx, ["done", "--repo", fx.repo]);
+  assert.equal(red.status, 1);
+  assert.equal(readTask(fx).red_witnessed, true);
+  setGreen(fx);
+  const done = run(fx, ["done", "--repo", fx.repo]);
+  assert.equal(done.status, 0, done.stderr);
+  const row = ledgerRows(fx).filter((r) => r.state === "done").at(-1);
+  assert.equal(row.earn_red, true);
+  assert.equal(row.red_witnessed, true);
+});
+
+test("the Stop gate holds an unearned green and records the red it later witnesses", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(earnRedFixture(fx, ["--earn-red", "--reason", "no failing check yet"]).status, 0);
+  // Green at the Stop gate but never red → held, not closed.
+  const held = hook(fx, { hook_event_name: "Stop", cwd: fx.repo, session_id: "er" });
+  assert.equal(held.status, 2, held.stderr);
+  assert.match(held.stderr, /has not been witnessed red/i);
+  assert.equal(readTask(fx).state, "open");
+  // A red Stop witnesses the red; a later green Stop then closes.
+  setRed(fx);
+  const redStop = hook(fx, { hook_event_name: "Stop", cwd: fx.repo, session_id: "er" });
+  assert.equal(redStop.status, 2, redStop.stderr);
+  assert.equal(readTask(fx).red_witnessed, true);
+  setGreen(fx);
+  const greenStop = hook(fx, { hook_event_name: "Stop", cwd: fx.repo, session_id: "er" });
+  assert.equal(greenStop.status, 0, greenStop.stderr);
+  assert.equal(readTask(fx).state, "done");
+});
+
+test("birth-red and keep-green tasks are untouched by the earn-red gate", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  // Default open still refuses a green birth.
+  const greenBirth = earnRedFixture(fx);
+  assert.equal(greenBirth.status, 1);
+  assert.match(greenBirth.stderr, /already green/i);
+  // Birth-red opens on red and closes on green with no witness gate and no field.
+  setRed(fx);
+  assert.equal(earnRedFixture(fx).status, 0);
+  assert.equal(readTask(fx).earn_red, undefined);
+  setGreen(fx);
+  assert.equal(run(fx, ["done", "--repo", fx.repo]).status, 0);
+
+  // keep-green closes on its green steady state, never earn-red-barred.
+  const fx2 = fixture();
+  t.after(() => fs.rmSync(fx2.root, { recursive: true, force: true }));
+  assert.equal(
+    earnRedFixture(fx2, ["--keep-green", "--reason", "regression guard; green is the steady state"]).status,
+    0,
+  );
+  assert.equal(run(fx2, ["done", "--repo", fx2.repo]).status, 0);
+});
+
+test("amending the criterion resets the earn-red witness", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(earnRedFixture(fx, ["--earn-red", "--reason", "no failing check yet"]).status, 0);
+  setRed(fx);
+  run(fx, ["done", "--repo", fx.repo]); // witness the red
+  assert.equal(readTask(fx).red_witnessed, true);
+  const amended = run(fx, [
+    "amend", "--repo", fx.repo,
+    "--criterion", `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.exit(0)")}`,
+    "--reason", "switch to a wholly different check",
+  ]);
+  assert.equal(amended.status, 0, amended.stderr);
+  assert.equal(readTask(fx).red_witnessed, false);
+  // The new sensor is green but never witnessed red → barred again.
+  const done = run(fx, ["done", "--repo", fx.repo]);
+  assert.equal(done.status, 1);
+  assert.match(done.stderr, /has not been witnessed red/i);
+});
+
+test("earn-red rejects a missing reason and a keep-green combination", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.match(earnRedFixture(fx, ["--earn-red"]).stderr, /--earn-red requires --reason/i);
+  assert.match(
+    earnRedFixture(fx, ["--earn-red", "--keep-green", "--reason", "x"]).stderr,
+    /contradictory/i,
+  );
+  assert.equal(fs.existsSync(path.join(fx.repo, ".taskloop", "task.json")), false);
+});
+
 test("a provisional weak close persists and reports its downgrade", (t) => {
   const fx = fixture();
   t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
@@ -335,6 +704,98 @@ test("machine suspension is sticky until resume while reads remain free", (t) =>
   });
   assert.equal(allowedWrite.status, 0, allowedWrite.stderr);
   assert.doesNotMatch(allowedWrite.stdout, /permissionDecision/);
+});
+
+test("a Stop while machine-suspended releases without burning a round or opening an episode", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(open(fx).status, 0);
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    hook(fx, { hook_event_name: "Stop", cwd: fx.repo, session_id: "session-a" });
+  }
+  const suspended = readTask(fx);
+  assert.equal(suspended.suspension.outcome, "stuck", "precondition: the task is machine-suspended");
+  const rounds = suspended.spent.rounds;
+  const episodes = suspended.episodes.length;
+
+  for (let i = 0; i < 3; i += 1) {
+    const again = hook(fx, { hook_event_name: "Stop", cwd: fx.repo, session_id: "session-a" });
+    assert.equal(again.status, 0, again.stderr);
+    assert.doesNotMatch(again.stdout, /"decision":"block"/);
+  }
+  const after = readTask(fx);
+  assert.equal(after.state, "open");
+  assert.equal(after.suspension.outcome, "stuck");
+  assert.equal(after.spent.rounds, rounds, "a suspended Stop must not burn a round");
+  assert.equal(after.episodes.length, episodes, "a suspended Stop must not open an episode");
+});
+
+test("a Stop after a user needs_input suspension releases without burning a round", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(open(fx).status, 0);
+  hook(fx, { hook_event_name: "Stop", cwd: fx.repo, session_id: "session-a" });
+  const suspend = run(fx, [
+    "suspend",
+    "--repo",
+    fx.repo,
+    "--outcome",
+    "needs_input",
+    "--judgment",
+    "remaining: input; failure: unknown to agent; next: ask the user",
+  ]);
+  assert.equal(suspend.status, 0, suspend.stderr);
+  const before = readTask(fx);
+  assert.equal(before.suspension.outcome, "needs_input");
+
+  const stop = hook(fx, { hook_event_name: "Stop", cwd: fx.repo, session_id: "session-a" });
+  assert.equal(stop.status, 0, stop.stderr);
+  assert.doesNotMatch(stop.stdout, /"decision":"block"/);
+  const after = readTask(fx);
+  assert.equal(after.spent.rounds, before.spent.rounds, "a suspended Stop must not burn a round");
+  assert.equal(after.suspension.outcome, "needs_input", "the sticky suspension must survive the Stop");
+});
+
+test("repeated done refusals never push spent.rounds past the budget", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(open(fx, ["--rounds", "1"]).status, 0);
+
+  for (let i = 0; i < 4; i += 1) {
+    const refused = run(fx, ["done", "--repo", fx.repo]);
+    assert.equal(refused.status, 1, refused.stderr);
+  }
+  const task = readTask(fx);
+  assert.ok(
+    task.spent.rounds <= task.budget.rounds,
+    `spent rounds ${task.spent.rounds} must not exceed budget ${task.budget.rounds}`,
+  );
+});
+
+test("a task failing to its round cap suspends as out_of_budget, not stuck", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(open(fx, ["--rounds", "3"]).status, 0);
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    hook(fx, { hook_event_name: "Stop", cwd: fx.repo, session_id: "cap" });
+  }
+  const task = readTask(fx);
+  assert.equal(task.spent.rounds, 3, "rounds cap exactly at the budget");
+  // Once the budget is spent, out_of_budget outranks the stuck signature: the
+  // task is write-blocked on resume regardless, so the guidance must point at
+  // amend --rounds, not label it merely stuck.
+  assert.equal(task.suspension.outcome, "out_of_budget");
+});
+
+test("repeated criterion-failure caps spent.rounds exactly at the budget", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(open(fx, ["--rounds", "2"]).status, 0);
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    hook(fx, { hook_event_name: "Stop", cwd: fx.repo, session_id: "cap2" });
+  }
+  assert.equal(readTask(fx).spent.rounds, 2, "criterion-failure must cap exactly at budget, never over");
 });
 
 test("spent round budget denies writes but never reads", (t) => {
@@ -563,8 +1024,9 @@ test("token cursors count each transcript tail once across alternating sessions"
   );
   assert.equal(task.transcript_cursors[fs.realpathSync.native(transcriptA)].offset, fs.statSync(transcriptA).size);
   assert.equal(task.transcript_cursors[fs.realpathSync.native(transcriptB)].offset, fs.statSync(transcriptB).size);
-  // A stop on an already-suspended task now releases without re-suspending, so
-  // the suspend is recorded exactly once — no duplicate suspended rows.
+  // A stop on an already-suspended task releases without re-suspending, so the
+  // stall suspension is written exactly once — no duplicate suspended rows, no
+  // burned round; reads and verification stay free.
   assert.equal(ledgerRows(fx).filter((row) => row.state === "suspended").length, 1);
 });
 
@@ -1025,10 +1487,160 @@ test("untracked write accounting recognizes quoted redirect targets inside the r
   const first = invoke("src/a file.txt");
   assert.equal(first.status, 0, first.stderr);
   assert.doesNotMatch(first.stdout, /permissionDecision/);
+  // The allowed write lands before the next PreToolUse, as it would live: the
+  // gate only counts prior entries that actually materialized on disk.
+  fs.mkdirSync(path.join(fx.repo, "src"), { recursive: true });
+  fs.writeFileSync(path.join(fx.repo, "src", "a file.txt"), "hi\n");
   const second = invoke("src/b file.txt");
   assert.match(second.stdout, /"permissionDecision":"deny"/);
   assert.match(second.stderr, /src\/a file\.txt.*src\/b file\.txt/i);
 });
+
+test("an armed untracked gate still releases outside-repo and target-less writes", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(fx.repo, "src"), { recursive: true });
+  const invoke = (command) =>
+    hook(fx, {
+      hook_event_name: "PreToolUse",
+      cwd: fx.repo,
+      session_id: "outside-release",
+      tool_name: "Bash",
+      tool_input: { command },
+    });
+
+  const first = invoke("printf a > src/a.txt");
+  assert.equal(first.status, 0, first.stderr);
+  fs.writeFileSync(path.join(fx.repo, "src", "a.txt"), "a\n");
+  const armed = invoke("printf b > src/b.txt");
+  assert.match(armed.stdout, /"permissionDecision":"deny"/);
+
+  // The stated contract: writes outside this repo, and write-shaped calls with
+  // no extractable target, nudge but never gate — even once the gate is armed.
+  const outsideTarget = path.join(os.tmpdir(), `taskloop-armed-outside-${process.pid}.txt`);
+  const outside = invoke(`printf hi > ${JSON.stringify(outsideTarget)}`);
+  assert.equal(outside.status, 0, outside.stderr);
+  assert.doesNotMatch(outside.stdout, /permissionDecision/);
+
+  const targetless = invoke("sed -i -e s/a/b/ src/a.txt");
+  assert.equal(targetless.status, 0, targetless.stderr);
+  assert.doesNotMatch(targetless.stdout, /permissionDecision/);
+
+  // Repo-attributed multi-file work stays gated: the release is per-target,
+  // not a hole in the gate.
+  const retry = invoke("printf b > src/b.txt");
+  assert.match(retry.stdout, /"permissionDecision":"deny"/);
+});
+
+test("a misattributed compound-command redirect cannot poison the untracked gate", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-elsewhere-"));
+  t.after(() => fs.rmSync(elsewhere, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(fx.repo, "src"), { recursive: true });
+  const invoke = (command) =>
+    hook(fx, {
+      hook_event_name: "PreToolUse",
+      cwd: fx.repo,
+      session_id: "cd-poison",
+      tool_name: "Bash",
+      tool_input: { command },
+    });
+
+  // The redirect target lives under the cd'd directory, but attribution folds
+  // it against the payload cwd — a phantom entry that never appears in-repo.
+  const phantom = invoke(`cd ${JSON.stringify(elsewhere)} && printf hi > notes.txt`);
+  assert.equal(phantom.status, 0, phantom.stderr);
+
+  const real = invoke("printf c > src/c.txt");
+  assert.equal(real.status, 0, real.stderr);
+  assert.doesNotMatch(real.stdout, /permissionDecision/);
+  const scratch = JSON.parse(
+    fs.readFileSync(path.join(fx.repo, ".taskloop", "untracked-writes.json"), "utf8"),
+  );
+  assert.deepEqual(scratch.sessions["cd-poison"].files, ["src/c.txt"]);
+});
+
+test("unexpanded environment-variable redirect targets never enter untracked accounting", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  const result = hook(fx, {
+    hook_event_name: "PreToolUse",
+    cwd: fx.repo,
+    session_id: "dollar-target",
+    tool_name: "Bash",
+    tool_input: { command: "printf hi > $SCRATCH/../notes.txt" },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /permissionDecision/);
+  const scratch = JSON.parse(
+    fs.readFileSync(path.join(fx.repo, ".taskloop", "untracked-writes.json"), "utf8"),
+  );
+  assert.deepEqual(scratch.sessions["dollar-target"].files, []);
+});
+
+test("a failed outcome-ledger append says so on stderr instead of dropping silently", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  // Occupy the ledger directory path with a file so the append cannot succeed —
+  // the shape a sandboxed or broken home produces.
+  fs.writeFileSync(path.join(fx.home, ".taskloop"), "occupied\n");
+  const result = open(fx);
+  assert.equal(result.status, 0, result.stderr); // telemetry failure must never trap the verb
+  assert.doesNotThrow(() => readTask(fx));
+  assert.match(result.stderr, /outcome ledger append failed/i);
+});
+
+// A read-only workspace (observed live: the Codex read-only sandbox tier) must
+// refuse verbs with a clean one-line error, not an uncaught errno stack. State
+// stays untouched either way; these pin the error CHANNEL.
+
+test(
+  "open in a read-only workspace refuses cleanly instead of dumping a raw stack",
+  { skip: process.platform === "win32" || process.getuid?.() === 0 },
+  (t) => {
+    const fx = fixture();
+    t.after(() => {
+      fs.chmodSync(fx.repo, 0o755);
+      fs.rmSync(fx.root, { recursive: true, force: true });
+    });
+    fs.chmodSync(fx.repo, 0o555); // the state dir cannot be created
+    const result = open(fx);
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /cannot write task state/i);
+    assert.doesNotMatch(result.stderr, /at Object\.|node:fs|node:internal/);
+    assert.equal(fs.existsSync(path.join(fx.repo, ".taskloop")), false);
+  },
+);
+
+test(
+  "a write verb against an unwritable state dir refuses cleanly and mutates nothing",
+  { skip: process.platform === "win32" || process.getuid?.() === 0 },
+  (t) => {
+    const fx = fixture();
+    const stateDir = path.join(fx.repo, ".taskloop");
+    t.after(() => {
+      try {
+        fs.chmodSync(stateDir, 0o755);
+      } catch {
+        /* already writable or gone */
+      }
+      fs.rmSync(fx.root, { recursive: true, force: true });
+    });
+    assert.equal(open(fx).status, 0);
+    fs.chmodSync(stateDir, 0o555); // the lock dir cannot be created
+    const result = run(fx, [
+      "suspend", "--repo", fx.repo,
+      "--outcome", "needs_input",
+      "--judgment", "remaining; failure; next",
+    ]);
+    assert.equal(result.status, 2, result.stderr);
+    assert.match(result.stderr, /cannot write task state/i);
+    assert.doesNotMatch(result.stderr, /at Object\.|node:fs|node:internal/);
+    fs.chmodSync(stateDir, 0o755);
+    assert.equal(readTask(fx).suspension, undefined, "a refused verb must not mutate task state");
+  },
+);
 
 test(
   "Windows criterion paths normalize native, MSYS, and slash-drive forms and remain weak",

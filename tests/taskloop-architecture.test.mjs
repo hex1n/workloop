@@ -7,6 +7,7 @@ import test from "node:test";
 import { pathToFileURL } from "node:url";
 
 import { transition } from "../lib/task-engine.mjs";
+import { withTaskLock } from "../lib/task-store.mjs";
 
 const ROOT = path.resolve(".");
 const SOURCE_ENTRY = path.join(ROOT, "bin", "taskloop.mjs");
@@ -45,6 +46,23 @@ function runAsync(script, args = [], options = {}) {
     child.stderr.on("data", (chunk) => { stderr += chunk; });
     child.on("error", (error) => resolve({ status: null, stdout, stderr, error }));
     child.on("close", (status) => resolve({ status, stdout, stderr }));
+  });
+}
+
+// runAsync ignores stdin; a hook process reads its JSON payload from stdin, so
+// concurrency tests need a spawn that pipes the payload in and runs in parallel.
+function hookAsync(payload, { cwd, env }) {
+  return new Promise((resolve) => {
+    const child = spawn(process.execPath, [SOURCE_ENTRY], { cwd, env, stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.on("error", (error) => resolve({ status: null, stdout, stderr, error }));
+    child.on("close", (status) => resolve({ status, stdout, stderr }));
+    child.stdin.end(JSON.stringify(payload));
   });
 }
 
@@ -360,5 +378,282 @@ test("public hook protocol preserves byte-exact deny, block, and green-close cha
   const green = run(SOURCE_ENTRY, [], { cwd: repo, env, input: payload("Stop") });
   assert.equal(green.status, 0);
   assert.equal(green.stdout, "");
-  assert.equal(green.stderr, "taskloop: criterion green — task done (1 rounds, 1 episodes)\n");
+  // The green close surfaces the acceptance caveat (the alignment's not-covered
+  // clause) and the advisory envelope reconciliation, then the terminal outcome
+  // line. Here the fixture declared src/** but the checker sits at the repo root
+  // and nothing under src was written, so both reconciliation lines fire.
+  assert.equal(
+    green.stderr,
+    "criterion green — a machine check passed, not the goal itself. Confirm it covers the goal:\n" +
+      "  · not covered by the criterion: unrelated commands\n" +
+      "envelope reconciliation (advisory telemetry, not a gate — a write boundary is not a task " +
+      "checklist and write-attribution is incomplete):\n" +
+      "  · declared but not machine-witnessed as written: src/**\n" +
+      "  · declared but not attributed to any criterion input: src/**\n" +
+      "taskloop: criterion green — task done (1 rounds, 1 episodes)\n",
+  );
+});
+
+test("concurrent PreToolUse writes serialize so no write-counter update is lost", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-task-race-"));
+  const repo = path.join(root, "repo");
+  const home = path.join(root, "home");
+  fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
+  fs.writeFileSync(path.join(repo, "check.mjs"), "process.exit(1);\n");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+
+  const opened = run(
+    SOURCE_ENTRY,
+    [
+      "open", "--repo", repo,
+      "--goal", "concurrent write accounting",
+      "--criterion-file", "check.mjs",
+      "--alignment", "green proves the race fixture; not covered: unrelated verbs",
+      "--files", "src/**",
+      "--rounds", "50",
+    ],
+    { cwd: repo, env },
+  );
+  assert.equal(opened.status, 0, opened.stderr);
+
+  // Each hook is its own process doing load -> transition -> save. Without a
+  // lock around that span, parallel record-writes read the same task and clobber
+  // one another's counter, losing updates (observed: episode/round/write drift).
+  const N = 12;
+  const results = await Promise.all(
+    Array.from({ length: N }, (_, index) =>
+      hookAsync(
+        {
+          hook_event_name: "PreToolUse",
+          cwd: repo,
+          session_id: "race",
+          tool_name: "Write",
+          tool_input: { file_path: path.join(repo, "src", `f${index}.txt`) },
+        },
+        { cwd: repo, env },
+      ),
+    ),
+  );
+  for (const result of results) assert.equal(result.status, 0, result.stderr || String(result.error ?? ""));
+
+  const task = JSON.parse(fs.readFileSync(path.join(repo, ".taskloop", "task.json"), "utf8"));
+  assert.equal(task.evidence.writes, N, `lost write-counter updates under concurrency: ${task.evidence.writes}/${N}`);
+  assert.equal(
+    new Set(task.evidence.touched_files).size,
+    N,
+    `lost touched-file updates under concurrency: ${new Set(task.evidence.touched_files).size}/${N}`,
+  );
+});
+
+test("withTaskLock fails closed on timeout and never runs the action unlocked", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-lock-timeout-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, "repo");
+  fs.mkdirSync(path.join(repo, ".taskloop"), { recursive: true });
+  // Pre-occupy the lock with a live owner (this very process) so it can be
+  // neither acquired nor reaped within the grace window.
+  const lock = path.join(repo, ".taskloop", ".task.lock");
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid, token: "held", at: Date.now() }));
+
+  let ran = false;
+  assert.throws(
+    () => withTaskLock(repo, () => { ran = true; return 0; }, { timeoutMs: 120 }),
+    /lock unavailable/,
+    "a lost-update lock must fail closed, not run the mutating action unlocked",
+  );
+  assert.equal(ran, false, "the mutating action must not run when the lock cannot be acquired");
+});
+
+test("concurrent open into one repo elects a single task, not N ghost opens", async (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-open-race-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, "repo");
+  const home = path.join(root, "home");
+  fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
+  const env = { ...process.env, HOME: home, USERPROFILE: home };
+  const redCriterion = `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.exit(1)")}`;
+
+  // Without a lock, N concurrent opens each load "no task", each create+save+
+  // ledger their own task, and all return 0 — leaving N-1 ghost opens on the
+  // ledger with only the last surviving in task.json. Under the lock exactly one
+  // wins; the rest re-load inside it, see an open task, and refuse.
+  const N = 8;
+  const results = await Promise.all(
+    Array.from({ length: N }, (_, index) =>
+      runAsync(
+        SOURCE_ENTRY,
+        [
+          "open", "--repo", repo, "--goal", `g${index}`,
+          "--criterion", redCriterion,
+          "--alignment", "green proves the open-race fixture; not covered: unrelated verbs",
+          "--files", "src/**",
+        ],
+        { cwd: repo, env },
+      ),
+    ),
+  );
+  const opened = results.filter((r) => r.status === 0).length;
+  const ledgerOpens = fs
+    .readFileSync(path.join(home, ".taskloop", "outcomes.jsonl"), "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+    .filter((row) => row.state === "open").length;
+  assert.equal(opened, 1, `exactly one concurrent open should win; got ${opened}`);
+  assert.equal(ledgerOpens, 1, `only the winning open should record a ledger row; got ${ledgerOpens}`);
+});
+
+function lockTimeoutFixture(t) {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-lock-e2e-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, "repo");
+  const home = path.join(root, "home");
+  fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
+  const env = { ...process.env, HOME: home, USERPROFILE: home, TASKLOOP_LOCK_TIMEOUT_MS: "120" };
+  const redCriterion = `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.exit(1)")}`;
+  const opened = run(
+    SOURCE_ENTRY,
+    [
+      "open", "--repo", repo, "--goal", "lock e2e",
+      "--criterion", redCriterion,
+      "--alignment", "green proves the lock e2e fixture; not covered: unrelated verbs",
+      "--files", "src/**",
+    ],
+    { cwd: repo, env },
+  );
+  assert.equal(opened.status, 0, opened.stderr);
+  // Pre-occupy the lock with a live owner (this process) so the spawned hook/verb
+  // can neither acquire nor reap it and must hit the timeout path.
+  const lock = path.join(repo, ".taskloop", ".task.lock");
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid, token: "held", at: Date.now() }));
+  const readTask = () => JSON.parse(fs.readFileSync(path.join(repo, ".taskloop", "task.json"), "utf8"));
+  return { repo, env, readTask };
+}
+
+test("a PreToolUse hook releases and mutates nothing when the task lock stays unavailable", (t) => {
+  const { repo, env, readTask } = lockTimeoutFixture(t);
+  const before = readTask();
+  const r = run(SOURCE_ENTRY, [], {
+    cwd: repo,
+    env,
+    input: JSON.stringify({
+      hook_event_name: "PreToolUse",
+      cwd: repo,
+      session_id: "held",
+      tool_name: "Write",
+      tool_input: { file_path: path.join(repo, "src", "a.txt") },
+    }),
+  });
+  assert.equal(r.status, 0, r.stderr); // released, tool call not blocked
+  assert.doesNotMatch(r.stdout, /"permissionDecision":"deny"/);
+  const after = readTask();
+  assert.equal(after.evidence.writes, before.evidence.writes, "a timed-out hook must not record a write");
+  assert.equal(after.spent.rounds, before.spent.rounds, "a timed-out hook must not burn a round");
+});
+
+test("a write verb fails with a clean error and mutates nothing when the task lock stays unavailable", (t) => {
+  const { repo, env, readTask } = lockTimeoutFixture(t);
+  const r = run(
+    SOURCE_ENTRY,
+    ["suspend", "--repo", repo, "--outcome", "needs_input", "--judgment", "remaining; failure; next"],
+    { cwd: repo, env },
+  );
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /lock unavailable/);
+  assert.equal(readTask().suspension, undefined, "a timed-out verb must not mutate task state");
+});
+
+test(
+  "withTaskLock rejects a non-finite timeout instead of spinning forever",
+  { timeout: 3000 },
+  (t) => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-lock-badtimeout-"));
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const repo = path.join(root, "repo");
+    fs.mkdirSync(path.join(repo, ".taskloop"), { recursive: true });
+    // Hold the lock with a live owner (this process) so it can be neither
+    // acquired nor reaped; the only exit from the acquire loop is the timeout.
+    const lock = path.join(repo, ".taskloop", ".task.lock");
+    fs.mkdirSync(lock);
+    fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid, token: "held", at: Date.now() }));
+    // A fast, real fallback bound: a correct resolver rejects the NaN and fails
+    // closed in ~120ms; an unchecked NaN deadline spins until the test timeout.
+    const prior = process.env.TASKLOOP_LOCK_TIMEOUT_MS;
+    process.env.TASKLOOP_LOCK_TIMEOUT_MS = "120";
+    t.after(() => {
+      if (prior === undefined) delete process.env.TASKLOOP_LOCK_TIMEOUT_MS;
+      else process.env.TASKLOOP_LOCK_TIMEOUT_MS = prior;
+    });
+
+    let ran = false;
+    assert.throws(
+      () => withTaskLock(repo, () => { ran = true; return 0; }, { timeoutMs: NaN }),
+      /lock unavailable/,
+      "a non-finite timeout must resolve to a real bound and fail closed, not spin",
+    );
+    assert.equal(ran, false, "the mutating action must not run when the lock cannot be acquired");
+  },
+);
+
+test("withTaskLock reaps a crashed owner's stale lock and runs the action", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-lock-reap-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, "repo");
+  fs.mkdirSync(path.join(repo, ".taskloop"), { recursive: true });
+  const lock = path.join(repo, ".taskloop", ".task.lock");
+  fs.mkdirSync(lock);
+  // A crashed owner: a real pid that has already exited, and a birth time well
+  // past the stale-grace window. The reaper must reclaim it rather than honor a
+  // dead holder forever — without recovery every future contender degrades.
+  const dead = spawnSync(process.execPath, ["-e", ""]);
+  fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ pid: dead.pid, token: "crashed", at: 0 }));
+  const aged = new Date(Date.now() - 60_000);
+  fs.utimesSync(lock, aged, aged);
+
+  let ran = false;
+  const result = withTaskLock(repo, () => { ran = true; return "reclaimed"; });
+  assert.equal(ran, true, "a stale lock whose owner is gone must be reclaimable");
+  assert.equal(result, "reclaimed");
+});
+
+test("a concurrent open times out cleanly and commits no task when the lock stays unavailable", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-open-timeout-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const repo = path.join(root, "repo");
+  const home = path.join(root, "home");
+  fs.mkdirSync(path.join(repo, "src"), { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
+  const env = { ...process.env, HOME: home, USERPROFILE: home, TASKLOOP_LOCK_TIMEOUT_MS: "120" };
+  // No task exists yet, so the unlocked pre-check passes and open proceeds to the
+  // commit lock — held live here, so open must hit the timeout and abort with no
+  // task committed (the criterion ran unlocked; nothing must reach task.json).
+  fs.mkdirSync(path.join(repo, ".taskloop"), { recursive: true });
+  const lock = path.join(repo, ".taskloop", ".task.lock");
+  fs.mkdirSync(lock);
+  fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid, token: "held", at: Date.now() }));
+
+  const r = run(
+    SOURCE_ENTRY,
+    [
+      "open", "--repo", repo, "--goal", "open under a held lock",
+      "--criterion", `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.exit(1)")}`,
+      "--alignment", "green proves the open-timeout fixture; not covered: unrelated verbs",
+      "--files", "src/**",
+    ],
+    { cwd: repo, env },
+  );
+  assert.equal(r.status, 2, r.stderr);
+  assert.match(r.stderr, /lock unavailable/);
+  assert.equal(
+    fs.existsSync(path.join(repo, ".taskloop", "task.json")),
+    false,
+    "a timed-out open must commit no task",
+  );
 });
