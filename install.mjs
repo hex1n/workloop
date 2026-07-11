@@ -219,7 +219,7 @@ function copyFile(source, target, dry) {
   }
 }
 
-function writeTextAtomicIfChanged(target, value, dry) {
+function writeTextAtomicIfChanged(target, value, dry, { newMode } = {}) {
   if (exists(target) && fs.readFileSync(target, "utf8") === value) {
     plan("ok", target);
     return;
@@ -232,7 +232,13 @@ function writeTextAtomicIfChanged(target, value, dry) {
     `.${path.basename(target)}.${process.pid}.${process.hrtime.bigint().toString(36)}.tmp`,
   );
   try {
-    fs.writeFileSync(temporary, value, "utf8");
+    let mode = newMode;
+    try {
+      if (fs.lstatSync(target).isFile()) mode = fs.statSync(target).mode & 0o777;
+    } catch {
+      /* a new target uses its explicit mode or the process umask */
+    }
+    fs.writeFileSync(temporary, value, { encoding: "utf8", ...(mode ? { mode } : {}) });
     fs.renameSync(temporary, target);
   } catch (error) {
     try {
@@ -241,6 +247,206 @@ function writeTextAtomicIfChanged(target, value, dry) {
       // Preserve the activation failure.
     }
     throw error;
+  }
+}
+
+function tomlTableRange(text, table) {
+  const escaped = table.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const headers = [...text.matchAll(new RegExp(`^[ \\t]*\\[${escaped}\\][ \\t]*(?:#.*)?$`, "gm"))];
+  if (headers.length > 1) return { error: `[${table}] appears more than once` };
+  if (!headers.length) return null;
+  const header = headers[0];
+  const bodyStart = header.index + header[0].length;
+  const nextHeader = /^[ \t]*\[\[?[^\]\r\n]+\]\]?[ \t]*(?:#.*)?$/gm;
+  nextHeader.lastIndex = bodyStart;
+  const next = nextHeader.exec(text);
+  return { bodyStart, bodyEnd: next?.index ?? text.length };
+}
+
+function skipTomlSpaceAndComments(text, start, limit) {
+  let index = start;
+  for (;;) {
+    while (index < limit && /\s/.test(text[index])) index += 1;
+    if (text[index] !== "#") return index;
+    while (index < limit && text[index] !== "\n") index += 1;
+  }
+}
+
+function readTomlStringArray(text, assignmentEnd, limit) {
+  let index = skipTomlSpaceAndComments(text, assignmentEnd, limit);
+  if (text[index] !== "[") return { error: "writable_roots must be a TOML array" };
+  const open = index;
+  index += 1;
+  const values = [];
+  const valueStarts = [];
+  let lastValueEnd = null;
+  let lastHadComma = false;
+  for (;;) {
+    index = skipTomlSpaceAndComments(text, index, limit);
+    if (index >= limit) return { error: "writable_roots array is not closed" };
+    if (text[index] === "]") {
+      return { open, close: index, values, valueStarts, lastValueEnd, lastHadComma };
+    }
+    const quote = text[index];
+    if (quote !== '"' && quote !== "'") {
+      return { error: "writable_roots must contain only quoted path strings" };
+    }
+    const start = index;
+    index += 1;
+    let escaped = false;
+    while (index < limit) {
+      const character = text[index];
+      if (quote === '"' && character === "\\" && !escaped) {
+        escaped = true;
+        index += 1;
+        continue;
+      }
+      if (character === quote && !escaped) break;
+      escaped = false;
+      index += 1;
+    }
+    if (index >= limit) return { error: "writable_roots contains an unterminated string" };
+    const token = text.slice(start, index + 1);
+    let value;
+    try {
+      value = quote === "'" ? token.slice(1, -1) : JSON.parse(token);
+    } catch {
+      return { error: "writable_roots contains a string escape this installer cannot preserve safely" };
+    }
+    values.push(value);
+    valueStarts.push(start);
+    index += 1;
+    lastValueEnd = index;
+    index = skipTomlSpaceAndComments(text, index, limit);
+    if (text[index] === ",") {
+      lastHadComma = true;
+      index += 1;
+    } else {
+      lastHadComma = false;
+      index = skipTomlSpaceAndComments(text, index, limit);
+      if (text[index] !== "]") return { error: "writable_roots entries must be comma-separated" };
+    }
+  }
+}
+
+function appendTomlArrayPath(text, array, value) {
+  const quoted = JSON.stringify(value);
+  if (!array.values.length) {
+    const inner = text.slice(array.open + 1, array.close);
+    if (!inner.includes("\n")) {
+      return text.slice(0, array.close) + quoted + text.slice(array.close);
+    }
+    const closingLineStart = text.lastIndexOf("\n", array.close - 1) + 1;
+    const closingIndent = text.slice(closingLineStart, array.close);
+    return text.slice(0, closingLineStart) + `${closingIndent}  ${quoted},\n` + text.slice(closingLineStart);
+  }
+
+  let next = text;
+  let close = array.close;
+  if (!array.lastHadComma) {
+    next = next.slice(0, array.lastValueEnd) + "," + next.slice(array.lastValueEnd);
+    close += 1;
+  }
+  const multiline = next.slice(array.open + 1, close).includes("\n");
+  if (!multiline) return next.slice(0, close) + quoted + next.slice(close);
+
+  const firstLineStart = next.lastIndexOf("\n", array.valueStarts[0] - 1) + 1;
+  const itemIndent = next.slice(firstLineStart, array.valueStarts[0]);
+  const closingLineStart = next.lastIndexOf("\n", close - 1) + 1;
+  return next.slice(0, closingLineStart) + `${itemIndent}${quoted},\n` + next.slice(closingLineStart);
+}
+
+function mergeCodexLedgerBinding(text, ledgerRoot) {
+  const table = tomlTableRange(text, "sandbox_workspace_write");
+  if (table?.error) return { error: table.error };
+  const quotedRoot = JSON.stringify(ledgerRoot);
+  if (!table) {
+    if (
+      /^[ \t]*sandbox_workspace_write[ \t]*(?:\.|=)/m.test(text) ||
+      /^[ \t]*\[[ \t]*["']sandbox_workspace_write["'][ \t]*\]/m.test(text)
+    ) {
+      return { error: "sandbox_workspace_write uses a dotted or inline TOML form this installer cannot preserve safely" };
+    }
+    const prefix = text && !text.endsWith("\n") ? text + "\n" : text;
+    const gap = prefix.trim() ? "\n" : "";
+    return {
+      text: prefix + gap + `[sandbox_workspace_write]\nwritable_roots = [${quotedRoot}]\n`,
+      changed: true,
+    };
+  }
+
+  const body = text.slice(table.bodyStart, table.bodyEnd);
+  const assignments = [...body.matchAll(/^[ \t]*writable_roots[ \t]*=/gm)];
+  if (!assignments.length && /^[ \t]*["']writable_roots["'][ \t]*=/m.test(body)) {
+    return { error: "writable_roots uses a quoted TOML key this installer cannot preserve safely" };
+  }
+  if (assignments.length > 1) return { error: "writable_roots appears more than once in [sandbox_workspace_write]" };
+  if (!assignments.length) {
+    const prefix = text.slice(0, table.bodyEnd);
+    const newline = prefix.endsWith("\n") ? "" : "\n";
+    return {
+      text: prefix + newline + `writable_roots = [${quotedRoot}]\n` + text.slice(table.bodyEnd),
+      changed: true,
+    };
+  }
+
+  const assignmentEnd = table.bodyStart + assignments[0].index + assignments[0][0].length;
+  const array = readTomlStringArray(text, assignmentEnd, table.bodyEnd);
+  if (array.error) return { error: array.error };
+  const wanted = path.resolve(ledgerRoot);
+  const present = array.values.some((entry) => path.isAbsolute(entry) && path.resolve(entry) === wanted);
+  if (present) return { text, changed: false };
+  return { text: appendTomlArrayPath(text, array, ledgerRoot), changed: true };
+}
+
+function configureCodexLedgerBinding(home, { configure, dry }) {
+  const config = path.join(home, ".codex", "config.toml");
+  const ledgerRoot = path.join(home, ".taskloop");
+  let current = "";
+  try {
+    current = fs.readFileSync(config, "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      plan(configure ? "error" : "warning", `cannot read Codex config ${config}: ${error?.message ?? error}`);
+      return;
+    }
+  }
+  const merged = mergeCodexLedgerBinding(current, ledgerRoot);
+  if (merged.error) {
+    plan(
+      configure ? "error" : "warning",
+      `${configure ? "cannot safely configure" : "cannot verify"} Codex outcome ledger binding: ${merged.error}; ` +
+        `preserved ${config}`,
+    );
+    return;
+  }
+  if (!merged.changed) {
+    plan("ok", `Codex outcome ledger binding: ${ledgerRoot}`);
+    return;
+  }
+  if (!configure) {
+    plan(
+      "warning",
+      `Codex outcome ledger binding is missing; agent-run taskloop may drop ledger rows. ` +
+        `Run node install.mjs --configure-codex to add ${ledgerRoot} to sandbox_workspace_write.writable_roots`,
+    );
+    return;
+  }
+  try {
+    if (pathPresent(config) && fs.lstatSync(config).isSymbolicLink()) {
+      plan(
+        "error",
+        `cannot safely configure Codex outcome ledger binding: ${config} is a symlink; ` +
+          "edit its owned target explicitly or use --add-dir ~/.taskloop",
+      );
+      return;
+    }
+    writeTextAtomicIfChanged(config, merged.text, dry, { newMode: 0o600 });
+  } catch (error) {
+    plan(
+      "error",
+      `cannot write Codex outcome ledger binding to ${config}: ${error?.message ?? error}; config preserved`,
+    );
   }
 }
 
@@ -555,14 +761,18 @@ function registerCommitDistribution(repo, dry) {
 function main() {
   const args = process.argv.slice(2);
   const dry = args.includes("--dry-run");
-  if (args.some((arg) => arg !== "--dry-run")) {
-    process.stderr.write("usage: node install.mjs [--dry-run]\n");
+  const configureCodex = args.includes("--configure-codex");
+  if (args.some((arg) => !["--dry-run", "--configure-codex"].includes(arg))) {
+    process.stderr.write("usage: node install.mjs [--dry-run] [--configure-codex]\n");
     return 2;
   }
   ACTIONS.length = 0;
   const installed = installTaskloop(SOURCE, HOME, dry);
   registerCommitDistribution(SOURCE, dry);
-  const order = ["new", "update", "remove", "ok", "error"];
+  const bindCodex = () => configureCodexLedgerBinding(HOME, { configure: configureCodex, dry });
+  if (configureCodex && !dry) withInstallLock(HOME, bindCodex);
+  else bindCodex();
+  const order = ["new", "update", "remove", "warning", "ok", "error"];
   const counts = Object.fromEntries(order.map((kind) => [kind, 0]));
   process.stdout.write(`taskloop install ${dry ? "(dry run) " : ""}from ${SOURCE}\n\n`);
   for (const kind of order) {

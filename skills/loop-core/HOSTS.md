@@ -39,7 +39,10 @@ Each line was earned in a live dual-host spike (Claude Code 2.1.207, Codex CLI
   the block reason arrives as the resume message.
 - The default workspace-write sandbox does not cover the ledger home:
   agent-run CLI verbs inside the sandbox lose their ledger rows. Pair sessions
-  with `--add-dir ~/.taskloop` (or grant the home). The failure is visible as
+  with `--add-dir ~/.taskloop` (or grant the home). `node install.mjs` detects a
+  missing persistent binding without editing user config; opt in with
+  `node install.mjs --configure-codex` to merge the ledger root into
+  `sandbox_workspace_write.writable_roots`. The failure is visible as
   `taskloop: outcome ledger append failed (...)` on stderr — treat that line
   as "the sandbox split the write surface", not as noise.
 - Keep hooks configuration single-source: hooks living in both
