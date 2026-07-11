@@ -16,10 +16,10 @@ function fixture() {
   return { root, repo, home };
 }
 
-function run(fx, args = [], { input = "" } = {}) {
+function run(fx, args = [], { input = "", env = {} } = {}) {
   return spawnSync(process.execPath, [SCRIPT, ...args], {
     cwd: fx.repo,
-    env: { ...process.env, HOME: fx.home, USERPROFILE: fx.home },
+    env: { ...process.env, HOME: fx.home, USERPROFILE: fx.home, ...env },
     input,
     encoding: "utf8",
   });
@@ -63,8 +63,8 @@ function readTask(fx) {
   return JSON.parse(fs.readFileSync(path.join(fx.repo, ".taskloop", "task.json"), "utf8"));
 }
 
-function hook(fx, payload) {
-  return run(fx, [], { input: JSON.stringify(payload) });
+function hook(fx, payload, env = {}) {
+  return run(fx, [], { input: JSON.stringify(payload), env });
 }
 
 function ledgerRows(fx) {
@@ -524,13 +524,19 @@ test("token cursors count each transcript tail once across alternating sessions"
     tool_name: "Read",
     tool_input: { file_path: path.join(fx.repo, "src", "a.txt") },
   });
-  hook(fx, readPayload("session-a", transcriptA));
-  hook(fx, readPayload("session-b", transcriptB));
+  // Cross-session token counting happens on legitimate handoff, not fresh
+  // concurrent contention: with P0 a fresh foreign session is a bystander that
+  // never takes over. A tiny lease TTL makes each session switch a stale-lease
+  // handoff, so the alternation exercises the take-over path the cursor dedup
+  // is meant to cover.
+  const H = (payload) => hook(fx, payload, { TASKLOOP_LEASE_TTL_MS: "1" });
+  H(readPayload("session-a", transcriptA));
+  H(readPayload("session-b", transcriptB));
   fs.appendFileSync(transcriptA, '{"output_tokens":3}\n');
-  hook(fx, readPayload("session-a", transcriptA));
+  H(readPayload("session-a", transcriptA));
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
-    const stopped = hook(fx, {
+    const stopped = H({
       hook_event_name: "Stop",
       cwd: fx.repo,
       session_id: "session-a",
@@ -539,7 +545,7 @@ test("token cursors count each transcript tail once across alternating sessions"
     assert.equal(stopped.status, attempt < 3 ? 2 : 0, stopped.stderr);
   }
 
-  const repeatedSuspension = hook(fx, {
+  const repeatedSuspension = H({
     hook_event_name: "Stop",
     cwd: fx.repo,
     session_id: "session-a",
@@ -557,7 +563,127 @@ test("token cursors count each transcript tail once across alternating sessions"
   );
   assert.equal(task.transcript_cursors[fs.realpathSync.native(transcriptA)].offset, fs.statSync(transcriptA).size);
   assert.equal(task.transcript_cursors[fs.realpathSync.native(transcriptB)].offset, fs.statSync(transcriptB).size);
-  assert.ok(ledgerRows(fx).filter((row) => row.state === "suspended").length >= 2);
+  // A stop on an already-suspended task now releases without re-suspending, so
+  // the suspend is recorded exactly once — no duplicate suspended rows.
+  assert.equal(ledgerRows(fx).filter((row) => row.state === "suspended").length, 1);
+});
+
+// --- P0: cross-session Stop/PreToolUse attribution ---
+
+const readBy = (fx, session_id) => ({
+  hook_event_name: "PreToolUse",
+  cwd: fx.repo,
+  session_id,
+  tool_name: "Read",
+  tool_input: { file_path: path.join(fx.repo, "src", "a.txt") },
+});
+
+test("a fresh foreign session's Stop releases without adjudicating or detaching the owner", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(open(fx).status, 0);
+  assert.equal(hook(fx, readBy(fx, "owner")).status, 0); // owner claims the episode + a fresh lease
+  assert.equal(readTask(fx).episodes.length, 1);
+
+  const bystander = hook(fx, { hook_event_name: "Stop", cwd: fx.repo, session_id: "intruder" });
+  assert.equal(bystander.status, 0, bystander.stderr); // released, not block(2)
+  assert.match(bystander.stderr, /bystander|single-writer|separate .*worktree/i);
+  assert.doesNotMatch(bystander.stderr, /criterion red|task done|green held/i);
+  const after = readTask(fx);
+  assert.equal(after.episodes.length, 1); // no take-over episode
+  assert.equal(after.episodes.at(-1).session, "owner");
+  assert.equal(after.episodes.at(-1).closed_at, undefined); // owner not detached
+});
+
+test("a fresh foreign session's write is not gated by the owner's envelope", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(open(fx).status, 0); // envelope is src/**
+  assert.equal(hook(fx, readBy(fx, "owner")).status, 0);
+  const foreign = hook(fx, {
+    hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "intruder",
+    tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "docs", "x.md") },
+  });
+  const out = (foreign.stdout ?? "") + (foreign.stderr ?? "");
+  assert.doesNotMatch(out, /write outside the envelope/i); // owner envelope does not govern a foreign session
+  assert.match(out, /bystander|single-writer|separate .*worktree/i);
+  assert.equal(readTask(fx).episodes.length, 1); // owner intact
+});
+
+test("a stale owner lease lets a foreign session take over (handoff escape)", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(open(fx).status, 0);
+  assert.equal(hook(fx, readBy(fx, "owner")).status, 0);
+  // A 1ms TTL makes the owner's lease already stale, so the newcomer is a
+  // handoff (take-over), not a bystander.
+  assert.equal(hook(fx, readBy(fx, "successor"), { TASKLOOP_LEASE_TTL_MS: "1" }).status, 0);
+  const t2 = readTask(fx);
+  assert.ok(t2.episodes.some((e) => e.session === "owner" && e.outcome === "detached"));
+  assert.equal(t2.episodes.at(-1).session, "successor");
+});
+
+test("a suspended task is not adjudicated, closed, or episode-mutated by any hook", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  // A repo-owned criterion-file (clean provenance, no weak-close gate) that is
+  // red until `flag` exists, so a green close is possible if the gate misfires.
+  fs.writeFileSync(path.join(fx.repo, "check.mjs"), "import fs from 'node:fs'; process.exit(fs.existsSync('flag') ? 0 : 1);\n");
+  assert.equal(
+    run(fx, [
+      "open", "--repo", fx.repo, "--goal", "guarded", "--criterion-file", "check.mjs",
+      "--alignment", "green => flag exists; not covered: nothing", "--files", "src/**",
+    ]).status,
+    0,
+  );
+  assert.equal(hook(fx, readBy(fx, "owner")).status, 0); // owner claims the episode
+  fs.writeFileSync(path.join(fx.repo, "flag"), "1"); // criterion is now green
+  assert.equal(run(fx, ["suspend", "--repo", fx.repo, "--outcome", "needs_input", "--judgment", "a; b; c"]).status, 0);
+  const snapshot = JSON.stringify(readTask(fx).episodes);
+
+  const stillPaused = () => {
+    const tk = readTask(fx);
+    assert.equal(tk.state, "open"); // not closed to done
+    assert.ok(tk.suspension && tk.suspension.outcome === "needs_input"); // still suspended
+    assert.equal(JSON.stringify(tk.episodes), snapshot); // episode list unchanged (no create/detach/transfer)
+  };
+
+  for (const session of ["intruder", "owner"]) {
+    // Stop: released, never adjudicates or mutates the episode list.
+    const stop = hook(fx, { hook_event_name: "Stop", cwd: fx.repo, session_id: session });
+    assert.equal(stop.status, 0, stop.stderr);
+    assert.match(stop.stderr, /suspended/i);
+    stillPaused();
+    // Read: free, no episode mutation.
+    const read = hook(fx, { hook_event_name: "PreToolUse", cwd: fx.repo, session_id: session, tool_name: "Read", tool_input: { file_path: path.join(fx.repo, "src", "a.txt") } });
+    assert.equal(read.status, 0, read.stderr);
+    stillPaused();
+    // Write: denied with the resume message, no episode mutation.
+    const write = hook(fx, { hook_event_name: "PreToolUse", cwd: fx.repo, session_id: session, tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "src", "b.txt") } });
+    const wout = (write.stdout ?? "") + (write.stderr ?? "");
+    assert.match(wout, /suspended/i);
+    assert.match(wout, /resume/i);
+    stillPaused();
+  }
+});
+
+test("the first hook on a fresh task claims ownership (first-touch); a documented open race", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  assert.equal(open(fx).status, 0); // no episodes yet
+  // `open` records no session identity, so whichever session hooks first owns
+  // the task — including a foreign Stop. This is an accepted limitation of the
+  // fail-open model, asserted here so a change to it is a conscious one.
+  const first = hook(fx, { hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "first", tool_name: "Read", tool_input: { file_path: path.join(fx.repo, "src", "a.txt") } });
+  assert.equal(first.status, 0, first.stderr);
+  const t1 = readTask(fx);
+  assert.equal(t1.episodes.length, 1);
+  assert.equal(t1.episodes[0].session, "first");
+  // A now-foreign second session is a bystander (owner's lease is fresh).
+  const second = hook(fx, { hook_event_name: "Stop", cwd: fx.repo, session_id: "second" });
+  assert.equal(second.status, 0, second.stderr);
+  assert.match(second.stderr, /bystander|single-writer/i);
+  assert.equal(readTask(fx).episodes.length, 1); // not taken over
 });
 
 test("open and amend reject semicolon-joined envelope patterns", (t) => {
