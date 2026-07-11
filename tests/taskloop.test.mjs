@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { archiveTask } from "../lib/task-store.mjs";
 
 const SCRIPT = path.resolve("bin/taskloop.mjs");
 
@@ -1252,9 +1253,10 @@ test("a corrupt sibling task.json is skipped, not fatal", (t) => {
 test("the overlap warning carries the sibling task's opened-time and suspended context", (t) => {
   const { a, b, openIn, cli } = worktreePair(t);
   assert.equal(openIn(a, ["lib/**"]).status, 0);
-  // Not suspended yet: the warning names when the sibling task opened.
+  // Not suspended yet: the warning names when the sibling task opened, in the
+  // same local wall-clock stamp taskloop writes everywhere (no T/Z).
   const live = openIn(b, ["lib/**"]);
-  assert.match(live.stderr, /opened \d{4}-\d\d-\d\dT/);
+  assert.match(live.stderr, /opened \d{4}-\d\d-\d\d \d\d:\d\d:\d\d/);
   assert.doesNotMatch(live.stderr, /suspended:/i);
   // Suspend A: the same overlap now also reports the paused state (a context
   // line, not an "inactive" verdict — the task is still open and overlapping).
@@ -1672,3 +1674,36 @@ test(
     }
   },
 );
+
+const LOCAL_STAMP = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/;
+
+test("taskloop writes local wall-clock timestamps to task.json and the ledger, not UTC ISO", (t) => {
+  const fx = fixture();
+  t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
+  const opened = open(fx);
+  assert.equal(opened.status, 0, opened.stderr || opened.stdout);
+
+  const task = JSON.parse(fs.readFileSync(path.join(fx.repo, ".taskloop", "task.json"), "utf8"));
+  assert.match(task.spent.opened_at, LOCAL_STAMP, "task.json opened_at must be local YYYY-MM-DD HH:MM:SS");
+  assert.ok(!/[TZ]/.test(task.spent.opened_at), "task.json timestamps carry no T/Z");
+
+  const rows = fs
+    .readFileSync(path.join(fx.home, ".taskloop", "outcomes.jsonl"), "utf8")
+    .trim()
+    .split("\n");
+  const ts = JSON.parse(rows[rows.length - 1]).ts;
+  assert.match(ts, LOCAL_STAMP, "ledger ts must be local YYYY-MM-DD HH:MM:SS");
+  assert.ok(!/[TZ]/.test(ts), "ledger ts carries no T/Z");
+});
+
+test("history archive filename is local wall-clock — hyphen-only, no T/Z/colon", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-archive-stamp-"));
+  try {
+    archiveTask(dir, { id: "a1b2c3d4" }, "2026-07-11 22:40:26");
+    const name = fs.readdirSync(path.join(dir, ".taskloop", "history"))[0];
+    assert.match(name, /^task-2026-07-11-22-40-26-a1b2c3d4\.json$/);
+    assert.ok(!/[TZ:]/.test(name), "archive filename carries no T/Z/colon");
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+});
