@@ -686,6 +686,107 @@ test("the first hook on a fresh task claims ownership (first-touch); a documente
   assert.equal(readTask(fx).episodes.length, 1); // not taken over
 });
 
+// --- P1: cross-worktree envelope overlap advisory ---
+
+// A git repo with a `lib/a.js`, plus a sibling worktree sharing its .git.
+function worktreePair(t) {
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-wt-"));
+  t.after(() => fs.rmSync(rootDir, { recursive: true, force: true }));
+  const home = path.join(rootDir, "home");
+  const a = path.join(rootDir, "repo");
+  const b = path.join(rootDir, "repo-b");
+  fs.mkdirSync(home, { recursive: true });
+  fs.mkdirSync(path.join(a, "lib"), { recursive: true });
+  fs.mkdirSync(path.join(a, "docs"), { recursive: true });
+  fs.writeFileSync(path.join(a, "lib", "a.js"), "x\n");
+  fs.writeFileSync(path.join(a, "docs", "x.md"), "x\n");
+  const env = { HOME: home, USERPROFILE: home, GIT_AUTHOR_NAME: "t", GIT_AUTHOR_EMAIL: "t@t", GIT_COMMITTER_NAME: "t", GIT_COMMITTER_EMAIL: "t@t" };
+  const git = (cwd, args) => spawnSync("git", args, { cwd, env: { ...process.env, ...env }, encoding: "utf8" });
+  git(a, ["init", "-q"]); git(a, ["add", "-A"]); git(a, ["commit", "-q", "-m", "init"]);
+  git(a, ["worktree", "add", "-q", "-b", "b", b]);
+  const cli = (cwd, args) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd, env: { ...process.env, ...env }, encoding: "utf8" });
+  const openIn = (cwd, files) =>
+    cli(cwd, [
+      "open", "--repo", cwd, "--probe", "--force", "--goal", "t",
+      "--criterion", `${JSON.stringify(process.execPath)} -e ${JSON.stringify("process.exit(1)")}`,
+      "--alignment", "green => x; not covered: y",
+      ...files.flatMap((f) => ["--files", f]),
+    ]);
+  const amendIn = (cwd, files) => cli(cwd, ["amend", "--repo", cwd, ...files.flatMap((f) => ["--files", f]), "--reason", "widen"]);
+  return { a, b, openIn, amendIn, cli };
+}
+
+test("opening a task warns when its envelope definitely overlaps a sibling worktree's open task", (t) => {
+  const { a, b, openIn } = worktreePair(t);
+  assert.equal(openIn(a, ["lib/**"]).status, 0); // owner in worktree A
+  const opened = openIn(b, ["lib/**"]); // B overlaps: lib/a.js matches both
+  assert.equal(opened.status, 0, opened.stderr);
+  assert.match(opened.stderr, /definite overlap on:[^\n]*lib\/\*\*/i);
+  assert.ok(opened.stderr.includes(a), "should name the sibling worktree path");
+});
+
+test("a disjoint envelope in a sibling worktree stays silent", (t) => {
+  const { a, b, openIn } = worktreePair(t);
+  assert.equal(openIn(a, ["lib/**"]).status, 0);
+  const opened = openIn(b, ["docs/**"]); // no file matches both, prefixes differ
+  assert.equal(opened.status, 0, opened.stderr);
+  assert.doesNotMatch(opened.stderr, /overlap/i);
+});
+
+test("prefix-compatible envelopes with no co-matching file warn only as potential", (t) => {
+  const { a, b, openIn } = worktreePair(t);
+  assert.equal(openIn(a, ["lib/**"]).status, 0);
+  const opened = openIn(b, ["lib/*.md"]); // shares prefix lib/, but no lib/*.md file exists
+  assert.equal(opened.status, 0, opened.stderr);
+  assert.match(opened.stderr, /potential overlap on:[^\n]*lib\/\*\.md/i);
+  assert.doesNotMatch(opened.stderr, /definite overlap/i);
+});
+
+test("amend --files that newly overlaps a sibling worktree also warns", (t) => {
+  const { a, b, openIn, amendIn } = worktreePair(t);
+  assert.equal(openIn(a, ["lib/**"]).status, 0);
+  assert.equal(openIn(b, ["docs/**"]).status, 0); // start disjoint
+  const amended = amendIn(b, ["lib/**"]);
+  assert.equal(amended.status, 0, amended.stderr);
+  assert.match(amended.stderr, /definite overlap on:[^\n]*lib\/\*\*/i);
+});
+
+test("suffix-incompatible globs in the same directory do not warn", (t) => {
+  const { a, b, openIn } = worktreePair(t);
+  assert.equal(openIn(a, ["lib/*.js"]).status, 0);
+  const opened = openIn(b, ["lib/*.md"]); // shares lib/ but .js and .md never co-match
+  assert.equal(opened.status, 0, opened.stderr);
+  assert.doesNotMatch(opened.stderr, /overlap/i);
+});
+
+test("a sibling's closed task is not counted as an overlap", (t) => {
+  const { a, b, openIn, cli } = worktreePair(t);
+  assert.equal(openIn(a, ["lib/**"]).status, 0);
+  assert.equal(cli(a, ["abandon", "--repo", a, "--reason", "done here"]).status, 0);
+  const opened = openIn(b, ["lib/**"]); // A's task is closed → no open sibling
+  assert.equal(opened.status, 0, opened.stderr);
+  assert.doesNotMatch(opened.stderr, /overlap/i);
+});
+
+test("a file deleted in the sibling worktree downgrades definite to potential", (t) => {
+  const { a, b, openIn } = worktreePair(t);
+  fs.rmSync(path.join(a, "lib", "a.js")); // present in b, absent in a's checkout
+  assert.equal(openIn(a, ["lib/**"]).status, 0);
+  const opened = openIn(b, ["lib/**"]); // lib/a.js exists in b but not a → not definite
+  assert.equal(opened.status, 0, opened.stderr);
+  assert.match(opened.stderr, /potential overlap on:[^\n]*lib\/\*\*/i);
+  assert.doesNotMatch(opened.stderr, /definite overlap/i);
+});
+
+test("a corrupt sibling task.json is skipped, not fatal", (t) => {
+  const { a, b, openIn } = worktreePair(t);
+  assert.equal(openIn(a, ["lib/**"]).status, 0);
+  fs.writeFileSync(path.join(a, ".taskloop", "task.json"), "{ not json"); // corrupt A's task
+  const opened = openIn(b, ["lib/**"]); // unreadable sibling → skipped, open still succeeds
+  assert.equal(opened.status, 0, opened.stderr);
+  assert.doesNotMatch(opened.stderr, /overlap/i);
+});
+
 test("open and amend reject semicolon-joined envelope patterns", (t) => {
   const fx = fixture();
   t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
