@@ -787,6 +787,21 @@ test("a corrupt sibling task.json is skipped, not fatal", (t) => {
   assert.doesNotMatch(opened.stderr, /overlap/i);
 });
 
+test("the overlap warning carries the sibling task's opened-time and suspended context", (t) => {
+  const { a, b, openIn, cli } = worktreePair(t);
+  assert.equal(openIn(a, ["lib/**"]).status, 0);
+  // Not suspended yet: the warning names when the sibling task opened.
+  const live = openIn(b, ["lib/**"]);
+  assert.match(live.stderr, /opened \d{4}-\d\d-\d\dT/);
+  assert.doesNotMatch(live.stderr, /suspended:/i);
+  // Suspend A: the same overlap now also reports the paused state (a context
+  // line, not an "inactive" verdict — the task is still open and overlapping).
+  assert.equal(cli(a, ["suspend", "--repo", a, "--outcome", "needs_input", "--judgment", "x; y; z"]).status, 0);
+  const paused = openIn(b, ["lib/**"]);
+  assert.match(paused.stderr, /suspended: needs_input/i);
+  assert.match(paused.stderr, /overlap on:/i); // still flagged as an overlap
+});
+
 test("open and amend reject semicolon-joined envelope patterns", (t) => {
   const fx = fixture();
   t.after(() => fs.rmSync(fx.root, { recursive: true, force: true }));
