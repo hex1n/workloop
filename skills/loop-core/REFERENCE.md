@@ -131,22 +131,26 @@ Suspension is sticky. Stop releases without mutation; reads and `verify` remain
 free; writes and terminal-success verbs require `resume --reason`. An
 out-of-budget task must first increase its task-level budget with `amend`.
 
-The latest episode owns the active task/envelope when its `host_session_id` is
-a real host identity. Foreign Stop hooks release without criterion execution or
-telemetry mutation. A foreign session cannot write the envelope or runtime/git
-control state; provably outside-envelope work follows the untracked path and
-belongs in a separate worktree. Use `join --reason` to transfer an active task,
-or `resume --reason` to continue a suspended one. Empty, missing, whitespace,
-or `cli` episode identities are unbound and retain gate-all compatibility.
-`TASKLOOP_SESSION_ID` is an explicit override in the host hook payload's
-identity domain, not an arbitrary label. For Codex Bash/PowerShell tool calls
-that invoke taskloop, the PreToolUse hook supplies this value transiently from
-the documented payload `session_id` through `updatedInput`; it does not consume
-`CODEX_THREAD_ID` or persist a thread-to-session mapping.
-
 A structural criterion asserts the whole move: the removal, absence of live
 references, and the new positioning where ownership lives. Checking only that
 one file disappeared is not sufficient.
+
+## Session ownership
+
+The latest episode owns the active task and its envelope when its
+`host_session_id` is a real host identity. A foreign session reads and
+verifies freely; its Stop hooks release without criterion execution or
+telemetry mutation, and its writes to the envelope or runtime/git control
+state are refused. Provably outside-envelope work follows the untracked path;
+parallel work belongs in a separate worktree. Empty, missing, whitespace, or
+`cli` episode
+identities are unbound and retain gate-all compatibility.
+
+Two verbs move ownership: `join --reason` transfers an active task to the
+current session; `resume --reason` continues a suspended one.
+`TASKLOOP_SESSION_ID` is an explicit override and must carry an identity from
+the host hook payload's domain. Per-host binding mechanics are in
+[HOSTS.md](HOSTS.md).
 
 ## State, ledger, and upgrade
 
@@ -162,10 +166,5 @@ The runtime writes only `~/.taskloop/outcomes-v2.jsonl`. Ledger events use
 `event_schema_version: 2`; task adjudication never reads the ledger. Appends are
 best-effort and report task id, revision, and allocated sequence on failure.
 `audit` reports gaps as incomplete telemetry and isolates corrupt rows.
-Persisted timestamps use local wall-clock `YYYY-MM-DD HH:mm:ss`; artifact names
-use `YYYYMMDD-HHmmss`. The chosen contract intentionally omits timezone,
-milliseconds, and `T`/`Z` markers.
 
-Git mutations still require explicit user intent and an envelope grant. Use one
-owner per task/envelope; parallel writers use separate worktrees. Host-specific
-binding is in [HOSTS.md](HOSTS.md).
+Git mutations still require explicit user intent and an envelope grant.

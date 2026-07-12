@@ -86,8 +86,8 @@ audited. `status` reports `proof_assurance`, `machine_risk_floor`, and
 it using `archive-incompatible-state --reason ... --granted-by user`, then open
 a new task. The new runtime writes only `~/.taskloop/outcomes-v2.jsonl`.
 Persisted taskloop times use local wall-clock `YYYY-MM-DD HH:mm:ss`; generated
-artifact names use `YYYYMMDD-HHmmss`. Neither form includes `T`, milliseconds,
-an offset, or `Z`.
+artifact names use `YYYYMMDD-HHmmss`. Both forms are intentionally
+timezone-free and second-granular.
 
 ## Install and verify
 

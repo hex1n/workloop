@@ -7,7 +7,8 @@ argument-hint: "[approved work + done-when criterion + envelope]"
 # Workloop
 
 Read `../loop-core/REFERENCE.md` for the shared task, observation, lifecycle,
-closure, policy, review, envelope, budget, and git vocabulary. Read
+closure, policy, review, envelope, session-ownership, budget, and git
+vocabulary. Read
 `../loop-core/ADAPTERS.md` before using external evidence.
 
 ## 1. Source the criterion
@@ -29,7 +30,10 @@ taskloop open --goal "<goal>" --criterion "<check>" \
 ```
 
 The task must open with a determinate observation allowed by the policy.
-Indeterminate refuses creation. Do not hand-write task state.
+Indeterminate refuses creation. Do not hand-write task state. When the
+repository already holds an active task from another host session, take it
+over with `join --reason` or work in a separate worktree; continue a
+suspended task with `resume --reason`.
 
 ## 3. Work
 
@@ -52,9 +56,6 @@ Automatic policy closes on a fresh satisfied Stop only when closure is
 eligible. Explicit policy uses `achieve`. Otherwise choose exactly one honest
 path: `not-needed --evidence` before writes, or `abandon --reason`. Suspension
 is a pause, not a terminal outcome, and requires a complete judgment snapshot.
-Only the latest episode's host session drives Stop and envelope writes. Use
-`join --reason` for an explicit active-task handoff; parallel work uses a
-separate worktree. Suspended work continues with `resume --reason`, not join.
 
 ## 5. Report
 
