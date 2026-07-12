@@ -22,6 +22,11 @@ Each line was earned in a live dual-host spike (Claude Code 2.1.207, Codex CLI
 
 ## Claude Code
 
+- Hook payload `session_id` and `CLAUDE_CODE_SESSION_ID` are the binding pair;
+  they must remain in the same identity domain. A Claude Code 2.1.207 parent
+  and Task subagent probe found both variables present but different: subagents
+  are foreign and do not inherit envelope writes. Join explicitly or use a
+  separate worktree.
 - Session-internal continuation needs nothing beyond hook wiring: the Stop
   hook's block feedback is the resume prompt.
 - Recurring goals (`/goal`, `/loop`): use the stop condition above. Claude Code
@@ -35,6 +40,20 @@ Each line was earned in a live dual-host spike (Claude Code 2.1.207, Codex CLI
 
 ## Codex CLI
 
+- Codex CLI 0.144.1 was probed with a fresh ephemeral session: hook payloads
+  carry `session_id`, while exec shells export `CODEX_THREAD_ID`, and the two
+  values are not equal. taskloop never binds from `CODEX_THREAD_ID`. On an
+  allowed Bash/PowerShell call that invokes taskloop, its PreToolUse hook uses
+  Codex's documented `updatedInput` response to inject the payload-domain
+  `session_id` as `TASKLOOP_SESSION_ID` for that command only. Missing or
+  malformed payload identities degrade to unbound gate-all behavior. An
+  explicit conflicting override is denied instead of silently changing owner.
+- Codex documents that subagent hook events carry the parent session ID, so
+  taskloop treats a Codex parent and its subagents as one ownership domain.
+  Keep taskloop as the only matching hook that rewrites `updatedInput` for its
+  CLI calls: matching hooks run concurrently, so independent command rewriters
+  have no reliable composition order. PreToolUse remains a policy guardrail,
+  not an OS security boundary.
 - Session-internal stop-block driving works out of the box in `codex exec`;
   the block reason arrives as the resume message.
 - The default workspace-write sandbox does not cover the ledger home:

@@ -13,7 +13,7 @@
 
 | Source | Run | Status |
 |---|---|---|
-| Claude findings 1–5, 7–10 | review-fixes-20260712T013920Z | passed |
+| Claude findings 1–5, 7–10 | review-fixes-20260712-093920 | passed |
 
 No new P0/P1 scenario emerged.
 

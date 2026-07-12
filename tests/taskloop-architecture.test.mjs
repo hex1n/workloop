@@ -27,12 +27,21 @@ test("integration handshake exposes all three coordinated schema contracts", () 
   assert.match(info.ledger_path, /outcomes-v2\.jsonl$/);
 });
 
-test("persisted timestamps use one UTC ISO rendering", () => {
+test("persisted timestamps use the canonical local rendering", () => {
   const prims = fs.readFileSync(path.join(ROOT, "lib", "prims.mjs"), "utf8");
   const untracked = fs.readFileSync(path.join(ROOT, "lib", "untracked.mjs"), "utf8");
-  assert.doesNotMatch(prims, /function localStamp|single time rendering/);
-  assert.doesNotMatch(untracked, /localStamp/);
-  assert.match(untracked, /toISOString/);
+  const application = fs.readFileSync(path.join(ROOT, "lib", "application.mjs"), "utf8");
+  assert.match(prims, /function localTimestamp/); assert.match(prims, /function artifactTimestamp/);
+  assert.match(untracked, /localTimestamp/); assert.match(application, /localTimestamp/);
+});
+
+test("Stop hooks exit zero with no task and with incompatible task state", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-stop-exit-v2-")); const repo = path.join(root, "repo"); const home = path.join(root, "home");
+  fs.mkdirSync(repo, { recursive: true }); fs.mkdirSync(home, { recursive: true }); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const env = { ...process.env, HOME: home, USERPROFILE: home }; const payload = JSON.stringify({ hook_event_name: "Stop", cwd: repo });
+  let stopped = run(CLI, [], { cwd: repo, env, input: payload }); assert.equal(stopped.status, 0); assert.equal(stopped.stdout, "");
+  fs.mkdirSync(path.join(repo, ".taskloop")); fs.writeFileSync(path.join(repo, ".taskloop", "task.json"), '{"schema_version":1}\n');
+  stopped = run(CLI, [], { cwd: repo, env, input: payload }); assert.equal(stopped.status, 0); assert.match(stopped.stdout, /"decision":"block"/);
 });
 
 test("task-engine transitions are pure", () => {
@@ -92,6 +101,10 @@ test("installed runtime exercises the assurance matrix", (t) => {
   const status = (repo) => JSON.parse(run(shim, ["status", "--repo", repo], { env }).stdout);
 
   const routine = makeRepo("routine"); assert.equal(open(routine, ["--risk", "routine", "--risk-reason", "reversible"]).status, 0); assert.equal(status(routine).review_requirement.level, null);
+  const joined = run(shim, ["join", "--repo", routine, "--reason", "installed handoff"], { env: { ...env, TASKLOOP_SESSION_ID: "installed-session" } }); assert.equal(joined.status, 0, joined.stderr); assert.equal(JSON.parse(run(shim, ["status", "--repo", routine], { env: { ...env, TASKLOOP_SESSION_ID: "installed-session" } }).stdout).session_binding.cli_identity_matches_owner, true);
+  const routineState = JSON.parse(fs.readFileSync(path.join(routine, ".taskloop", "task.json"), "utf8")); assert.match(routineState.created_at, /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/);
+  assert.equal(run(shim, ["abandon", "--repo", routine, "--reason", "archive probe"], { env }).status, 0); assert.equal(open(routine, ["--risk", "routine", "--risk-reason", "reversible"]).status, 0);
+  assert.ok(fs.readdirSync(path.join(routine, ".taskloop", "history")).some((name) => /^task-\d{8}-\d{6}-/.test(name)));
   const substantial = makeRepo("substantial"); assert.equal(open(substantial).status, 0); assert.equal(status(substantial).review_requirement.level, "fresh_context");
   const critical = makeRepo("critical"); assert.equal(open(critical, ["--risk", "critical", "--risk-reason", "contract", "--change-class", "public-contract"]).status, 0); assert.equal(status(critical).review_requirement.level, "second_model");
   assert.equal(run(shim, ["review", "--repo", critical, "--level", "fresh-context", "--reviewer", "peer", "--blocking-findings", "0", "--advisory-findings", "0"], { env }).status, 0); assert.equal(status(critical).review_requirement.accepted, false);

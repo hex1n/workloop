@@ -6,7 +6,7 @@
 **演进策略**：clean break；不保留上一版接口、字段、状态编码或历史数据读取能力
 **依据**：`lib/criterion.mjs`、`lib/task-engine.mjs`、`lib/application.mjs`、`README.md`、`skills/loop-core/REFERENCE.md`、`skills/workloop/SKILL.md` 现状实读
 
-**验证**：`npm test`；初始切换见 `docs/e2e-test/criterion-vocabulary-state-model/e2e-run-criterion-vocabulary-state-model-20260711T174613Z/execution-report.md`；Claude 复审修复见 `docs/e2e-test/criterion-vocabulary-state-model/e2e-run-review-fixes-20260712T013920Z/execution-report.md`
+**验证**：`npm test`；初始切换见 `docs/e2e-test/criterion-vocabulary-state-model/e2e-run-criterion-vocabulary-state-model-20260712-014613/execution-report.md`；Claude 复审修复见 `docs/e2e-test/criterion-vocabulary-state-model/e2e-run-review-fixes-20260712-093920/execution-report.md`
 
 ## TL;DR
 
@@ -590,8 +590,8 @@ taskloop archive-incompatible-state --repo <repo> \
 该命令不解析、不迁移、不重写原 task，只执行：
 
 1. 确认 `.taskloop/task.json` 是仓库内普通文件而非 symlink；
-2. 计算原文件摘要并创建 `.taskloop/archive/incompatible-<timestamp>-<digest>.json`；
-3. 使用同目录原子 rename 移走当前文件；目标已存在或跨设备时拒绝；
+2. 计算原文件摘要并创建 `.taskloop/archive/incompatible-<timestamp>-<digest>-<uuid>.json`；
+3. 使用同目录原子 rename 移走当前文件；UUID 保证同秒同内容归档不撞名，跨设备时拒绝；
 4. 写一个不含原内容的 receipt，记录 source path、archive path、digest、reason、granted_by 和时间；
 5. 此后用户显式运行新 `open`，新 task 不继承原 id、预算、proof 或 ledger lineage。
 

@@ -16,6 +16,12 @@ const ACTIONS = [];
 const INSTALL_LOCK_TIMEOUT_MS = 30_000;
 const INSTALL_LOCK_STALE_MS = 5 * 60_000;
 
+function localTimestamp(when = new Date()) {
+  const at = when instanceof Date ? when : new Date(when);
+  const pad = (value) => String(value).padStart(2, "0");
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())} ${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`;
+}
+
 function plan(kind, detail) {
   ACTIONS.push([kind, detail]);
 }
@@ -560,7 +566,7 @@ function withInstallLock(home, action) {
     try {
       fs.writeFileSync(
         path.join(lock, "owner.json"),
-        JSON.stringify({ pid: process.pid, token, at: new Date().toISOString() }) + "\n",
+        JSON.stringify({ pid: process.pid, token, at: localTimestamp() }) + "\n",
         "utf8",
       );
       break;

@@ -56,9 +56,15 @@ Other lifecycle commands:
 taskloop suspend --reason needs-input --remaining "credential" \
   --failure "cannot authenticate" --next-action "provide test access"
 taskloop resume --reason "access supplied"
+taskloop join --reason "continue this active task in the current host session"
 taskloop not-needed --evidence "read-only probe showed the goal already holds"
 taskloop abandon --reason "superseded"
 ```
+
+An active task's latest episode owns Stop adjudication and its envelope. Other
+host sessions stop freely, cannot write the envelope or task/git control state,
+and should use a separate worktree for parallel work. `join` is the explicit
+active-task handoff; suspended tasks continue with `resume`.
 
 Proof assurance and change assurance are separate. Weak criterion inputs cause
 `criterion_assurance_gap`; strengthen the criterion or explicitly record a
@@ -79,6 +85,9 @@ audited. `status` reports `proof_assurance`, `machine_risk_floor`, and
 `task.json` is schema v2 only. Archive an incompatible task without interpreting
 it using `archive-incompatible-state --reason ... --granted-by user`, then open
 a new task. The new runtime writes only `~/.taskloop/outcomes-v2.jsonl`.
+Persisted taskloop times use local wall-clock `YYYY-MM-DD HH:mm:ss`; generated
+artifact names use `YYYYMMDD-HHmmss`. Neither form includes `T`, milliseconds,
+an offset, or `Z`.
 
 ## Install and verify
 

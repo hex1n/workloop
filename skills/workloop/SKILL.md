@@ -52,6 +52,9 @@ Automatic policy closes on a fresh satisfied Stop only when closure is
 eligible. Explicit policy uses `achieve`. Otherwise choose exactly one honest
 path: `not-needed --evidence` before writes, or `abandon --reason`. Suspension
 is a pause, not a terminal outcome, and requires a complete judgment snapshot.
+Only the latest episode's host session drives Stop and envelope writes. Use
+`join --reason` for an explicit active-task handoff; parallel work uses a
+separate worktree. Suspended work continues with `resume --reason`, not join.
 
 ## 5. Report
 
