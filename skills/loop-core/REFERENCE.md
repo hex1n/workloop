@@ -1,137 +1,135 @@
 # Loop Core
 
-Shared reference for the `workloop` skill and for any external skill that
-composes with taskloop through this contract. This directory intentionally has
-no `SKILL.md`: it is supporting material, not an invocable workflow. The loop
-system is **taskloop** (`~/bin/taskloop.mjs`); this file is its shared vocabulary,
-organized around the task-first object model.
+taskloop supervises one durable **task**. A task owns a goal, executable
+criterion, structured alignment, write envelope, budgets, evidence, reviews,
+attempts, and episodes. The runtime is `~/bin/taskloop.mjs`; task state is
+private repository state under `.taskloop/`, never project policy.
 
-## The Task
+## Criterion observations
 
-The **task** is the durable unit of one loop run. Everything else — episodes, rounds, evidence — lives underneath it.
+The criterion has exactly three observations:
 
-- **Goal**: the user-visible outcome, stated without naming an implementation unless the user already approved one.
-- **Criterion**: a machine-checkable done-when (see *Sourcing The Criterion*). There is no claim-based success — green always comes from a fresh criterion run.
-- **Alignment**: one required line — "green ⇒ goal because <what the check exercises>; not covered: <gaps>" (see *Criterion-Goal Alignment*).
-- **Envelope**: the files/tables/interfaces/git surface the task may touch (see *The Envelope*).
-- **Budgets**: rounds (default eight), and opt-in writes / wall-clock / output tokens — all **task-level**, never refilled by resuming (see *Episodes, Suspend, And Resume*). Token spend is tallied per episode from the runtime transcript (best-effort telemetry) and lands on the outcome ledger as `output_tokens_estimate`, so external analysis can see what a loop costs, not just whether it closed green.
+- `unsatisfied`: the done-when does not hold yet;
+- `satisfied`: the done-when holds now;
+- `indeterminate`: the runtime cannot adjudicate it.
 
-Task state lives in `.taskloop/task.json`, created only by `taskloop open`. It is gitignored, private to the loop, and **non-authoritative** — never a project policy source. **Evidence** for any completion claim is real tool output, status/diff, command output, SQL/API response, read-only verification, or an execution report. Prose alone is not evidence.
+Criterion satisfied is not task achieved. A fresh satisfied observation may
+still be held by drift, a missing unsatisfied witness, or an unreviewed weak
+sensor. Command exit codes are mapped at the execution boundary; tri-state
+adapters follow [ADAPTERS.md](ADAPTERS.md).
 
-## Skill Composition Seam
+Every criterion definition has a stable `criterion_definition_hash` and a
+non-reusable `criterion_generation_id`. Any criterion, policy, declared-input,
+or trust-exemption amendment creates a new generation. Witnesses and reviews
+bind to the generation and never carry across that boundary.
 
-taskloop composes through data, not routing. Any upstream skill may produce a
-goal, executable criterion (or criterion file), alignment line, write envelope,
-and optional evidence/resume metadata. `workloop` validates that handoff and
-drives the task without knowing who produced it. No upstream skill name is part
-of taskloop's interface, and taskloop never requires a planner, test framework,
-reviewer, report format, or scheduler to be installed.
+Criterion execution is read-only. The runtime snapshots tracked and untracked
+repository content before and after every open, Stop, `verify`, and `achieve`
+run. A changed path makes the observation indeterminate with
+`criterion_side_effect`; on an existing task it also advances artifact and
+substantive revision so old reviews expire.
 
-When an evidence format needs interpretation, keep its producer outside the
-core and provide a read-only criterion adapter satisfying
-[ADAPTERS.md](ADAPTERS.md). Adapters translate external evidence into the stable
-exit-code contract while the loop state machine remains unchanged. Declare that
-contract with `--criterion-protocol tri-state`; binary remains the default for
-ordinary commands whose exit 2 is a failure.
+## Lifecycle and closure
 
-## Sourcing The Criterion
-
-The only real fork in the work loop is where the red comes from:
-
-- **given** — the approved plan already carries the check.
-- **recovered** — reproduce the failure first; the red is earned from the world, not declared.
-- **absent (keep-green)** — a verification task whose criterion is legitimately green; open with the keep-green reason. Green is such a task's steady state, not a success event: the stop gate never auto-closes it, only the explicit verbs (`done`, `not-needed`, `abandon`) do — a red, by contrast, is the regression alarm and burns rounds as usual.
-
-Open the task with:
+Lifecycle is a closed sum type:
 
 ```text
-node ~/bin/taskloop.mjs open --repo <repo> --goal "<one line>" \
-  --criterion "<executable check, red until done>" \
-  [--criterion-protocol binary|tri-state] \
-  --alignment "green ⇒ goal because <...>; not covered: <...>" \
-  --files "<glob>" [--rounds 8] [--writes N] [--wall-clock-minutes M] [--token-budget T]
+active
+suspended(needs_input | stuck | out_of_budget)
+terminal(achieved | not_needed | abandoned)
 ```
 
-`taskloop open` runs the criterion once and refuses an already-green start (red at birth — an already-green criterion cannot prove the task) or one the machine cannot execute. Do not hand-write `task.json`; the CLI owns it. Prefer a **criterion adapter** over a hand-written check when the done-when reads evidence produced elsewhere; the adapter interface in [ADAPTERS.md](ADAPTERS.md) makes the known traps — vacuous pass, stale green, collapsed verdicts — unrepresentable. Adapters live with their evidence producer or consuming project; taskloop ships no format-specific adapter.
+Closure is derived only for active tasks:
 
-Red-at-birth is the strict default, but the invariant it enforces is not "red at open" — it is *a green close requires the criterion to have been witnessed red at least once on this sensor*. When the failing check does not exist yet (the write-the-failing-check-first flow: an aggregate criterion — a test suite, an assertion set, a lint gate, whatever the project runs — still passes until you add the case that fails), open with `--earn-red --reason <why no red exists yet>`. The task opens on green but the close stays **barred** until one red is witnessed by a metered gate — a red Stop gate or a red `done` (a read-only `verify` stays free and does not flip the witness) — after which a fresh green closes it. A never-red task runs out of budget rather than closing, so the discrimination proof cannot be skipped, only deferred. `--earn-red` and `--keep-green` are opposite intents (a red still to come vs. a green steady state) and cannot combine. Amending the criterion resets the witness: the red vouched for the old sensor, so the moved one must earn its own. The state rides the ledger as `earn_red` / `red_witnessed`.
+```text
+not_ready(criterion_unobserved | criterion_unsatisfied | criterion_indeterminate)
+held(sensor_drift | unsatisfied_not_witnessed | weak_sensor_unreviewed)
+eligible
+```
 
-The criterion's own input files are fingerprinted at open; a green whose check files changed since (editing the test instead of the code) is a moved sensor, not a proof — both close doors refuse it until the move is re-blessed through `amend --criterion --reason`, which re-fingerprints. The drift event stays on the outcome ledger as `criterion_input_drift` even after the re-bless.
+`eligible` is advisory. Automatic policy closes only when a Stop runs the
+criterion again and still sees satisfied. Explicit policy closes only through
+`achieve`, which also runs the criterion again. `not-needed --evidence` and
+`abandon --reason` are separate terminal paths; not-needed is allowed only
+before any witnessed write.
 
-When the criterion reads the very file the task rewrites — a marker written into a doc, a migration whose check greps its own output — that file's change is the work, not a moved sensor. Declare it with `--criterion-subject <repo-relative file>` (at open or `amend`): its change is exempt from the drift refusal, while every other input still trips it. The exemption is a trust grant, never an inference — it names exact files (no globs), must sit inside the envelope, and can never be the criterion file itself; a checker moves only through `amend --criterion`. Envelope membership is necessary but not sufficient: write permission and proof exemption are separate authorizations, granted separately and recorded separately (`self`/`user`). The declaration rides the ledger (`criterion_subject`, `criterion_subject_changed`), the close echoes each exempt change with whether it was machine-witnessed, and amending the criterion drops the exemption bound to the old check.
+## Criterion policies
 
-## Criterion-Goal Alignment
+The CLI accepts three named policies and persists only their tuple:
 
-Red-at-birth proves the criterion can tell "done" from "not started"; it cannot prove the criterion covers the goal. A weak criterion (a file exists, a command merely runs) turns the stop gate into a rubber stamp.
+| CLI | Stored name in discussion | Open | Witness | Close |
+|---|---|---|---|---|
+| `default` | `default` | unsatisfied | required | automatic |
+| `deferred-witness` | `deferred_witness` | determinate | required | automatic |
+| `steady-satisfied` | `steady_satisfied` | determinate | none | explicit |
 
-- The `--alignment` line is required at open. If the honest line is "green proves little", strengthen the criterion before starting.
-- Verification outside the machine criterion (slow suites, manual checks, deployment smoke) must be named in the alignment line and reported as closeout evidence, not silently dropped.
-- At closeout, re-read the alignment line: when the work revealed the criterion under-covers the goal, `amend` it with a reason — or report the gap — before claiming `done`.
+No other tuple is valid in schema v1. Non-default policies require a rationale.
+Default open takes its unsatisfied witness immediately. Deferred witness can
+open satisfied, but closure remains held until a metered Stop or `achieve`
+observes unsatisfied. Diagnostic `verify` never records an observation,
+witness, attempt, or round. Steady satisfied never auto-closes on Stop.
 
-Two-domain fit: a backend loop whose criterion runs focused API tests but not the data backfill it also changed; a docs loop whose criterion checks that links resolve but not that the new section renders in the published site.
+## Opening a task
 
-### The Independence Ladder (a second sensor for criterion-weak work)
+```text
+node ~/bin/taskloop.mjs open --repo <repo> --goal "<outcome>" \
+  (--criterion "<command>" | --criterion-file <repo-relative-file>) \
+  --criterion-policy default \
+  --alignment-because "<what the check exercises>" \
+  --not-covered "<gap>" \
+  --files "<glob>"
+```
 
-The criterion is the loop's one sensor, and it is self-administered: the same agent runs it, reads the verdict, writes `done`. That is enough when the criterion is objective and complete (a given test for a bug fix). It is not enough for **criterion-weak** work — refactors, migrations, design-shaped changes — where the machine check passes while the real done-ness (structure, coverage, "is this the right thing") goes unjudged. There the load-bearing sensor is an **independent review**, and its value scales with how uncorrelated the reviewer's failure modes are with the author's:
+Use `deferred-witness --reason` when the failing check still needs to be
+written. Use `steady-satisfied --reason` for a guard or observation task whose
+normal birth observation may already be satisfied.
 
-- **self-reread** — never independent; the author's context is what is compromised.
-- **fresh-context** — a read-only reviewer with only the artifact and the standard, none of the authoring context; washes session-state contamination (optimism, sunk cost, tunnel vision), not model-level blind spots.
-- **second-model** — a different model; washes model-level blind spots too. Prefer it when available.
+The envelope authorizes writes; it does not exempt proof inputs. Exact
+`--criterion-subject` paths are explicit trust exemptions for files that are
+both criterion inputs and intended work. They must remain inside the envelope
+and cannot name the criterion file itself.
 
-Record the level reached with `taskloop review --level <second-model|fresh-context|self-reread>`. The engine records the provenance (which level, not a verdict — a review is a probabilistic signal fed back into the loop body, never a machine gate) so the outcome ledger shows how independently each task was checked; external analysis can compare review independence with rework. When the runtime cannot supply the strongest level, drop a rung and record the downgrade. The ledger's `review_level` is the strongest level *ever* recorded on the task, not tied to the closed state — so review late, after the last substantive edit, or it can overstate what actually closed.
+## Review acceptance
 
-## The Envelope
+Weak sensors are those outside the repository or without full declared-input
+coverage. They require a review at `fresh_context` or `second_model`, bound to
+the current `criterion_generation_id`, last substantive task revision and
+artifact revision, with zero blocking findings. `self_reread` is telemetry only.
+Every write-shaped call and every substantive amendment expires the review.
+`achieve --provisional` may bypass only `weak_sensor_unreviewed`, never drift or
+a missing witness.
 
-The envelope is the write boundary, declared at open and enforced by the PreToolUse hook. Writes outside it are denied; **reads are never blocked**, so a task can always still read and verify. The opt-in write, wall-clock, and token budgets bound the never-stopping side, and reads and verification commands never burn or hit them.
+```text
+taskloop review --level second-model --reviewer <id> \
+  --blocking-findings 0 --advisory-findings 1
+```
 
-Every authority expansion — destructive, network, install scripts, a git op, a whole-repo envelope — is recorded on the task as a **grant with provenance**: `self` unless the human's blessing is recorded with `--granted-by user`. The machine cannot verify the judgment behind an expansion, only who made it; the ledger's `self_granted` count makes self-authorized power visible to external analysis. Provenance is a record, never a gate.
+CLI enums use kebab-case; persisted enums use snake_case.
 
-Run `git add`, `commit`, `push`, `reset`, `restore`, `checkout`, or `clean` only after the user explicitly asks, and only when the envelope authorizes it — `open`/`amend` with `--git-allowed <op> --git-reason <why>`. Destructive git, remote execution (`curl | sh`), install scripts, and secret dumps stay denied unless the envelope opens them. Destructive operations still require explicit user intent even when authorized.
+## Suspension and structural work
 
-## Episodes, Suspend, And Resume
+Suspension is sticky. Stop releases without mutation; reads and `verify` remain
+free; writes and terminal-success verbs require `resume --reason`. An
+out-of-budget task must first increase its task-level budget with `amend`.
 
-An **episode** is one continuous run of a task under a single session. Budgets are task-level, so resuming never refills them — repeated equivalent failure suspends as `stuck`; the round cap suspends as `out_of_budget`; missing input suspends as `needs_input`.
+A structural criterion asserts the whole move: the removal, absence of live
+references, and the new positioning where ownership lives. Checking only that
+one file disappeared is not sufficient.
 
-Suspend is **not a closure** — the task stays open with a sticky `suspension` object. Writes pause; reads and verification stay free. Clear it only with `resume --reason <what changed>`; a direction change first uses `amend --goal/--criterion --reason`. A user suspend closes the current episode; a machine suspend does not invent a session boundary. The snapshot has two halves: the machine records changed files, while the human supplies the three judgment lines (remaining criterion, current failure, next safe action). The machine also keeps the **attempt ledger**; the next real episode's banner repeats the current goal, snapshot, and dead ends. A different session supersedes the previous episode rather than sharing it.
+## State, ledger, and upgrade
 
-## Terminal States
+`task.json` accepts only `schema_version: 1`. Incompatible state is never
+interpreted or migrated. Preserve it byte-for-byte with explicit authorization:
 
-A task closes exactly one of three ways; only the first is machine-written:
+```text
+taskloop archive-incompatible-state --repo <repo> \
+  --reason "upgrade to schema v1" --granted-by user
+```
 
-| State | Meaning |
-| --- | --- |
-| `done` | Criterion green from a fresh run (the stop gate or the `done` verb). The only machine-written success. |
-| `not_needed` | Read-only verification showed no change was needed (`not-needed --evidence`). |
-| `abandoned` | Superseded or dropped (`abandon --reason`). |
+The runtime writes only `~/.taskloop/outcomes-v1.jsonl`. Ledger events use
+`event_schema_version: 1`; task adjudication never reads the ledger. Appends are
+best-effort and report task id, revision, and allocated sequence on failure.
+`audit` reports gaps as incomplete telemetry and isolates corrupt rows.
 
-`taskloop open` also writes a `state: open` row to the outcome ledger, and the terminal row carries the same task id — so a task that vanishes without a closing verb (state dir deleted, work silently dropped) remains visible as an open with no matching close.
-
-The stop gate never writes success on a red criterion. `stuck` and `out_of_budget` create sticky suspension events while the task remains open; an `out_of_budget` run whose every round failed differently is reported as still-moving. Raise the round budget with `amend --rounds --reason` before `resume --reason` when more writes are needed.
-
-## Concurrency
-
-Default to one writer task per worktree. For parallel work use separate git worktrees — each carries its own `.taskloop/` task, and one integrator session owns the cross-worktree git operations and merges after each writer's task reaches a terminal state. There is no shared-worktree partitioned mode: a second writer gets its own worktree, not a claim inside yours.
-
-## Closeout And Rework
-
-Every closeout report includes the terminal state; the done-when verification result or why it cannot run; the actual touched targets (machine-observed in `evidence.touched_files`) versus the declared envelope; evidence links or command outputs for completion claims; remaining risks; and, for a suspend, the three judgment lines.
-
-Treat a task as rework when it repairs previously delivered work or resumes a prior non-green close. If the target repo has `docs/rework-log.md` or its workflow contract names that file, append a compact rework cause line; otherwise include the rework cause in the closeout report. The default round budget is eight unless the user or target repo states a different cap.
-
-## Structural Tasks (delete, rename, migrate)
-
-The visible act of a structural task — a file removed — is only one part of the
-move; a criterion that checks only that part goes green while stale references
-and the old positioning survive (the observed shape: a migration "done" with the
-old files still present and the README still pointing home). A structural
-criterion must assert the *whole* move: the removal, the absence of any live
-reference to what moved, and the new positioning stated where ownership lives.
-
-## Generalization Samples
-
-These primitives must fit at least two different domains:
-
-- backend sample: change an API handler, verify with focused tests and a response assertion;
-- frontend sample: change a UI workflow, verify with a browser check and DOM or screenshot evidence.
-
-Rules that only fit one project, product, table name, enum, or business term do not belong in this shared reference.
+Git mutations still require explicit user intent and an envelope grant. Use one
+writer per worktree. Host-specific binding is in [HOSTS.md](HOSTS.md).

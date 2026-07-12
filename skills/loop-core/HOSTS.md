@@ -13,7 +13,7 @@ Each line was earned in a live dual-host spike (Claude Code 2.1.207, Codex CLI
   pushing a suspended task gets a clean release each time (the Stop hook does
   not burn budget on a suspended task), so every extra push is pure driver
   waste.
-- Judge success from the outcome ledger (`~/.taskloop/outcomes.jsonl`), not
+- Judge success from the outcome ledger (`~/.taskloop/outcomes-v1.jsonl`), not
   from the transcript: the terminal row is the machine's verdict, the
   transcript is the story.
 - Give the driver itself an outer wall-clock budget: a wedged host session

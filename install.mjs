@@ -20,6 +20,12 @@ function plan(kind, detail) {
   ACTIONS.push([kind, detail]);
 }
 
+function installFailpoint(name) {
+  if (process.env.TASKLOOP_INSTALL_FAILPOINT === name) {
+    throw new Error(`taskloop installer injected interruption at ${name}`);
+  }
+}
+
 function exists(file) {
   try {
     fs.accessSync(file);
@@ -574,7 +580,7 @@ function withInstallLock(home, action) {
   }
 }
 
-function installTaskloopRuntimeUnlocked(repo, home, dry) {
+function installTaskloopRuntimeUnlocked(repo, home, dry, { activate = true } = {}) {
   const files = runtimeFiles(repo);
   if (!files.length) throw new Error(`taskloop runtime is empty under ${repo}`);
   const hash = runtimeHash(files);
@@ -585,9 +591,11 @@ function installTaskloopRuntimeUnlocked(repo, home, dry) {
     const wrapper =
       "#!/usr/bin/env node\n\n" +
       `import "./.taskloop-runtime/${hash}/bin/taskloop.mjs";\n`;
-    // Activation is last, so every process sees one complete pinned runtime.
-    writeTextAtomicIfChanged(path.join(home, "bin", "taskloop.mjs"), wrapper, dry);
-    pruneRuntimes(runtimeRoot, hash, dry);
+    if (activate) {
+      // Activation is last, so every process sees one complete pinned runtime.
+      writeTextAtomicIfChanged(path.join(home, "bin", "taskloop.mjs"), wrapper, dry);
+      pruneRuntimes(runtimeRoot, hash, dry);
+    }
     return { hash, versionRoot };
   };
   return install();
@@ -728,8 +736,49 @@ export function installTaskloopAssets(repo, home, dry = false) {
 
 export function installTaskloop(repo, home, dry = false) {
   const install = () => {
-    const runtime = installTaskloopRuntimeUnlocked(repo, home, dry);
+    const runtime = installTaskloopRuntimeUnlocked(repo, home, dry, { activate: false });
+    const releaseId = runtime.hash;
+    const journal = path.join(home, "bin", ".taskloop-activation-journal.json");
+    const releaseManifest = path.join(home, "bin", ".taskloop-active-release.json");
+    const journalRow = {
+      journal_version: 1,
+      release_id: releaseId,
+      runtime_contract: 2,
+      status: "activating",
+      steps: { runtime_staged: true, skills_activated: false, shim_activated: false, manifest_committed: false },
+    };
+    writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
+    installFailpoint("runtime-staged");
     installTaskloopAssetsUnlocked(repo, home, dry);
+    if (ACTIONS.some(([kind]) => kind === "error")) {
+      journalRow.status = "needs_manual_intervention";
+      writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
+      return runtime;
+    }
+    journalRow.steps.skills_activated = true;
+    writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
+    installFailpoint("skills-activated");
+    const wrapper = "#!/usr/bin/env node\n\n" + `import "./.taskloop-runtime/${runtime.hash}/bin/taskloop.mjs";\n`;
+    writeTextAtomicIfChanged(path.join(home, "bin", "taskloop.mjs"), wrapper, dry);
+    journalRow.steps.shim_activated = true;
+    writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
+    installFailpoint("shim-activated");
+    const skillManifest = path.join(home, "bin", ".taskloop-managed-skills.json");
+    const manifestRow = {
+      release_manifest_version: 1,
+      release_id: releaseId,
+      runtime_contract: 2,
+      runtime_digest: runtime.hash,
+      managed_skills_manifest_digest: dry || !exists(skillManifest) ? null : createHash("sha256").update(fs.readFileSync(skillManifest)).digest("hex"),
+    };
+    writeTextAtomicIfChanged(releaseManifest, JSON.stringify(manifestRow, null, 2) + "\n", dry);
+    journalRow.steps.manifest_committed = true;
+    journalRow.status = "committed";
+    writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
+    installFailpoint("manifest-committed");
+    if (!dry) fs.rmSync(journal, { force: true });
+    installFailpoint("journal-cleaned");
+    pruneRuntimes(path.join(home, "bin", ".taskloop-runtime"), runtime.hash, dry);
     return runtime;
   };
   return dry ? install() : withInstallLock(home, install);
