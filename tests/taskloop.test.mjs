@@ -150,9 +150,9 @@ test("default open witnesses unsatisfied and later satisfied is eligible", () =>
 test("deferred witness holds satisfied until unsatisfied is witnessed", () => {
   const deferred = task({ policyName: "deferred_witness", policyRationale: "test first", observation: observation("satisfied") });
   assert.deepEqual(closureProjection(deferred), { state: "held", reasons: ["unsatisfied_not_witnessed"] });
-  const red = transition(deferred, { type: "observe", source: "stop", observation: observation("unsatisfied"), at: AT }).task;
-  const green = transition(red, { type: "observe", source: "stop", observation: observation("satisfied"), at: AT }).task;
-  assert.deepEqual(closureProjection(green), { state: "eligible" });
+  const witnessed = transition(deferred, { type: "observe", source: "stop", observation: observation("unsatisfied"), at: AT }).task;
+  const resatisfied = transition(witnessed, { type: "observe", source: "stop", observation: observation("satisfied"), at: AT }).task;
+  assert.deepEqual(closureProjection(resatisfied), { state: "eligible" });
 });
 
 test("steady satisfied is eligible but explicit", () => {
@@ -763,6 +763,142 @@ test("repeated equivalent failures suspend as stuck before the round cap", (t) =
   assert.deepEqual(state.lifecycle_log.at(-1), { event: "suspend", source: "stop", acting_session: null, at: state.lifecycle.suspended_at, task_revision: state.task_revision, reason: "stuck" });
 });
 
+test("seven revision-stagnant attempts with varied signatures suspend as stuck", (t) => {
+  const fx = fixture(t);
+  fs.writeFileSync(path.join(fx.repo, "check.mjs"), "console.log(process.hrtime.bigint().toString()); process.exit(1);\n");
+  assert.equal(open(fx, "default", ["--rounds", "20"]).status, 0);
+  const stop = () => run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const blocked = stop();
+    assert.match(blocked.stdout, /"decision":"block"/); assert.doesNotMatch(blocked.stdout, /suspended/);
+  }
+  const seventh = stop();
+  assert.match(seventh.stdout, /suspended\(stuck\)/); assert.match(seventh.stdout, /no artifact progress across 7 attempts/);
+  const state = loadTask(fx.repo);
+  assert.equal(state.lifecycle.state, "suspended"); assert.equal(state.lifecycle.reason, "stuck"); assert.equal(state.spent.rounds, 7);
+  assert.equal(new Set(state.attempts.map((attempt) => attempt.signature)).size, 7);
+});
+
+test("a write between stops resets the no-progress counter", (t) => {
+  const fx = fixture(t);
+  fs.writeFileSync(path.join(fx.repo, "check.mjs"), "console.log(process.hrtime.bigint().toString()); process.exit(1);\n");
+  assert.equal(open(fx, "default", ["--rounds", "20"]).status, 0);
+  const stop = () => run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
+  for (let attempt = 0; attempt < 6; attempt += 1) assert.match(stop().stdout, /"decision":"block"/);
+  const write = run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt"), content: "more\n" } }) });
+  assert.equal(write.status, 0, write.stderr);
+  const afterWrite = stop();
+  assert.match(afterWrite.stdout, /"decision":"block"/); assert.doesNotMatch(afterWrite.stdout, /suspended/);
+  assert.equal(loadTask(fx.repo).lifecycle.state, "active");
+  for (let attempt = 0; attempt < 5; attempt += 1) assert.match(stop().stdout, /"decision":"block"/);
+  assert.match(stop().stdout, /suspended\(stuck\)/);
+  assert.equal(loadTask(fx.repo).lifecycle.reason, "stuck");
+});
+
+test("a satisfied adjudication between stops resets the no-progress streak", (t) => {
+  const fx = fixture(t);
+  fs.writeFileSync(path.join(fx.repo, "checker.mjs"), "import fs from 'node:fs'; if (fs.existsSync('flip')) process.exit(0); console.log(process.hrtime.bigint().toString()); process.exit(1);\n");
+  const opened = run(["open", "--repo", fx.repo, "--goal", "finish", "--criterion", "node checker.mjs", "--criterion-policy", "default", "--alignment-because", "the checker exercises the result", "--not-covered", "deployment", "--files", "work.txt", "--risk", "routine", "--risk-reason", "isolated reversible fixture", "--rounds", "20"], { env: fx.env });
+  assert.equal(opened.status, 0, opened.stderr);
+  const stop = () => run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
+  for (let attempt = 0; attempt < 4; attempt += 1) assert.match(stop().stdout, /"decision":"block"/);
+  fs.writeFileSync(path.join(fx.repo, "flip"), "on\n");
+  const satisfied = stop();
+  assert.doesNotMatch(satisfied.stdout, /suspended/); assert.equal(loadTask(fx.repo).lifecycle.state, "active");
+  fs.rmSync(path.join(fx.repo, "flip"));
+  for (let attempt = 0; attempt < 6; attempt += 1) {
+    const blocked = stop();
+    assert.match(blocked.stdout, /"decision":"block"/); assert.doesNotMatch(blocked.stdout, /suspended/);
+  }
+  assert.match(stop().stdout, /no artifact progress across 7 attempts/);
+  assert.equal(loadTask(fx.repo).lifecycle.reason, "stuck");
+});
+
+test("judgment loop: rubric-bearing tri-state adapter opens unsatisfied and closes only by explicit achieve", (t) => {
+  const fx = fixture(t);
+  fs.writeFileSync(path.join(fx.repo, "acceptance.mjs"), "// rubric: clear, concrete, honest\nimport fs from 'node:fs';\nlet verdict = '';\ntry { verdict = fs.readFileSync('verdict.txt', 'utf8').trim(); } catch {}\nif (verdict === 'accepted') process.exit(0);\nif (verdict === '' || verdict === 'pending') { console.log('acceptance does not hold yet'); process.exit(1); }\nconsole.log('cannot adjudicate: ' + verdict); process.exit(2);\n");
+  const opened = run(["open", "--repo", fx.repo, "--goal", "taste deliverable", "--criterion-file", "acceptance.mjs", "--criterion-protocol", "tri-state", "--criterion-policy", "steady-satisfied", "--reason", "human acceptance closes explicitly", "--alignment-because", "the adapter reads the recorded human verdict against the embedded rubric", "--not-covered", "taste quality itself", "--files", "draft.txt", "--risk", "routine", "--risk-reason", "isolated fixture"], { env: fx.env });
+  assert.equal(opened.status, 0, opened.stderr);
+  assert.match(opened.stdout, /criterion unsatisfied/);
+  const stop = () => run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
+  assert.match(stop().stdout, /"decision":"block"/);
+  fs.writeFileSync(path.join(fx.repo, "verdict.txt"), "accepted\n");
+  assert.match(stop().stdout, /explicit achieve required/);
+  assert.equal(loadTask(fx.repo).lifecycle.state, "active");
+  assert.equal(run(["achieve", "--repo", fx.repo], { env: fx.env }).status, 0);
+  assert.equal(loadTask(fx.repo).lifecycle.outcome, "achieved");
+});
+
+test("untracked nudge and deny route to the workloop skill host-neutrally", (t) => {
+  const fx = fixture(t);
+  const write = (file, sessionId) => run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: sessionId, tool_name: "Write", tool_input: { file_path: path.join(fx.repo, file), content: "x\n" } }) });
+  for (const sessionId of ["11111111-2222-4333-8444-555555555555", "codex-thread-shaped-id"]) {
+    const notice = write("first.txt", sessionId);
+    assert.match(notice.stderr, /never invent a check/); assert.match(notice.stderr, /workloop\/SKILL\.md/);
+    fs.writeFileSync(path.join(fx.repo, "first.txt"), "x\n");
+    const denied = write("second.txt", sessionId);
+    assert.match(denied.stdout, /permissionDecision.*deny/);
+    assert.match(denied.stdout, /never invent a check/); assert.match(denied.stdout, /workloop\/SKILL\.md/);
+    assert.doesNotMatch(denied.stdout, /claude|codex/i);
+    fs.rmSync(path.join(fx.repo, "first.txt"));
+  }
+});
+
+test("report emits a machine-generated closeout artifact", (t) => {
+  const fx = fixture(t); assert.equal(open(fx).status, 0);
+  assert.equal(run(["review", "--repo", fx.repo, "--level", "fresh-context", "--reviewer", "r1", "--blocking-findings", "0", "--advisory-findings", "2"], { env: fx.env }).status, 0);
+  const md = run(["report", "--repo", fx.repo], { env: fx.env });
+  assert.equal(md.status, 0, md.stderr);
+  assert.match(md.stdout, /fresh_context by r1: blocking 0, advisory 2/);
+  assert.notEqual(run(["report", "--repo", fx.repo, "--json", "--markdown"], { env: fx.env }).status, 0);
+  for (const heading of ["# taskloop report", "## Outcome", "## Goal", "## Criterion", "## Alignment", "## Reviews", "## Envelope and touched files", "## Assurance", "## Budget"]) assert.match(md.stdout, new RegExp(heading));
+  const parsed = JSON.parse(run(["report", "--repo", fx.repo, "--json"], { env: fx.env }).stdout);
+  for (const key of ["task_id", "generated_at", "lifecycle", "closure", "goal", "criterion", "proof_assurance", "alignment", "reviews", "grants", "envelope", "touched_files", "envelope_deviations", "assurance", "machine_risk_floor", "budget", "spent"]) assert.ok(key in parsed, key);
+  assert.deepEqual(parsed.envelope_deviations, []);
+  assert.equal(loadTask(fx.repo).artifact_revision, 0);
+  fs.writeFileSync(path.join(fx.repo, "done"), "yes\n");
+  run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
+  assert.equal(loadTask(fx.repo).lifecycle.outcome, "achieved");
+  const terminal = run(["report", "--repo", fx.repo], { env: fx.env });
+  assert.match(terminal.stdout, /- lifecycle: terminal\(achieved\)/);
+  assert.doesNotMatch(terminal.stdout, /- closure:/);
+});
+
+test("report on a suspended task carries the judgment snapshot", (t) => {
+  const fx = fixture(t); assert.equal(open(fx).status, 0);
+  for (let attempt = 0; attempt < 3; attempt += 1) run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
+  assert.equal(loadTask(fx.repo).lifecycle.state, "suspended");
+  const parsed = JSON.parse(run(["report", "--repo", fx.repo, "--json"], { env: fx.env }).stdout);
+  assert.equal(parsed.lifecycle.state, "suspended");
+  assert.ok(parsed.lifecycle.judgment.failure, "judgment snapshot present");
+  assert.match(run(["report", "--repo", fx.repo], { env: fx.env }).stdout, /## Judgment/);
+});
+
+test("publish-shaped commands require an explicit publish grant", (t) => {
+  const fx = fixture(t); assert.equal(open(fx).status, 0);
+  const hook = (command) => run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Bash", tool_input: { command } }) });
+  const denied = ["npm publish", "yarn publish", "pnpm publish --access public", "cargo publish", "twine upload dist/*", "docker push repo/img:tag", "helm push chart.tgz oci://registry", "mvn deploy", "gem push pkg.gem", "gh pr create --fill", "gh release create v1.0.0", "npm run build && docker push repo/img", "echo ok\nnpm publish", "echo ok\ngh pr create --fill", "/usr/local/bin/gh pr create --fill", "./gh release create v1", "npm \\\npublish", "gh pr \\\ncreate --fill", "npm\tpublish", "echo ok\r\nnpm publish", "npm pub\\\nlish", "gh p\\\nr create --fill", "gh pr cr\\\neate --fill"];
+  for (const command of denied) assert.match(hook(command).stdout, /publish grant/, command);
+  const exempt = ["echo deploy", "grep -rn publish lib/", "ls deploy/", "cat release-notes.md", "node --test tests/taskloop.test.mjs", "mkdir -p releases", "echo gh pr create", "grep 'gh issue create' README.md", "gh pr create-notes", "echo npm publish"];
+  for (const command of exempt) assert.doesNotMatch(hook(command).stdout, /publish grant/, command);
+  assert.match(hook("/usr/local/bin/npm publish").stdout, /publish grant/);
+  assert.match(hook("git push").stdout, /git operation.*authorization/i);
+  const granted = run(["amend", "--repo", fx.repo, "--publish-allowed", "--granted-by", "user", "--reason", "user requested publishing"], { env: fx.env });
+  assert.equal(granted.status, 0, granted.stderr);
+  assert.doesNotMatch(hook("npm publish").stdout, /publish grant/);
+  assert.equal(loadTask(fx.repo).grants.some((grant) => grant.kind === "publish"), true);
+  assert.match(JSON.stringify(JSON.parse(run(["status", "--repo", fx.repo], { env: fx.env }).stdout).machine_risk_floor), /critical/);
+});
+
+test("open-time publish grant is minted and raises the machine risk floor", (t) => {
+  const fx = fixture(t);
+  assert.equal(open(fx, "default", ["--publish-allowed", "--granted-by", "user", "--reason", "user requested publishing"]).status, 0);
+  const hook = (command) => run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Bash", tool_input: { command } }) });
+  assert.doesNotMatch(hook("npm publish").stdout, /publish grant/);
+  assert.equal(loadTask(fx.repo).grants.some((grant) => grant.kind === "publish"), true);
+  assert.match(JSON.stringify(JSON.parse(run(["status", "--repo", fx.repo], { env: fx.env }).stdout).machine_risk_floor), /critical/);
+});
+
 test("command safety and git operations require explicit recorded grants", (t) => {
   const fx = fixture(t); assert.equal(open(fx).status, 0);
   const hook = (command) => run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Bash", tool_input: { command } }) });
@@ -819,7 +955,7 @@ test("CLI side-effect criteria are indeterminate at open, verify, Stop, and achi
   assert.equal(rejected.status, 2); assert.match(rejected.stderr, /side effects/);
   fs.rmSync(path.join(fx.repo, "mutation"));
   assert.equal(open(fx).status, 0);
-  const statePath = path.join(fx.repo, ".taskloop", "task.json"); const active = loadTask(fx.repo); active.criterion.source = { kind: "file", value: "side.mjs" }; active.criterion.declared_inputs = [{ path: "side.mjs", hash: active.criterion.declared_inputs[0].hash }]; saveTask(fx.repo, active);
+  const active = loadTask(fx.repo); active.criterion.source = { kind: "file", value: "side.mjs" }; active.criterion.declared_inputs = [{ path: "side.mjs", hash: active.criterion.declared_inputs[0].hash }]; saveTask(fx.repo, active);
   const verified = run(["verify", "--repo", fx.repo], { env: fx.env }); assert.equal(verified.status, 2); assert.equal(loadTask(fx.repo).artifact_revision, 1);
   fs.rmSync(path.join(fx.repo, "mutation"));
   const achieved = run(["achieve", "--repo", fx.repo], { env: fx.env }); assert.equal(achieved.status, 2); assert.equal(loadTask(fx.repo).artifact_revision, 2);

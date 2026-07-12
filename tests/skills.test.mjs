@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 const ROOT = path.resolve(".");
-const files = ["README.md", "skills/loop-core/REFERENCE.md", "skills/loop-core/ADAPTERS.md", "skills/loop-core/HOSTS.md", "skills/workloop/SKILL.md"];
+const files = ["README.md", "skills/loop-core/REFERENCE.md", "skills/loop-core/ADAPTERS.md", "skills/loop-core/HOSTS.md", "skills/workloop/SKILL.md", "skills/judgmentloop/SKILL.md"];
 
 test("portable skill closure has no dangling relative markdown links", () => {
   for (const rel of files.filter((x) => x.startsWith("skills/"))) {
@@ -25,6 +25,15 @@ test("workloop remains task-facing and delegates shared semantics to loop-core",
   const skill = fs.readFileSync(path.join(ROOT, "skills/workloop/SKILL.md"), "utf8");
   assert.match(skill, /\.\.\/loop-core\/REFERENCE\.md/);
   assert.match(skill, /--criterion-policy/);
+  assert.match(skill, /achieve/);
+  assert.doesNotMatch(skill, /source-project|session id|\/Users\//);
+});
+
+test("judgmentloop remains task-facing and delegates shared semantics to loop-core", () => {
+  const skill = fs.readFileSync(path.join(ROOT, "skills/judgmentloop/SKILL.md"), "utf8");
+  assert.match(skill, /\.\.\/loop-core\/REFERENCE\.md/);
+  assert.match(skill, /\.\.\/loop-core\/ADAPTERS\.md/);
+  assert.match(skill, /steady-satisfied/);
   assert.match(skill, /achieve/);
   assert.doesNotMatch(skill, /source-project|session id|\/Users\//);
 });

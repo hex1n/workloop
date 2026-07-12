@@ -18,6 +18,16 @@ explicit. Use `default` when the criterion is currently unsatisfied,
 `deferred_witness` when the failing check must be written first, and
 `steady_satisfied` only for an explicitly closed guard task.
 
+Elicit the criterion when none arrives with the work: interview the requester
+for the done-when, the write envelope, and the not-covered gaps — the
+interview's product is the open command. Never invent a check to make the
+gate pass; `open` structurally requires an executable check, so when no honest
+criterion exists yet, stay out of the loop and ask — the interview comes
+first. Provenance maps to policy: a given check opens `default`;
+recovering the failure first — writing the failing check before the fix —
+opens `deferred-witness`; an absent criterion guarding a steady state opens
+`steady-satisfied`.
+
 ## 2. Open
 
 Open exactly one command or criterion file:
@@ -42,6 +52,11 @@ after each meaningful write. Criterion unsatisfied guides the next round;
 criterion indeterminate means repair evidence or environment, not product work.
 Never weaken or mutate the criterion to obtain satisfied.
 
+After roughly three consecutive unsatisfied rounds on the same cause, suspend
+as stuck with the dead-end list and resume in a fresh session: task state
+survives the context switch, and a clean session with a sharper prompt beats
+grinding polluted context.
+
 Read `status` after the last substantive write. A `criterion_assurance_gap`
 requires a stronger criterion or an explicit `accept-proof-gap`; reviewer prose
 cannot repair machine proof. When `review_requirement.level` is non-null and
@@ -49,6 +64,19 @@ not accepted, ask a reviewer at least that independent (`fresh_context` or
 `second_model`), feed blocking findings back into the loop, then record the
 current generation/revisions and blocking/advisory counts with `review`.
 taskloop only emits the requirement; reviewer scheduling belongs to the host.
+Feed only blocking findings back; never widen the envelope to chase advisory
+findings.
+
+### Steering
+
+Mid-loop requester input maps to one verb. A clarification is a plain
+revision — absorb it, restate the updated envelope, continue. A goal change
+is `amend --goal --reason`. A criterion change is `amend --criterion --reason`
+and a policy change is `amend --criterion-policy --reason` (either way a new
+generation is minted; old witnesses and reviews expire). An envelope extension
+is `amend --files --reason` (risk recomputes).
+A different objective altogether closes this task (`abandon --reason`) and
+opens a new one. Queueing later work belongs to the driver, not the loop.
 
 ## 4. Close without drift
 
@@ -56,6 +84,8 @@ Automatic policy closes on a fresh satisfied Stop only when closure is
 eligible. Explicit policy uses `achieve`. Otherwise choose exactly one honest
 path: `not-needed --evidence` before writes, or `abandon --reason`. Suspension
 is a pause, not a terminal outcome, and requires a complete judgment snapshot.
+A `needs_input` suspension must carry instructions the human can execute
+verbatim.
 
 ## 5. Report
 
