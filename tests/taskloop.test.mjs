@@ -323,8 +323,14 @@ test("ledger events use deterministic ids and audit gaps/duplicates/corruption",
   assert.match(validateEvent({ ...row, payload: { ...payload, surprise: true } }), /unknown payload field/);
   const dir = path.join(fx.home, ".taskloop"); fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "outcomes-v2.jsonl"), JSON.stringify(row) + "\n" + JSON.stringify(row) + "\n{bad\n");
-  const oldHome = process.env.HOME; process.env.HOME = fx.home;
-  try { const report = auditLedger(); assert.equal(report.exit, 2); assert.equal(report.warnings.length, 1); assert.equal(report.corruptions.length, 1); } finally { process.env.HOME = oldHome; }
+  const oldHome = process.env.HOME; const oldUserProfile = process.env.USERPROFILE;
+  process.env.HOME = fx.home; process.env.USERPROFILE = fx.home;
+  try {
+    const report = auditLedger(); assert.equal(report.exit, 2); assert.equal(report.warnings.length, 1); assert.equal(report.corruptions.length, 1);
+  } finally {
+    if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
+    if (oldUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = oldUserProfile;
+  }
 });
 
 test("CLI default chain opens unsatisfied and Stop closes only after satisfied", (t) => {
@@ -673,7 +679,9 @@ test("sibling worktree tasks are discovered and overlapping envelopes warn", (t)
   const siblingOpen = run(["open", "--repo", sibling, "--goal", "sibling", "--criterion-file", "check.mjs", "--criterion-policy", "default", "--alignment-because", "probe", "--files", "work.txt"], { env: fx.env });
   assert.equal(siblingOpen.status, 0, siblingOpen.stderr);
   const siblings = siblingWorktreeOpenTasks(fx.repo);
-  assert.equal(siblings.length, 1); assert.equal(fs.realpathSync(siblings[0].path), fs.realpathSync(sibling)); assert.deepEqual(siblings[0].files, ["work.txt"]);
+  assert.equal(siblings.length, 1);
+  const found = fs.statSync(siblings[0].path, { bigint: true }); const expected = fs.statSync(sibling, { bigint: true });
+  assert.deepEqual([found.dev, found.ino], [expected.dev, expected.ino]); assert.deepEqual(siblings[0].files, ["work.txt"]);
   assert.deepEqual(envelopeOverlap(["work.txt"], siblings[0].files, fx.repo, sibling), { level: "definite", patterns: ["work.txt"] });
   const primaryOpen = open(fx);
   assert.equal(primaryOpen.status, 0, primaryOpen.stderr); assert.match(primaryOpen.stderr, /definite envelope overlap/);
