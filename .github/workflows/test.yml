@@ -109,7 +109,14 @@ jobs:
         run: node --test --test-name-pattern="Windows repeatedly replaces task state" tests/windows.test.mjs
       - name: Windows child termination
         timeout-minutes: 3
-        run: node --test --test-name-pattern="Windows criterion timeout" tests/windows.test.mjs
+        run: |
+          $output = & node --test --test-reporter=spec --test-name-pattern="Windows criterion timeout" tests/windows.test.mjs 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) {
+            $escaped = $output.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+            Write-Output "::error title=Windows child termination::$escaped"
+            exit 1
+          }
+          Write-Output $output
       - name: Windows stale installer lock
         timeout-minutes: 3
         run: node --test --test-name-pattern="Windows installer reaps a stale lock" tests/windows.test.mjs
