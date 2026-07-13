@@ -88,6 +88,7 @@ for (const [label, executable, argsFor] of hookShells) {
     const fixture = installedFixture(t);
     const hooks = parsed(runNode(fixture.shim, ["hooks"], { env: fixture.env }), "hooks");
     const command = hooks.hooks.PreToolUse[0].hooks[0].command;
+    assert.equal(command, `node "${fixture.shim}"`, `${label} hook command must use Windows shell quoting`);
     const payload = JSON.stringify({
       hook_event_name: "PreToolUse",
       cwd: fixture.root,
