@@ -8,16 +8,65 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  portable:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest]
         node: [22, 24]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
       - run: npm test
+
+  windows:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, windows-2025]
+        node: [22, 24]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Runtime versions
+        run: |
+          node --version
+          npm --version
+          $PSVersionTable.PSVersion.ToString()
+      - name: PowerShell Core smoke
+        timeout-minutes: 2
+        run: node .\bin\taskloop.mjs help | Out-Null
+      - name: Windows PowerShell smoke
+        timeout-minutes: 2
+        shell: powershell
+        run: node .\bin\taskloop.mjs help | Out-Null
+      - name: Command Prompt smoke
+        timeout-minutes: 2
+        shell: cmd
+        run: node bin\taskloop.mjs help >NUL
+      - name: Portable skills
+        timeout-minutes: 2
+        run: npm run test:skills
+      - name: Windows environment
+        timeout-minutes: 5
+        run: npm run test:windows
+      - name: Architecture
+        timeout-minutes: 3
+        run: npm run test:architecture
+      - name: Installer
+        timeout-minutes: 5
+        run: npm run test:installer
+      - name: Behavioral and hook protocol
+        timeout-minutes: 5
+        run: npm run test:behavioral

@@ -26,3 +26,5 @@ taskloop ships the loop kernel: the runtime plus `loop-core`, `workloop`, and `j
 ## Docs gaps
 
 Re-derived something a fresh contributor should have known? Add one line here with the fact and where it was found.
+
+- Windows compatibility is gated on fixed GitHub-hosted Windows versions with separately bounded suite groups; shell/install/path/lock/timeout coverage lives in `tests/windows.test.mjs` and `.github/workflows/test.yml`.

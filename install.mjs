@@ -586,6 +586,15 @@ function withInstallLock(home, action) {
   }
 }
 
+function activateRuntimeShims(home, hash, dry) {
+  const nodeWrapper =
+    "#!/usr/bin/env node\n\n" +
+    `import "./.taskloop-runtime/${hash}/bin/taskloop.mjs";\n`;
+  const windowsWrapper = '@echo off\r\nnode "%~dp0taskloop.mjs" %*\r\n';
+  writeTextAtomicIfChanged(path.join(home, "bin", "taskloop.mjs"), nodeWrapper, dry);
+  writeTextAtomicIfChanged(path.join(home, "bin", "taskloop.cmd"), windowsWrapper, dry);
+}
+
 function installTaskloopRuntimeUnlocked(repo, home, dry, { activate = true } = {}) {
   const files = runtimeFiles(repo);
   if (!files.length) throw new Error(`taskloop runtime is empty under ${repo}`);
@@ -594,12 +603,9 @@ function installTaskloopRuntimeUnlocked(repo, home, dry, { activate = true } = {
   const versionRoot = path.join(runtimeRoot, hash);
   const install = () => {
     for (const entry of files) copyFile(entry.file, path.join(versionRoot, entry.relative), dry);
-    const wrapper =
-      "#!/usr/bin/env node\n\n" +
-      `import "./.taskloop-runtime/${hash}/bin/taskloop.mjs";\n`;
     if (activate) {
       // Activation is last, so every process sees one complete pinned runtime.
-      writeTextAtomicIfChanged(path.join(home, "bin", "taskloop.mjs"), wrapper, dry);
+      activateRuntimeShims(home, hash, dry);
       pruneRuntimes(runtimeRoot, hash, dry);
     }
     return { hash, versionRoot };
@@ -764,8 +770,7 @@ export function installTaskloop(repo, home, dry = false) {
     journalRow.steps.skills_activated = true;
     writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
     installFailpoint("skills-activated");
-    const wrapper = "#!/usr/bin/env node\n\n" + `import "./.taskloop-runtime/${runtime.hash}/bin/taskloop.mjs";\n`;
-    writeTextAtomicIfChanged(path.join(home, "bin", "taskloop.mjs"), wrapper, dry);
+    activateRuntimeShims(home, runtime.hash, dry);
     journalRow.steps.shim_activated = true;
     writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
     installFailpoint("shim-activated");
