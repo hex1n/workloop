@@ -122,7 +122,14 @@ jobs:
         run: node --test --test-name-pattern="Windows installer reaps a stale lock" tests/windows.test.mjs
       - name: Architecture
         timeout-minutes: 3
-        run: npm run test:architecture
+        run: |
+          $output = & node --test --test-reporter=spec tests/taskloop-architecture.test.mjs 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) {
+            $escaped = $output.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+            Write-Output "::error title=Windows architecture::$escaped"
+            exit 1
+          }
+          Write-Output $output
       - name: Installer
         timeout-minutes: 5
         run: npm run test:installer
