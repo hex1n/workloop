@@ -78,12 +78,12 @@ test("Windows install is repeatable and exposes taskloop to cmd and both PowerSh
 });
 
 const hookShells = [
-  ["cmd", process.env.ComSpec ?? "cmd.exe", (command) => ["/d", "/s", "/c", command]],
-  ["Windows PowerShell", "powershell.exe", (command) => ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]],
-  ["PowerShell Core", "pwsh.exe", (command) => ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command]],
+  ["cmd", process.env.ComSpec ?? "cmd.exe", (command) => ["/d", "/s", "/c", command], { windowsVerbatimArguments: true }],
+  ["Windows PowerShell", "powershell.exe", (command) => ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command], {}],
+  ["PowerShell Core", "pwsh.exe", (command) => ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", command], {}],
 ];
 
-for (const [label, executable, argsFor] of hookShells) {
+for (const [label, executable, argsFor, spawnOptions] of hookShells) {
   test(`Windows generated hook command carries a real PreToolUse payload through ${label}`, { skip: !WINDOWS }, (t) => {
     const fixture = installedFixture(t);
     const hooks = parsed(runNode(fixture.shim, ["hooks"], { env: fixture.env }), "hooks");
@@ -97,7 +97,7 @@ for (const [label, executable, argsFor] of hookShells) {
       tool_input: { command: `node ${JSON.stringify(fixture.shim)} status` },
     });
     const args = argsFor(command);
-    const response = parsed(spawnSync(executable, args, { env: fixture.env, input: payload, encoding: "utf8", timeout: 30_000 }), label);
+    const response = parsed(spawnSync(executable, args, { env: fixture.env, input: payload, encoding: "utf8", timeout: 30_000, ...spawnOptions }), label);
     assert.equal(response.hookSpecificOutput.permissionDecision, "allow", label);
     assert.match(response.hookSpecificOutput.updatedInput.command, /^\$env:TASKLOOP_SESSION_ID='windows-session'; /, label);
   });
