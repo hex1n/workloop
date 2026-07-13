@@ -62,14 +62,48 @@ jobs:
         timeout-minutes: 3
         run: node --test --test-name-pattern="Windows install is repeatable" tests/windows.test.mjs
       - name: Windows hook protocol (cmd)
+        id: hook_cmd
+        continue-on-error: true
         timeout-minutes: 3
-        run: node --test --test-name-pattern="Windows generated hook command.*cmd$" tests/windows.test.mjs
+        run: |
+          $output = & node --test --test-reporter=spec --test-name-pattern="Windows generated hook command.*cmd$" tests/windows.test.mjs 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) {
+            $escaped = $output.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+            Write-Output "::error title=Windows hook protocol (cmd)::$escaped"
+            exit 1
+          }
+          Write-Output $output
       - name: Windows hook protocol (Windows PowerShell)
+        id: hook_windows_powershell
+        continue-on-error: true
         timeout-minutes: 3
-        run: node --test --test-name-pattern="Windows generated hook command.*Windows PowerShell$" tests/windows.test.mjs
+        run: |
+          $output = & node --test --test-reporter=spec --test-name-pattern="Windows generated hook command.*Windows PowerShell$" tests/windows.test.mjs 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) {
+            $escaped = $output.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+            Write-Output "::error title=Windows hook protocol (Windows PowerShell)::$escaped"
+            exit 1
+          }
+          Write-Output $output
       - name: Windows hook protocol (PowerShell Core)
+        id: hook_powershell_core
+        continue-on-error: true
         timeout-minutes: 3
-        run: node --test --test-name-pattern="Windows generated hook command.*PowerShell Core$" tests/windows.test.mjs
+        run: |
+          $output = & node --test --test-reporter=spec --test-name-pattern="Windows generated hook command.*PowerShell Core$" tests/windows.test.mjs 2>&1 | Out-String
+          if ($LASTEXITCODE -ne 0) {
+            $escaped = $output.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+            Write-Output "::error title=Windows hook protocol (PowerShell Core)::$escaped"
+            exit 1
+          }
+          Write-Output $output
+      - name: Require Windows hook protocols
+        if: always()
+        timeout-minutes: 1
+        run: |
+          if ("${{ steps.hook_cmd.outcome }}" -ne "success" -or "${{ steps.hook_windows_powershell.outcome }}" -ne "success" -or "${{ steps.hook_powershell_core.outcome }}" -ne "success") {
+            exit 1
+          }
       - name: Windows paths and state replacement
         timeout-minutes: 3
         run: node --test --test-name-pattern="Windows repeatedly replaces task state" tests/windows.test.mjs
