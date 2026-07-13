@@ -132,7 +132,7 @@ test("Windows criterion timeout terminates the child and returns promptly", { sk
   const repo = path.join(fixture.root, "timeout repo");
   fs.mkdirSync(repo, { recursive: true });
   assert.equal(spawnSync("git", ["init", "-q"], { cwd: repo }).status, 0);
-  const pidFile = path.join(repo, "criterion.pid");
+  const pidFile = path.join(fixture.root, "criterion.pid");
   fs.writeFileSync(path.join(repo, "slow.mjs"), `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);\n`);
   fs.writeFileSync(path.join(repo, "work.txt"), "start\n");
 
