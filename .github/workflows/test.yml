@@ -138,7 +138,9 @@ jobs:
         run: |
           $output = & node --test --test-reporter=spec tests/taskloop.test.mjs 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0) {
-            $escaped = $output.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
+            $failureIndex = $output.IndexOf("failing tests:")
+            $details = if ($failureIndex -ge 0) { $output.Substring($failureIndex) } else { $output }
+            $escaped = $details.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
             Write-Output "::error title=Windows behavioral::$escaped"
             exit 1
           }
