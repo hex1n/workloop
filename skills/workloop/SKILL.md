@@ -91,5 +91,8 @@ verbatim.
 
 Name the terminal lifecycle, criterion evidence, actual touched targets versus
 the declared envelope, reviews and advisory findings, not-covered clauses, and
-remaining risks. A follow-up agent must be able to audit the result without
+remaining risks. Include actual rounds, writes, wall-clock time, and estimated
+output-token use against their configured limits. Mark unbounded limits and
+unavailable or degraded telemetry explicitly; token accounting is a best-effort
+estimate. A follow-up agent must be able to audit the result without
 reconstructing the scene.

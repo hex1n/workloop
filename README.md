@@ -32,9 +32,11 @@ node bin/taskloop.mjs achieve --repo .
 ```
 
 Rounds are bounded by default. Optional write, wall-clock, and output-token
-budgets deny further writes while keeping reads and verification available.
-Repeated equivalent failures suspend as `stuck`; exhausting rounds suspends as
-`out_of_budget`.
+budgets can add independent bounds. Exhausting any configured budget denies
+further writes while keeping reads and verification available. A fresh
+unsatisfied Stop or explicit `achieve` suspends as `out_of_budget`; a fresh
+satisfied criterion can still close the task. Repeated equivalent failures
+suspend as `stuck`.
 
 Command safety is deny-by-default. Git mutations and authority expansions are
 explicit grants with provenance:

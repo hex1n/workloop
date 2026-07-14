@@ -28,3 +28,4 @@ taskloop ships the loop kernel: the runtime plus `loop-core`, `workloop`, and `j
 Re-derived something a fresh contributor should have known? Add one line here with the fact and where it was found.
 
 - Windows compatibility is gated on fixed GitHub-hosted Windows versions with separately bounded suite groups; shell/install/path/lock/timeout coverage lives in `tests/windows.test.mjs` and `.github/workflows/test.yml`.
+- Out-of-budget `resume` transition events require a caller-captured integer `atEpochMs`; `lib/application.mjs` captures it once so wall-clock decisions never fall back to the second-resolution persisted timestamp.

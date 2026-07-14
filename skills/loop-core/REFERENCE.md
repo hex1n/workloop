@@ -129,7 +129,10 @@ CLI enums use kebab-case; persisted enums use snake_case.
 
 Suspension is sticky. Stop releases without mutation; reads and `verify` remain
 free; writes and terminal-success verbs require `resume --reason`. An
-out-of-budget task must first increase its task-level budget with `amend`.
+out-of-budget task must first use `amend` to increase every task-level budget
+that remains exhausted. After a fresh unsatisfied criterion, any exhausted
+round, write, wall-clock, or output-token budget takes precedence over stuck
+classification; a fresh satisfied criterion remains eligible to close.
 
 A structural criterion asserts the whole move: the removal, absence of live
 references, and the new positioning where ownership lives. Checking only that

@@ -7,7 +7,7 @@ import test from "node:test";
 
 import { criterionMetadata, expandWindowsGlobs, mapExecution, runCriterionSource } from "../lib/criterion.mjs";
 import { auditLedger, eventId, makeEvent, validateEvent } from "../lib/outcome-ledger.mjs";
-import { POLICY_PRESETS, assertTaskSchema, closureProjection, constructPolicy, createTask, criterionDefinitionHash, projectProofAssurance, projectReviewRequirement, transition, validatePolicy } from "../lib/task-engine.mjs";
+import { POLICY_PRESETS, assertTaskSchema, closureProjection, constructPolicy, createTask, criterionDefinitionHash, machineRiskFloor, policyName, projectBudgetExhaustion, projectProofAssurance, projectReviewRequirement, transition, validatePolicy } from "../lib/task-engine.mjs";
 import { archiveIncompatibleState, archiveTask, loadTask, saveTask } from "../lib/task-store.mjs";
 import { envelopeOverlap, siblingWorktreeOpenTasks } from "../lib/supervision.mjs";
 import { artifactTimestamp, localTimestamp } from "../lib/prims.mjs";
@@ -229,12 +229,60 @@ test("not-needed refuses after a write", () => {
   assert.throws(() => transition(written, { type: "not-needed", evidence: "x", at: AT }), /writes == 0/);
 });
 
+test("budget exhaustion projection covers every dimension at exact boundaries", () => {
+  const createdAt = Date.parse(AT);
+  const below = task({ budget: { rounds: 2, writes: 2, wall_clock_minutes: 1, output_tokens: 4 } });
+  below.spent = { rounds: 1, writes: 1, wall_clock_ms: 59_999, output_tokens_estimate: 3 };
+  assert.deepEqual(projectBudgetExhaustion(below, createdAt + 59_999), []);
+
+  const exact = structuredClone(below);
+  exact.spent = { rounds: 2, writes: 2, wall_clock_ms: 60_000, output_tokens_estimate: 4 };
+  assert.deepEqual(projectBudgetExhaustion(exact, createdAt + 60_000), [
+    { dimension: "rounds", spent: 2, limit: 2 },
+    { dimension: "writes", spent: 2, limit: 2 },
+    { dimension: "wall_clock", spent: 60_000, limit: 60_000 },
+    { dimension: "output_tokens", spent: 4, limit: 4 },
+  ]);
+
+  const zero = task({ budget: { rounds: 8, writes: 0, wall_clock_minutes: 0, output_tokens: 0 } });
+  assert.deepEqual(projectBudgetExhaustion(zero, createdAt), [
+    { dimension: "writes", spent: 0, limit: 0 },
+    { dimension: "wall_clock", spent: 0, limit: 0 },
+    { dimension: "output_tokens", spent: 0, limit: 0 },
+  ]);
+  assert.deepEqual(projectBudgetExhaustion(task(), createdAt), []);
+  assert.throws(() => projectBudgetExhaustion(task(), Number.NaN), /atEpochMs/);
+  assert.throws(() => projectBudgetExhaustion(task(), createdAt + 0.5), /atEpochMs/);
+});
+
 test("lifecycle transition table enforces suspension and terminal guards", () => {
   let value = transition(task(), { type: "suspend", reason: "needs_input", judgment: { remaining: "credential", failure: "auth", next_action: "supply" }, at: AT }).task;
   assert.equal(value.lifecycle.state, "suspended");
   assert.throws(() => transition(value, { type: "record-write", files: [], at: AT }));
-  value = transition(value, { type: "resume", reason: "provided", episode: { episode_id: "e", host_session_id: "s", started_at: AT, ended_at: null, start_task_revision: 3, end_task_revision: null, output_tokens_estimate: 0 }, at: AT }).task;
+  value = transition(value, { type: "resume", reason: "provided", episode: { episode_id: "e", host_session_id: "s", started_at: AT, ended_at: null, start_task_revision: 3, end_task_revision: null, output_tokens_estimate: 0 }, at: AT, atEpochMs: Date.parse(AT) }).task;
   assert.equal(value.lifecycle.state, "active");
+});
+
+test("out-of-budget resume requires every exhausted dimension to be raised", () => {
+  const atEpochMs = Date.parse(AT) + 60_000;
+  const suspended = task({ budget: { rounds: 2, writes: 1, wall_clock_minutes: 1, output_tokens: 10 } });
+  suspended.spent = { rounds: 2, writes: 1, wall_clock_ms: 60_000, output_tokens_estimate: 10 };
+  suspended.lifecycle = { state: "suspended", reason: "out_of_budget", suspended_at: AT, judgment: { remaining: "r", failure: "f", next_action: "n" } };
+  const roundsOnly = transition(suspended, { type: "amend", rounds: 3, reason: "more rounds", at: AT }).task;
+  const episode = { episode_id: "e", host_session_id: "s", started_at: AT, ended_at: null, start_task_revision: roundsOnly.task_revision + 1, end_task_revision: null, output_tokens_estimate: 0 };
+  assert.throws(
+    () => transition(roundsOnly, { type: "resume", reason: "continue", episode, actingSession: "s", at: AT, atEpochMs }),
+    /writes.*wall_clock.*output_tokens/,
+  );
+
+  const raised = transition(suspended, { type: "amend", rounds: 3, writes: 2, wallClockMinutes: 2, outputTokens: 11, reason: "raise every exhausted budget", at: AT }).task;
+  const resumed = transition(raised, { type: "resume", reason: "continue", episode: { ...episode, start_task_revision: raised.task_revision + 1 }, actingSession: "s", at: AT, atEpochMs }).task;
+  assert.equal(resumed.lifecycle.state, "active");
+
+  assert.throws(
+    () => transition(raised, { type: "resume", reason: "missing decision time", episode: { ...episode, start_task_revision: raised.task_revision + 1 }, actingSession: "s", at: AT }),
+    /atEpochMs/,
+  );
 });
 
 test("binary and tri-state execution mapping is exhaustive", () => {
@@ -603,6 +651,115 @@ test("round and write budgets deny further writes while reads remain free", (t) 
   assert.match(writeDenied.stdout, /write budget exhausted/);
 });
 
+test("single-dimension PreToolUse budget denials remain byte-exact", (t) => {
+  const cases = [
+    { args: ["--rounds", "1"], prepare(state) { state.spent.rounds = 1; }, reason: "round budget exhausted (1/1); reads and verification remain free" },
+    { args: ["--writes", "0"], reason: "write budget exhausted (0/0); reads and verification remain free" },
+    { args: ["--wall-clock-minutes", "0"], reason: "wall-clock budget exhausted (0m)" },
+    { args: ["--token-budget", "0"], reason: "output-token budget exhausted (0/0)" },
+  ];
+  for (const entry of cases) {
+    const fx = fixture(t); assert.equal(open(fx, "default", entry.args).status, 0);
+    if (entry.prepare) { const state = loadTask(fx.repo); entry.prepare(state); saveTask(fx.repo, state); }
+    const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
+    const denied = run([], { cwd: fx.repo, env: fx.env, input: payload });
+    assert.equal(denied.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `taskloop: ${entry.reason}` } }) + "\n");
+  }
+});
+
+test("an unsatisfied Stop suspends when the write budget is exhausted", (t) => {
+  const fx = fixture(t); assert.equal(open(fx, "default", ["--writes", "0"]).status, 0);
+  const stopped = run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
+  assert.match(stopped.stdout, /suspended\(out_of_budget\)/);
+  const state = loadTask(fx.repo);
+  assert.equal(state.lifecycle.state, "suspended");
+  assert.equal(state.lifecycle.reason, "out_of_budget");
+  assert.match(state.lifecycle.judgment.failure, /write budget exhausted \(0\/0\)/);
+  assert.match(state.lifecycle.judgment.next_action, /--writes/);
+});
+
+test("an unsatisfied achieve suspends when the write budget is exhausted", (t) => {
+  const fx = fixture(t); assert.equal(open(fx, "default", ["--writes", "0"]).status, 0);
+  const achieved = run(["achieve", "--repo", fx.repo], { env: fx.env });
+  assert.notEqual(achieved.status, 0);
+  assert.match(achieved.stderr, /suspended\(out_of_budget\)/);
+  const state = loadTask(fx.repo);
+  assert.equal(state.lifecycle.state, "suspended");
+  assert.equal(state.lifecycle.reason, "out_of_budget");
+  assert.match(state.lifecycle.judgment.failure, /write budget exhausted \(0\/0\)/);
+  assert.match(state.lifecycle.judgment.next_action, /--writes/);
+});
+
+test("an unsatisfied Stop reports an exhausted wall-clock budget", (t) => {
+  const fx = fixture(t); assert.equal(open(fx, "default", ["--wall-clock-minutes", "0"]).status, 0);
+  const stopped = run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
+  assert.match(stopped.stdout, /suspended\(out_of_budget\)/);
+  const state = loadTask(fx.repo);
+  assert.equal(state.lifecycle.reason, "out_of_budget");
+  assert.match(state.lifecycle.judgment.failure, /wall-clock budget exhausted/);
+  assert.match(state.lifecycle.judgment.next_action, /--wall-clock-minutes/);
+});
+
+test("an unsatisfied Stop reports an exhausted output-token budget", (t) => {
+  const fx = fixture(t); assert.equal(open(fx, "default", ["--token-budget", "0"]).status, 0);
+  const stopped = run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
+  assert.match(stopped.stdout, /suspended\(out_of_budget\)/);
+  const state = loadTask(fx.repo);
+  assert.equal(state.lifecycle.reason, "out_of_budget");
+  assert.match(state.lifecycle.judgment.failure, /output-token budget exhausted \(0\/0\)/);
+  assert.match(state.lifecycle.judgment.next_action, /--token-budget/);
+});
+
+test("an unsatisfied achieve reports wall-clock and output-token budgets", (t) => {
+  for (const [extra, failure, option] of [
+    [["--wall-clock-minutes", "0"], /wall-clock budget exhausted/, /--wall-clock-minutes/],
+    [["--token-budget", "0"], /output-token budget exhausted/, /--token-budget/],
+  ]) {
+    const fx = fixture(t); assert.equal(open(fx, "default", extra).status, 0);
+    const achieved = run(["achieve", "--repo", fx.repo], { env: fx.env });
+    assert.equal(achieved.status, 2);
+    const state = loadTask(fx.repo);
+    assert.equal(state.lifecycle.reason, "out_of_budget");
+    assert.match(state.lifecycle.judgment.failure, failure);
+    assert.match(state.lifecycle.judgment.next_action, option);
+  }
+});
+
+test("an out-of-budget judgment lists every exhausted dimension in stable order", (t) => {
+  const fx = fixture(t); assert.equal(open(fx, "default", ["--rounds", "1", "--writes", "0", "--wall-clock-minutes", "0", "--token-budget", "0"]).status, 0);
+  run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
+  const judgment = loadTask(fx.repo).lifecycle.judgment;
+  assert.match(judgment.failure, /^round budget exhausted .*; write budget exhausted .*; wall-clock budget exhausted .*; output-token budget exhausted /);
+  assert.equal(judgment.next_action, "amend --rounds and --writes and --wall-clock-minutes and --token-budget with a reason, then resume");
+});
+
+test("CLI resume remains suspended until every exhausted budget is raised", (t) => {
+  const fx = fixture(t); assert.equal(open(fx, "default", ["--rounds", "1", "--writes", "0", "--wall-clock-minutes", "0", "--token-budget", "0"]).status, 0);
+  run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
+  assert.equal(run(["amend", "--repo", fx.repo, "--rounds", "2", "--reason", "raise rounds only"], { env: fx.env }).status, 0);
+  const refused = run(["resume", "--repo", fx.repo, "--reason", "continue"], { env: fx.env });
+  assert.equal(refused.status, 2);
+  assert.match(refused.stderr, /writes.*wall_clock.*output_tokens/);
+  assert.equal(loadTask(fx.repo).lifecycle.state, "suspended");
+  assert.equal(run(["amend", "--repo", fx.repo, "--writes", "1", "--wall-clock-minutes", "1", "--token-budget", "1", "--reason", "raise remaining budgets"], { env: fx.env }).status, 0);
+  assert.equal(run(["resume", "--repo", fx.repo, "--reason", "continue"], { env: fx.env }).status, 0);
+  assert.equal(loadTask(fx.repo).lifecycle.state, "active");
+});
+
+test("a fresh satisfied closure succeeds after the write budget is exhausted", (t) => {
+  for (const entry of ["Stop", "achieve"]) {
+    const fx = fixture(t); assert.equal(open(fx, "default", ["--writes", "1"]).status, 0);
+    const writePayload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
+    assert.equal(run([], { cwd: fx.repo, env: fx.env, input: writePayload }).stdout, "");
+    fs.writeFileSync(path.join(fx.repo, "done"), "yes\n");
+    const closed = entry === "Stop"
+      ? run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) })
+      : run(["achieve", "--repo", fx.repo], { env: fx.env });
+    assert.equal(closed.status, 0, `${entry}: ${closed.stderr}`);
+    assert.equal(loadTask(fx.repo).lifecycle.outcome, "achieved", entry);
+  }
+});
+
 test("transcript output tokens are counted once and enforce the token budget", (t) => {
   const fx = fixture(t); assert.equal(open(fx, "default", ["--token-budget", "3"]).status, 0);
   const transcript = path.join(fx.root, "transcript.jsonl");
@@ -695,7 +852,7 @@ test("wall-clock telemetry advances and user suspension and terminal close episo
   value = transition(value, { type: "suspend", reason: "needs_input", judgment: { remaining: "r", failure: "f", next_action: "n" }, closeEpisode: true, at: "2026-07-11T00:00:02.000Z" }).task;
   assert.equal(value.episodes[0].ended_at, "2026-07-11T00:00:02.000Z");
   assert.equal(value.episodes[0].end_task_revision, value.task_revision);
-  value = transition(value, { type: "resume", reason: "ready", episode: { ...episode, episode_id: "e2", started_at: "2026-07-11T00:00:03.000Z", start_task_revision: value.task_revision + 1 }, at: "2026-07-11T00:00:03.000Z" }).task;
+  value = transition(value, { type: "resume", reason: "ready", episode: { ...episode, episode_id: "e2", started_at: "2026-07-11T00:00:03.000Z", start_task_revision: value.task_revision + 1 }, at: "2026-07-11T00:00:03.000Z", atEpochMs: Date.parse("2026-07-11T00:00:03.000Z") }).task;
   value = transition(value, { type: "abandon", reason: "done", at: "2026-07-11T00:00:04.000Z" }).task;
   assert.equal(value.episodes[1].ended_at, "2026-07-11T00:00:04.000Z");
 });
@@ -787,6 +944,28 @@ test("seven revision-stagnant attempts with varied signatures suspend as stuck",
   assert.equal(new Set(state.attempts.map((attempt) => attempt.signature)).size, 7);
 });
 
+test("out-of-budget wins when budget and stuck conditions become true together", (t) => {
+  const repeated = fixture(t); assert.equal(open(repeated, "default", ["--rounds", "3"]).status, 0);
+  for (let attempt = 0; attempt < 3; attempt += 1) run([], { cwd: repeated.repo, env: repeated.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: repeated.repo }) });
+  assert.equal(loadTask(repeated.repo).lifecycle.reason, "out_of_budget");
+
+  const stagnant = fixture(t); assert.equal(open(stagnant, "default", ["--rounds", "7"]).status, 0);
+  const stagnantState = loadTask(stagnant.repo);
+  stagnantState.spent.rounds = 6; stagnantState.unsatisfied_streak = 6;
+  stagnantState.attempts = Array.from({ length: 6 }, (_, index) => ({ attempt_id: `a${index}`, criterion_generation_id: stagnantState.criterion.criterion_generation_id, artifact_revision: stagnantState.artifact_revision, signature: `signature-${index}`, failure_summary: "", observed_at: stagnantState.created_at }));
+  saveTask(stagnant.repo, stagnantState);
+  run([], { cwd: stagnant.repo, env: stagnant.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: stagnant.repo }) });
+  assert.equal(loadTask(stagnant.repo).lifecycle.reason, "out_of_budget");
+
+  const optional = fixture(t); assert.equal(open(optional, "default", ["--writes", "0"]).status, 0);
+  const optionalState = loadTask(optional.repo);
+  optionalState.spent.rounds = 2; optionalState.unsatisfied_streak = 2;
+  optionalState.attempts = Array.from({ length: 2 }, (_, index) => ({ attempt_id: `a${index}`, criterion_generation_id: optionalState.criterion.criterion_generation_id, artifact_revision: optionalState.artifact_revision, signature: "811c9dc5", failure_summary: "", observed_at: optionalState.created_at }));
+  saveTask(optional.repo, optionalState);
+  run([], { cwd: optional.repo, env: optional.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: optional.repo }) });
+  assert.equal(loadTask(optional.repo).lifecycle.reason, "out_of_budget");
+});
+
 test("a write between stops resets the no-progress counter", (t) => {
   const fx = fixture(t);
   fs.writeFileSync(path.join(fx.repo, "check.mjs"), "console.log(process.hrtime.bigint().toString()); process.exit(1);\n");
@@ -870,6 +1049,59 @@ test("report emits a machine-generated closeout artifact", (t) => {
   const terminal = run(["report", "--repo", fx.repo], { env: fx.env });
   assert.match(terminal.stdout, /- lifecycle: terminal\(achieved\)/);
   assert.doesNotMatch(terminal.stdout, /- closure:/);
+});
+
+test("Markdown report renders every bounded and unbounded budget dimension", (t) => {
+  const bounded = fixture(t); assert.equal(open(bounded, "default", ["--writes", "0", "--wall-clock-minutes", "0", "--token-budget", "0"]).status, 0);
+  const boundedReport = run(["report", "--repo", bounded.repo], { env: bounded.env });
+  assert.match(boundedReport.stdout, /- rounds 0\/8; writes 0\/0; wall clock \d+s\/0m; output tokens estimate 0\/0 \(best effort\)/);
+
+  const unbounded = fixture(t); assert.equal(open(unbounded).status, 0);
+  const before = loadTask(unbounded.repo);
+  const unboundedReport = run(["report", "--repo", unbounded.repo], { env: unbounded.env });
+  assert.match(unboundedReport.stdout, /- rounds 0\/8; writes 0\/unbounded; wall clock \d+s\/unbounded; output tokens estimate 0\/unbounded \(best effort\)/);
+  const json = JSON.parse(run(["report", "--repo", unbounded.repo, "--json"], { env: unbounded.env }).stdout);
+  delete json.generated_at;
+  assert.deepEqual(json, {
+    generated_by: "taskloop report — machine transcription of task state, not testimony",
+    task_id: before.task_id,
+    lifecycle: before.lifecycle,
+    closure: closureProjection(before, { drift: false }),
+    goal: before.goal,
+    criterion: { source: before.criterion.source, protocol: before.criterion.protocol, policy: policyName(before.policy), criterion_generation_id: before.criterion.criterion_generation_id, provenance: before.criterion.provenance, input_coverage: before.criterion.input_coverage, witness: before.witness ?? null },
+    proof_assurance: projectProofAssurance(before, { drift: false }),
+    alignment: before.alignment,
+    reviews: before.reviews,
+    review_requirement: projectReviewRequirement(before),
+    grants: before.grants.map((item) => ({ kind: item.kind, scope: item.scope, granted_by: item.granted_by, reason: item.reason })),
+    envelope: before.envelope,
+    touched_files: before.evidence.touched_files,
+    envelope_deviations: [],
+    assurance: before.assurance,
+    machine_risk_floor: machineRiskFloor(before),
+    budget: before.budget,
+    spent: before.spent,
+  });
+});
+
+test("Markdown report projects wall-clock usage through generation time", (t) => {
+  const fx = fixture(t); assert.equal(open(fx, "default", ["--wall-clock-minutes", "1"]).status, 0);
+  const state = loadTask(fx.repo);
+  state.created_at = new Date(Date.now() - 120_000).toISOString();
+  state.spent.wall_clock_ms = 0;
+  saveTask(fx.repo, state);
+  const report = run(["report", "--repo", fx.repo], { env: fx.env });
+  assert.match(report.stdout, /wall clock 12[01]s\/1m/);
+});
+
+test("Markdown report exposes a tallied output-token estimate", (t) => {
+  const fx = fixture(t); assert.equal(open(fx, "default", ["--token-budget", "10"]).status, 0);
+  const transcript = path.join(fx.root, "report-transcript.jsonl");
+  const timestamp = new Date(Date.parse(loadTask(fx.repo).created_at) + 1000).toISOString();
+  fs.writeFileSync(transcript, JSON.stringify({ timestamp, message: { usage: { output_tokens: 3 } } }) + "\n");
+  const readPayload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, transcript_path: transcript, tool_name: "Read", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
+  assert.equal(run([], { cwd: fx.repo, env: fx.env, input: readPayload }).stdout, "");
+  assert.match(run(["report", "--repo", fx.repo], { env: fx.env }).stdout, /output tokens estimate 3\/10 \(best effort\)/);
 });
 
 test("report on a suspended task carries the judgment snapshot", (t) => {
@@ -962,13 +1194,13 @@ test("CLI side-effect criteria are indeterminate at open, verify, Stop, and achi
   const rejected = run(["open", "--repo", fx.repo, "--goal", "x", "--criterion-file", "side.mjs", "--criterion-policy", "steady-satisfied", "--reason", "guard", "--alignment-because", "x", "--files", "work.txt"], { env: fx.env });
   assert.equal(rejected.status, 2); assert.match(rejected.stderr, /side effects/);
   fs.rmSync(path.join(fx.repo, "mutation"));
-  assert.equal(open(fx).status, 0);
+  assert.equal(open(fx, "default", ["--writes", "0"]).status, 0);
   const active = loadTask(fx.repo); active.criterion.source = { kind: "file", value: "side.mjs" }; active.criterion.declared_inputs = [{ path: "side.mjs", hash: active.criterion.declared_inputs[0].hash }]; saveTask(fx.repo, active);
   const verified = run(["verify", "--repo", fx.repo], { env: fx.env }); assert.equal(verified.status, 2); assert.equal(loadTask(fx.repo).artifact_revision, 1);
   fs.rmSync(path.join(fx.repo, "mutation"));
-  const achieved = run(["achieve", "--repo", fx.repo], { env: fx.env }); assert.equal(achieved.status, 2); assert.equal(loadTask(fx.repo).artifact_revision, 2);
+  const achieved = run(["achieve", "--repo", fx.repo], { env: fx.env }); assert.equal(achieved.status, 2); assert.equal(loadTask(fx.repo).artifact_revision, 2); assert.equal(loadTask(fx.repo).lifecycle.state, "active");
   fs.rmSync(path.join(fx.repo, "mutation"));
-  const stopped = run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) }); assert.match(stopped.stdout, /criterion indeterminate/); assert.equal(loadTask(fx.repo).artifact_revision, 3);
+  const stopped = run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) }); assert.match(stopped.stdout, /criterion indeterminate/); assert.equal(loadTask(fx.repo).artifact_revision, 3); assert.equal(loadTask(fx.repo).lifecycle.state, "active");
 });
 
 test("CLI suspend uses kebab enums while storage uses snake case and Stop releases", (t) => {
