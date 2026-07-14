@@ -242,7 +242,9 @@ test("HOME projection and cursor failures never roll back repository authority",
 });
 
 test("[W05] twenty concurrent mutations serialize without sequence gaps or lost writes", async (t) => {
-  const fx = fixture(t); assert.equal(open(fx, ["--writes", "20"]).status, 0);
+  const concurrency = Number.parseInt(process.env.TASKLOOP_W05_CONCURRENCY ?? "20", 10);
+  assert.ok(Number.isSafeInteger(concurrency) && concurrency > 0);
+  const fx = fixture(t); assert.equal(open(fx, ["--writes", String(concurrency)]).status, 0);
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v4", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
   const invoke = () => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI], { cwd: fx.repo, env: fx.env, stdio: ["pipe", "pipe", "pipe"] });
@@ -251,11 +253,30 @@ test("[W05] twenty concurrent mutations serialize without sequence gaps or lost 
     child.stdout.on("data", (chunk) => { stdout += chunk; }); child.stderr.on("data", (chunk) => { stderr += chunk; });
     child.on("error", reject); child.on("close", (status) => resolve({ status, stdout, stderr })); child.stdin.end(payload);
   });
-  const results = await Promise.all(Array.from({ length: 20 }, invoke));
+  const results = await Promise.all(Array.from({ length: concurrency }, invoke));
   for (const result of results) { assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, ""); }
   const replay = readEventStore(fx.repo);
-  assert.equal(replay.records.length, 21);
-  assert.deepEqual(replay.records.map((record) => record.repo_sequence), Array.from({ length: 21 }, (_, index) => index + 1));
-  assert.equal(replay.events.filter((event) => event.kind === "write_authorized").length, 20);
-  assert.equal(projection(fx.repo).spent.writes, 20);
+  assert.equal(replay.records.length, concurrency + 1, JSON.stringify(results, null, 2));
+  assert.deepEqual(replay.records.map((record) => record.repo_sequence), Array.from({ length: concurrency + 1 }, (_, index) => index + 1));
+  assert.equal(replay.events.filter((event) => event.kind === "write_authorized").length, concurrency);
+  assert.equal(projection(fx.repo).spent.writes, concurrency);
+});
+
+test("[W05] hook payload reading waits through a temporarily empty nonblocking stdin pipe", async (t) => {
+  const fx = fixture(t); assert.equal(open(fx, ["--writes", "1"]).status, 0);
+  const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v4", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI], { cwd: fx.repo, env: fx.env, stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "", stderr = "";
+    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; }); child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.stdin.on("error", () => {});
+    const timer = setTimeout(() => child.stdin.end(payload), 50);
+    child.on("error", reject);
+    child.on("close", (status) => { clearTimeout(timer); resolve({ status, stdout, stderr }); });
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "");
+  assert.equal(result.stderr, "");
+  assert.equal(readEventStore(fx.repo).records.length, 2, JSON.stringify(result));
 });
