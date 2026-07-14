@@ -102,6 +102,22 @@ test("CLI mutations commit one authority record and a disposable snapshot", (t) 
   ]);
 });
 
+test("PreToolUse validates repository authority once before its commit", (t) => {
+  const fx = fixture(t); assert.equal(open(fx).status, 0);
+  const countFile = path.join(fx.root, "event-read-count.txt");
+  const preload = path.join(ROOT, "tests", "helpers", "fs-read-counter.cjs");
+  const env = {
+    ...fx.env,
+    NODE_OPTIONS: [fx.env.NODE_OPTIONS, `--require=${preload}`].filter(Boolean).join(" "),
+    TASKLOOP_EVENT_READ_COUNT_FILE: countFile,
+  };
+  const hook = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v4", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
+  const result = run([], { cwd: fx.repo, env, input: hook });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "");
+  assert.equal(Number.parseInt(fs.readFileSync(countFile, "utf8"), 10), 1);
+});
+
 test("authority guard rejects legacy, orphan, mixed, and corrupt state without overwriting events", (t) => {
   const fx = fixture(t);
   const stateDir = path.join(fx.repo, ".taskloop"); fs.mkdirSync(stateDir, { recursive: true });
@@ -257,6 +273,55 @@ test("outcome cursor makes the normal commit path incremental", (t) => {
   assert.deepEqual({ valid: report.valid, added: report.added, total: report.total }, { valid: true, added: 1, total: null });
   assert.equal(projectionReads, 0);
   assert.equal(fs.readFileSync(projectionFile, "utf8").trim().split("\n").length, 2);
+});
+
+test("a stale repo cursor cannot omit history after the shared projection is rebuilt by another repo", (t) => {
+  const fx = fixture(t); assert.equal(open(fx).status, 0);
+  const first = readEventStore(fx.repo).records[0];
+  const projectionFile = path.join(fx.home, ".taskloop", "outcomes-v3.jsonl");
+  const repoIdentity = JSON.parse(fs.readFileSync(projectionFile, "utf8")).repo_identity;
+  const otherRepoIdentity = `sha256:${"b".repeat(64)}`;
+  const other = buildRecord({
+    transactionId: "f79e8c8a-f405-49b9-b78f-417437e5fe6c",
+    commandId: null,
+    repoSequence: 1,
+    occurredAtEpochMs: first.occurred_at_epoch_ms + 1,
+    actor: first.actor,
+    previousRecordDigest: null,
+    events: [{
+      task_id: "f68c6346-850e-4be2-a99b-ce3687097253",
+      task_event_sequence: 1,
+      kind: "task_opened",
+      payload_version: 1,
+      payload: first.events[0].payload,
+    }],
+  });
+  const second = buildRecord({
+    transactionId: "1c3f3d37-f605-4128-af8d-5893c8f0eec0",
+    commandId: null,
+    repoSequence: 2,
+    occurredAtEpochMs: first.occurred_at_epoch_ms + 2,
+    actor: first.actor,
+    previousRecordDigest: first.record_digest,
+    events: [{
+      task_id: first.events[0].task_id,
+      task_event_sequence: 2,
+      kind: "write_authorized",
+      payload_version: 1,
+      payload: { files: ["work.txt"] },
+    }],
+  });
+
+  fs.rmSync(projectionFile);
+  syncOutcomeRecords({ repoIdentity: otherRepoIdentity, records: [other], home: fx.home });
+  const repaired = syncOutcomeRecords({ repoIdentity, records: [second], priorRecords: [first], home: fx.home, incremental: true });
+  assert.equal(repaired.added, 2);
+  const rows = fs.readFileSync(projectionFile, "utf8").trim().split("\n").map(JSON.parse);
+  assert.deepEqual(rows.map((row) => [row.repo_identity, row.repo_sequence]), [
+    [otherRepoIdentity, 1],
+    [repoIdentity, 1],
+    [repoIdentity, 2],
+  ]);
 });
 
 test("a normal commit repairs a prior torn outcome tail from repository authority", (t) => {

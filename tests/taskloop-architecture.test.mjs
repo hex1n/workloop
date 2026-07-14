@@ -45,7 +45,10 @@ test("Stop hooks exit zero with no task and with incompatible task state", (t) =
   const env = { ...process.env, HOME: home, USERPROFILE: home }; const payload = JSON.stringify({ hook_event_name: "Stop", cwd: repo });
   let stopped = run(CLI, [], { cwd: repo, env, input: payload }); assert.equal(stopped.status, 0); assert.equal(stopped.stdout, "");
   fs.mkdirSync(path.join(repo, ".taskloop"), { recursive: true }); fs.writeFileSync(path.join(repo, ".taskloop", "task.json"), '{"schema_version":1}\n');
-  stopped = run(CLI, [], { cwd: repo, env, input: payload }); assert.equal(stopped.status, 0); assert.match(stopped.stdout, /"decision":"block"/);
+  stopped = run(CLI, [], { cwd: repo, env, input: payload });
+  assert.equal(stopped.status, 0);
+  assert.equal(stopped.stderr, "task snapshot exists without a valid schema-v3 event authority; archive it with explicit user authorization\n");
+  assert.equal(stopped.stdout, '{"decision":"block","reason":"taskloop: task state unavailable; refusing to adjudicate Stop"}\n');
 });
 
 test("task-engine decide/evolve are pure", () => {
@@ -63,17 +66,6 @@ test("production assembly has no direct authoritative task writer", () => {
   assert.doesNotMatch(source, /\btransition\s*\(/);
   assert.match(source, /commitRecord\s*\(/);
   assert.match(source, /saveTaskSnapshot\s*\(/);
-});
-
-test("PreToolUse reuses one validated authority through its single commit", () => {
-  const source = fs.readFileSync(path.join(ROOT, "lib", "application.mjs"), "utf8");
-  const hookBody = source.slice(source.indexOf("function hookPretool"), source.indexOf("function hookStop"));
-  assert.equal(hookBody.match(/loadV3Authority\s*\(/g)?.length, 1);
-  assert.doesNotMatch(hookBody, /readTask\s*\(/);
-  assert.match(hookBody, /commitTaskCommand[\s\S]*?\{ actorKind: "hook", authority \}/);
-  const loaderBody = source.slice(source.indexOf("function loadV3Authority"), source.indexOf("function sourceCursorFromCommit"));
-  assert.match(loaderBody, /recoverV3TaskSnapshotFromReplay\(repo, replay/);
-  assert.doesNotMatch(loaderBody, /recoverV3TaskSnapshot\(repo/);
 });
 
 test("Windows W01-W08 selection is non-vacuous in every listed source", () => {
