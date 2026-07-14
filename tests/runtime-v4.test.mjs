@@ -90,7 +90,7 @@ test("CLI mutations commit one authority record and a disposable snapshot", (t) 
   assert.deepEqual(projection(fx.repo), before);
 
   const hook = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v4", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
-  assert.equal(run([], { cwd: fx.repo, env: fx.env, input: hook }).status, 0);
+  assert.equal(run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: hook }).status, 0);
   assert.equal(run(["suspend", "--repo", fx.repo, "--reason", "needs-input", "--remaining", "r", "--failure", "f", "--next-action", "n"], { env: fx.env }).status, 0);
   assert.equal(run(["resume", "--repo", fx.repo, "--reason", "continue"], { env: fx.env }).status, 0);
   assert.equal(run(["review", "--repo", fx.repo, "--level", "fresh-context", "--reviewer", "peer", "--blocking-findings", "0", "--advisory-findings", "1"], { env: fx.env }).status, 0);
@@ -112,7 +112,7 @@ test("PreToolUse validates repository authority once before its commit", (t) => 
     TASKLOOP_EVENT_READ_COUNT_FILE: countFile,
   };
   const hook = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v4", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
-  const result = run([], { cwd: fx.repo, env, input: hook });
+  const result = run(["hook", "--profile", "claude"], { cwd: fx.repo, env, input: hook });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, "");
   assert.equal(Number.parseInt(fs.readFileSync(countFile, "utf8"), 10), 1);
@@ -127,10 +127,15 @@ test("Stop preserves the task-state failure protocol for unclassified lock error
     TASKLOOP_FAIL_TASK_LOCK: "1",
   };
   const payload = JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo, session_id: "owner-v4" });
-  const result = run([], { cwd: fx.repo, env, input: payload });
+  const result = run(["hook", "--profile", "claude"], { cwd: fx.repo, env, input: payload });
   assert.equal(result.status, 0);
   assert.equal(result.stderr, "synthetic task lock failure\n");
   assert.equal(result.stdout, '{"decision":"block","reason":"taskloop: task state unavailable; refusing to adjudicate Stop"}\n');
+
+  const safe = run(["hook", "--profile", "codex-safe"], { cwd: fx.repo, env, input: payload });
+  assert.equal(safe.status, 0);
+  assert.equal(safe.stdout, "");
+  assert.match(safe.stderr, /^synthetic task lock failure\ntaskloop: task state unavailable; refusing to adjudicate Stop; Codex safe profile cannot resume this session;/);
 });
 
 test("authority guard rejects legacy, orphan, mixed, and corrupt state without overwriting events", (t) => {
@@ -173,15 +178,15 @@ test("transcript baseline and increment are in authority and a denied retry cann
   const transcript = path.join(fx.root, "transcript.jsonl");
   fs.writeFileSync(transcript, '{"usage":{"output_tokens":99}}\n');
   const payload = (toolInput) => JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v4", transcript_path: transcript, tool_name: "Write", tool_input: toolInput });
-  let response = run([], { cwd: fx.repo, env: fx.env, input: payload({ file_path: path.join(fx.repo, "work.txt") }) });
+  let response = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: payload({ file_path: path.join(fx.repo, "work.txt") }) });
   assert.equal(response.status, 0); assert.equal(response.stdout, "");
   assert.equal(projection(fx.repo).spent.output_tokens_estimate, 0);
   fs.appendFileSync(transcript, '{"usage":{"output_tokens":3}}\n');
-  response = run([], { cwd: fx.repo, env: fx.env, input: payload({ file_path: path.join(fx.repo, "outside.txt") }) });
+  response = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: payload({ file_path: path.join(fx.repo, "outside.txt") }) });
   assert.equal(response.status, 0); assert.match(response.stdout, /output-token budget exhausted \(3\/3\)/);
   assert.equal(projection(fx.repo).spent.output_tokens_estimate, 3);
   const tallyCount = readEventStore(fx.repo).events.filter((event) => event.kind === "output_tokens_tallied").length;
-  response = run([], { cwd: fx.repo, env: fx.env, input: payload({ file_path: path.join(fx.repo, "outside.txt") }) });
+  response = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: payload({ file_path: path.join(fx.repo, "outside.txt") }) });
   assert.match(response.stdout, /output-token budget exhausted \(3\/3\)/);
   assert.equal(projection(fx.repo).spent.output_tokens_estimate, 3);
   assert.equal(readEventStore(fx.repo).events.filter((event) => event.kind === "output_tokens_tallied").length, tallyCount);
@@ -196,7 +201,7 @@ test("[W07] transcript ranges use UTF-8 byte offsets, CRLF, partial records, and
   fs.writeFileSync(transcript, Buffer.concat([complete, partial]));
   const payload = () => JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v4", transcript_path: transcript, tool_name: "Read", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
 
-  assert.equal(run([], { cwd: fx.repo, env: fx.env, input: payload() }).status, 0);
+  assert.equal(run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: payload() }).status, 0);
   let tallies = readEventStore(fx.repo).events.filter((event) => event.kind === "output_tokens_tallied");
   assert.equal(tallies.length, 1);
   assert.equal(tallies[0].payload.to_offset, complete.length);
@@ -204,11 +209,11 @@ test("[W07] transcript ranges use UTF-8 byte offsets, CRLF, partial records, and
   const firstGeneration = tallies[0].payload.source_generation_id;
 
   fs.appendFileSync(transcript, "\r\n");
-  assert.equal(run([], { cwd: fx.repo, env: fx.env, input: payload() }).status, 0);
+  assert.equal(run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: payload() }).status, 0);
   assert.equal(projection(fx.repo).spent.output_tokens_estimate, 7);
 
   fs.writeFileSync(transcript, '{"replacement":"不同","output_tokens":100}\r\n');
-  assert.equal(run([], { cwd: fx.repo, env: fx.env, input: payload() }).status, 0);
+  assert.equal(run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: payload() }).status, 0);
   tallies = readEventStore(fx.repo).events.filter((event) => event.kind === "output_tokens_tallied");
   assert.notEqual(tallies.at(-1).payload.source_generation_id, firstGeneration);
   assert.equal(tallies.at(-1).payload.mode, "baseline");
@@ -216,7 +221,7 @@ test("[W07] transcript ranges use UTF-8 byte offsets, CRLF, partial records, and
   assert.equal(projection(fx.repo).spent.output_tokens_estimate, 7);
 
   fs.appendFileSync(transcript, '{"output_tokens":2}\n');
-  assert.equal(run([], { cwd: fx.repo, env: fx.env, input: payload() }).status, 0);
+  assert.equal(run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: payload() }).status, 0);
   assert.equal(projection(fx.repo).spent.output_tokens_estimate, 9);
 });
 
@@ -344,7 +349,7 @@ test("a normal commit repairs a prior torn outcome tail from repository authorit
   const projectionFile = path.join(fx.home, ".taskloop", "outcomes-v3.jsonl");
   fs.appendFileSync(projectionFile, '{"projection_schema_version":3');
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v4", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
-  const committed = run([], { cwd: fx.repo, env: fx.env, input: payload });
+  const committed = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: payload });
   assert.equal(committed.status, 0, committed.stderr);
   assert.equal(run(["audit-outcomes"], { env: fx.env }).status, 0);
   assert.equal(fs.readFileSync(projectionFile, "utf8").trim().split("\n").length, 2);

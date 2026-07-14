@@ -29,3 +29,4 @@ Re-derived something a fresh contributor should have known? Add one line here wi
 
 - Windows compatibility is gated on fixed GitHub-hosted Windows versions with separately bounded suite groups; shell/install/path/lock/timeout coverage lives in `tests/windows.test.mjs` and `.github/workflows/test.yml`.
 - Out-of-budget `resume` transition events require a caller-captured integer `atEpochMs`; `lib/application.mjs` captures it once so wall-clock decisions never fall back to the second-resolution persisted timestamp.
+- Host Hook recipes require `hook --profile`: `claude` owns hard Stop blocking, `codex-safe` releases held Stop with zero stdout, and the old no-argument handler is a migration-only safe release while retaining PreToolUse protection; the contract and recipe encoder live in `lib/host-hooks.mjs`.

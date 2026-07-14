@@ -3,8 +3,9 @@
 taskloop is the stop gate, not the driver: something else asks for another
 round (a human, a recurring goal, a scheduler), and the host decides what a
 session may touch (sandbox). These recipes bind the gate to specific hosts.
-Each line was earned in a live dual-host spike (Claude Code 2.1.207, Codex CLI
-0.144.1), not designed on paper.
+The original binding mechanics were earned in a live dual-host spike (Claude
+Code 2.1.207, Codex CLI 0.144.1). Hook output support is now explicit per host
+profile because Codex App and Codex CLI cannot be treated as one wire surface.
 
 ## Any driver
 
@@ -23,6 +24,9 @@ Each line was earned in a live dual-host spike (Claude Code 2.1.207, Codex CLI
 
 ## Claude Code
 
+- Generate the recipe with `taskloop hooks --profile claude`. Its handler
+  command identifies the adapter explicitly.
+
 - Hook payload `session_id` and `CLAUDE_CODE_SESSION_ID` are the binding pair
   and must remain in the same identity domain. A parent and its Task subagents
   carry different identities: subagents are foreign sessions, so envelope
@@ -40,6 +44,11 @@ Each line was earned in a live dual-host spike (Claude Code 2.1.207, Codex CLI
 
 ## Codex CLI
 
+- Generate the supported recipe with `taskloop hooks --profile codex-safe`.
+  A held Stop records the normal taskloop observation but returns zero stdout
+  plus a warning: Codex gets no injected resume prompt. Continue through an
+  external driver or invoke `taskloop achieve` explicitly.
+
 - Hook payloads carry `session_id`, while exec shells export
   `CODEX_THREAD_ID`, and the two values differ; taskloop binds only from the
   payload `session_id`. On an allowed Bash/PowerShell call that invokes
@@ -55,8 +64,10 @@ Each line was earned in a live dual-host spike (Claude Code 2.1.207, Codex CLI
   CLI calls: matching hooks run concurrently, so independent command rewriters
   have no reliable composition order. PreToolUse remains a policy guardrail,
   not an OS security boundary.
-- Session-internal stop-block driving works out of the box in `codex exec`;
-  the block reason arrives as the resume message.
+- `taskloop hooks --profile codex-cli-legacy` retains the historical
+  `decision:block` behavior only for explicit, version-pinned CLI experiments.
+  It was observed on Codex CLI 0.144.1, is not part of the supported Codex
+  contract, and must never be copied into Codex App configuration.
 - The default workspace-write sandbox does not cover the projection home:
   agent-run CLI verbs inside the sandbox may defer their projection rows. Pair sessions
   with `--add-dir ~/.taskloop` (or grant the home). `node install.mjs` detects a
@@ -73,6 +84,22 @@ Each line was earned in a live dual-host spike (Claude Code 2.1.207, Codex CLI
   get one. Use read-only for inspection sessions; loops need workspace-write.
 - Cross-session driving belongs to Codex scheduled tasks (untested binding;
   the gate itself is driver-agnostic).
+
+## Codex App
+
+- Use only `codex-safe`. A legacy `decision:block` Stop was observed being
+  persisted as a user-shaped hook prompt with a UUID message id; later API
+  replay rejected that id because API message ids require the `msg` prefix.
+  taskloop supplies the Stop reason, while Codex App creates the message id.
+- `codex-safe` therefore emits no Stop stdout while held. PreToolUse remains a
+  policy guardrail, but session-internal continuation is unavailable until
+  Codex exposes and taskloop verifies a stable continuation contract.
+- Never infer App versus CLI from `session_id`, model name, executable path, or
+  environment variables. Current Hook payloads expose no stable surface field;
+  the generated command must carry the profile.
+- A no-argument legacy taskloop Hook invocation is migration-only: PreToolUse
+  remains active, held Stop releases with a stderr warning, and the user should
+  regenerate an explicit recipe.
 
 ## What stays out
 

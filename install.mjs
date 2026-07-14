@@ -468,6 +468,102 @@ function configureCodexLedgerBinding(home, { configure, dry }) {
   }
 }
 
+function tomlContainerDelta(value) {
+  let quote = null; let escaped = false; let delta = 0;
+  for (const character of value) {
+    if (escaped) { escaped = false; continue; }
+    if (quote === '"' && character === "\\") { escaped = true; continue; }
+    if (quote) { if (character === quote) quote = null; continue; }
+    if (character === '"' || character === "'") { quote = character; continue; }
+    if (character === "#") break;
+    if (character === "[" || character === "{") delta += 1;
+    if (character === "]" || character === "}") delta -= 1;
+  }
+  return delta;
+}
+
+function codexStopCommands(config, text) {
+  if (config.endsWith("hooks.json")) {
+    const parsed = JSON.parse(text);
+    const groups = parsed?.hooks?.Stop;
+    if (!Array.isArray(groups)) return [];
+    return groups.flatMap((group) => Array.isArray(group?.hooks) ? group.hooks : [])
+      .map((handler) => handler?.command)
+      .filter((command) => typeof command === "string");
+  }
+  const sections = [];
+  const unparsedHookLines = [];
+  let current = null;
+  let unparsedHookRegion = false;
+  let unparsedHookDepth = null;
+  for (const line of text.split(/\r?\n/)) {
+    const header = line.match(/^\s*\[\[hooks\.([^.\]]+)(?:\.hooks)?\]\]\s*$/);
+    if (header) {
+      current = { event: header[1], lines: [] };
+      sections.push(current);
+      unparsedHookRegion = false;
+      unparsedHookDepth = null;
+      continue;
+    }
+    if (/^\s*\[/.test(line)) {
+      current = null;
+      unparsedHookRegion = /hooks/i.test(line);
+      unparsedHookDepth = null;
+      continue;
+    }
+    if (/^\s*hooks(?:\.|\s*=)/i.test(line)) {
+      current = null;
+      unparsedHookLines.push(line);
+      unparsedHookDepth = tomlContainerDelta(line.slice(line.indexOf("=") + 1));
+      unparsedHookRegion = unparsedHookDepth > 0;
+      continue;
+    }
+    if (current) current.lines.push(line);
+    else if (unparsedHookRegion) {
+      unparsedHookLines.push(line);
+      if (unparsedHookDepth !== null) {
+        unparsedHookDepth += tomlContainerDelta(line);
+        if (unparsedHookDepth <= 0) unparsedHookRegion = false;
+      }
+    }
+  }
+  const commands = sections.filter((section) => section.event === "Stop").map((section) => section.lines.join("\n"));
+  if (unparsedHookLines.some((line) => /taskloop(?:\.mjs)?/i.test(line))) {
+    throw new Error("taskloop hook uses unsupported TOML syntax");
+  }
+  return commands;
+}
+
+function inspectCodexHookProfiles(home) {
+  for (const config of [path.join(home, ".codex", "hooks.json"), path.join(home, ".codex", "config.toml")]) {
+    let text;
+    try {
+      text = fs.readFileSync(config, "utf8");
+    } catch (error) {
+      if (error?.code !== "ENOENT") plan("warning", `cannot inspect Codex Hook configuration ${config}: ${error?.message ?? error}; preserved ${config}`);
+      continue;
+    }
+    let commands;
+    try {
+      commands = codexStopCommands(config, text).filter((command) => /taskloop(?:\.mjs)?/i.test(command));
+    } catch (error) {
+      plan("warning", `cannot inspect Codex Hook configuration ${config}: ${error?.message ?? error}; preserved ${config}`);
+      continue;
+    }
+    if (!commands.length) continue;
+    const joined = commands.join("\n");
+    if (/\bhook\s+--profile\s+codex-safe\b/.test(joined) && !commands.some((command) => !/\bhook\s+--profile\s+codex-safe\b/.test(command))) {
+      plan("ok", `Codex taskloop Stop hook uses codex-safe: ${config}`);
+      continue;
+    }
+    if (/\bhook\s+--profile\s+codex-cli-legacy\b/.test(joined)) {
+      plan("warning", `experimental Codex CLI legacy Stop hook found in ${config}; never use it in Codex App. Generate a safe recipe with taskloop hooks --profile codex-safe; configuration preserved`);
+      continue;
+    }
+    plan("warning", `legacy Codex taskloop Stop hook found in ${config}; generate a safe recipe with taskloop hooks --profile codex-safe and merge it manually; configuration preserved`);
+  }
+}
+
 function pruneRuntimes(runtimeRoot, activeHash, dry) {
   if (!exists(runtimeRoot)) return;
   for (const name of fs.readdirSync(runtimeRoot).sort()) {
@@ -838,6 +934,7 @@ function main() {
   const bindCodex = () => configureCodexLedgerBinding(HOME, { configure: configureCodex, dry });
   if (configureCodex && !dry) withInstallLock(HOME, bindCodex);
   else bindCodex();
+  inspectCodexHookProfiles(HOME);
   const order = ["new", "update", "remove", "warning", "ok", "error"];
   const counts = Object.fromEntries(order.map((kind) => [kind, 0]));
   process.stdout.write(`taskloop install ${dry ? "(dry run) " : ""}from ${SOURCE}\n\n`);

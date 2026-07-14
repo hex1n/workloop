@@ -86,9 +86,9 @@ const hookShells = [
 for (const [label, executable, argsFor, spawnOptions] of hookShells) {
   test(`Windows generated hook command carries a real PreToolUse payload through ${label}`, { skip: !WINDOWS }, (t) => {
     const fixture = installedFixture(t);
-    const hooks = parsed(runNode(fixture.shim, ["hooks"], { env: fixture.env }), "hooks");
+    const hooks = parsed(runNode(fixture.shim, ["hooks", "--profile", "claude"], { env: fixture.env }), "hooks");
     const command = hooks.hooks.PreToolUse[0].hooks[0].command;
-    assert.equal(command, `node "${fixture.shim}"`, `${label} hook command must use Windows shell quoting`);
+    assert.equal(command, `node "${fixture.shim}" hook --profile claude`, `${label} hook command must use Windows shell quoting and an explicit profile`);
     const payload = JSON.stringify({
       hook_event_name: "PreToolUse",
       cwd: fixture.root,

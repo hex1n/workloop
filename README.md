@@ -68,6 +68,22 @@ host sessions stop freely, cannot write the envelope or task/git control state,
 and should use a separate worktree for parallel work. `join` is the explicit
 active-task handoff; suspended tasks continue with `resume`.
 
+Host Hook recipes require an explicit protocol profile:
+
+```sh
+taskloop hooks --profile codex-safe
+taskloop hooks --profile claude
+```
+
+`codex-safe` preserves PreToolUse deny/rewrite behavior but releases a held
+Stop with zero stdout and an explanatory stderr warning; use explicit
+`taskloop achieve` or an external driver for another round. `claude` preserves
+Claude Code's session-internal `decision:block` continuation. The
+`codex-cli-legacy` profile exposes that legacy block only as a version-pinned,
+explicit experiment and must never be used in Codex App. Old no-argument Hook
+commands retain PreToolUse protection but release held Stop safely and warn to
+regenerate the recipe.
+
 Proof assurance and change assurance are separate. Weak criterion inputs cause
 `criterion_assurance_gap`; strengthen the criterion or explicitly record a
 proof downgrade with `accept-proof-gap`. Change review is driven by declared
@@ -118,6 +134,10 @@ Use `TASKLOOP_INSTALL_HOME` for manual install tests. Installation distributes
 the runtime, `skills/loop-core`, and `skills/workloop` as one release. It
 preserves unowned, locally modified, symlinked, or externally taken-over skill
 trees and deduplicates aliased Claude/Codex roots.
+
+The installer reads user-level Codex Hook configuration only to warn about
+legacy taskloop Stop commands. It never rewrites Hook configuration;
+`--configure-codex` remains limited to the outcome-projection writable root.
 
 `status`, `verify`, `report --json`, `audit`, and `info` include the independent
 runtime, snapshot, event-record, and outcome-projection version fields. The

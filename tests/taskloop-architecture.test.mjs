@@ -12,7 +12,7 @@ import { makeTaskOpenedCommand } from "./helpers/event-v3-fixture.mjs";
 
 const ROOT = path.resolve(".");
 const CLI = path.join(ROOT, "bin", "taskloop.mjs");
-const MODULES = ["application.mjs", "criterion.mjs", "event-store.mjs", "outcome-projector.mjs", "prims.mjs", "supervision.mjs", "task-engine.mjs", "task-store.mjs", "untracked.mjs"];
+const MODULES = ["application.mjs", "criterion.mjs", "event-store.mjs", "host-hooks.mjs", "outcome-projector.mjs", "prims.mjs", "supervision.mjs", "task-engine.mjs", "task-store.mjs", "untracked.mjs"];
 
 function run(script, args = [], options = {}) { return spawnSync(process.execPath, [script, ...args], { cwd: options.cwd ?? ROOT, env: options.env ?? process.env, input: options.input ?? "", encoding: "utf8" }); }
 function imports(file) { return [...fs.readFileSync(file, "utf8").matchAll(/(?:import|export)\s+(?:[^"']+?\s+from\s+)?["']([^"']+)["']/g)].map((m) => m[1]).filter((x) => x.startsWith(".")); }
@@ -43,9 +43,9 @@ test("Stop hooks exit zero with no task and with incompatible task state", (t) =
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-stop-exit-v2-")); const repo = path.join(root, "repo"); const home = path.join(root, "home");
   fs.mkdirSync(repo, { recursive: true }); fs.mkdirSync(home, { recursive: true }); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const env = { ...process.env, HOME: home, USERPROFILE: home }; const payload = JSON.stringify({ hook_event_name: "Stop", cwd: repo });
-  let stopped = run(CLI, [], { cwd: repo, env, input: payload }); assert.equal(stopped.status, 0); assert.equal(stopped.stdout, "");
+  let stopped = run(CLI, ["hook", "--profile", "claude"], { cwd: repo, env, input: payload }); assert.equal(stopped.status, 0); assert.equal(stopped.stdout, "");
   fs.mkdirSync(path.join(repo, ".taskloop"), { recursive: true }); fs.writeFileSync(path.join(repo, ".taskloop", "task.json"), '{"schema_version":1}\n');
-  stopped = run(CLI, [], { cwd: repo, env, input: payload });
+  stopped = run(CLI, ["hook", "--profile", "claude"], { cwd: repo, env, input: payload });
   assert.equal(stopped.status, 0);
   assert.equal(stopped.stderr, "task snapshot exists without a valid schema-v3 event authority; archive it with explicit user authorization\n");
   assert.equal(stopped.stdout, '{"decision":"block","reason":"taskloop: task state unavailable; refusing to adjudicate Stop"}\n');
@@ -66,6 +66,15 @@ test("production assembly has no direct authoritative task writer", () => {
   assert.doesNotMatch(source, /\btransition\s*\(/);
   assert.match(source, /commitRecord\s*\(/);
   assert.match(source, /saveTaskSnapshot\s*\(/);
+});
+
+test("host wire protocol is localized behind the Host Hook seam", () => {
+  const application = fs.readFileSync(path.join(ROOT, "lib", "application.mjs"), "utf8");
+  const hostHooks = fs.readFileSync(path.join(ROOT, "lib", "host-hooks.mjs"), "utf8");
+  for (const literal of ["hookSpecificOutput", "permissionDecision", 'decision: "block"']) {
+    assert.doesNotMatch(application, new RegExp(literal));
+    assert.match(hostHooks, new RegExp(literal));
+  }
 });
 
 test("Windows W01-W08 selection is non-vacuous in every listed source", () => {

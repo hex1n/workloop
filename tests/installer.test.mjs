@@ -23,6 +23,123 @@ test("installer puts runtime and skills from one release under a temporary home"
   assert.equal(fs.existsSync(path.join(home, "bin", ".taskloop-activation-journal.json")), false);
 });
 
+test("installer warns about legacy Codex Stop hooks without editing user configuration", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-install-hook-profile-")); const home = path.join(root, "home");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(home, ".codex", "hooks.json");
+  fs.mkdirSync(path.dirname(config), { recursive: true });
+  const original = Buffer.from(JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: 'node "/installed/taskloop.mjs"' }] }] } }, null, 2) + "\n");
+  fs.writeFileSync(config, original);
+
+  const installed = run(path.join(ROOT, "install.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, TASKLOOP_INSTALL_HOME: home, TASKLOOP_INSTALL_REPO: ROOT } });
+
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  assert.match(installed.stdout, /legacy Codex taskloop Stop hook.*hooks --profile codex-safe/);
+  assert.deepEqual(fs.readFileSync(config), original);
+
+  const safeConfig = JSON.parse(original.toString("utf8"));
+  safeConfig.hooks.Stop[0].hooks[0].command += " hook --profile codex-safe";
+  const safe = Buffer.from(JSON.stringify(safeConfig, null, 2) + "\n");
+  fs.writeFileSync(config, safe);
+  const checked = run(path.join(ROOT, "install.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, TASKLOOP_INSTALL_HOME: home, TASKLOOP_INSTALL_REPO: ROOT } });
+  assert.equal(checked.status, 0, checked.stderr || checked.stdout);
+  assert.doesNotMatch(checked.stdout, /legacy Codex taskloop Stop hook found/);
+  assert.deepEqual(fs.readFileSync(config), safe);
+});
+
+test("installer does not confuse a taskloop PreToolUse hook with another tool's Stop hook", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-install-hook-ownership-")); const home = path.join(root, "home");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(home, ".codex", "hooks.json");
+  fs.mkdirSync(path.dirname(config), { recursive: true });
+  const original = Buffer.from(JSON.stringify({ hooks: {
+    PreToolUse: [{ hooks: [{ type: "command", command: 'node "/installed/taskloop.mjs"' }] }],
+    Stop: [{ hooks: [{ type: "command", command: 'node "/installed/notifier.mjs"' }] }],
+  } }, null, 2) + "\n");
+  fs.writeFileSync(config, original);
+
+  const installed = run(path.join(ROOT, "install.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, TASKLOOP_INSTALL_HOME: home, TASKLOOP_INSTALL_REPO: ROOT } });
+
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  assert.doesNotMatch(installed.stdout, /Codex taskloop Stop hook/);
+  assert.deepEqual(fs.readFileSync(config), original);
+});
+
+test("installer does not confuse a TOML taskloop PreToolUse hook with Stop", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-install-hook-toml-ownership-")); const home = path.join(root, "home");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(home, ".codex", "config.toml");
+  fs.mkdirSync(path.dirname(config), { recursive: true });
+  const original = Buffer.from('[[hooks.PreToolUse]]\nmatcher = "Write"\n\n[[hooks.PreToolUse.hooks]]\ntype = "command"\ncommand = "node /installed/taskloop.mjs hook --profile codex-safe"\n\n[[hooks.Stop.hooks]]\ntype = "command"\ncommand = "node /installed/notifier.mjs"\n');
+  fs.writeFileSync(config, original);
+
+  const installed = run(path.join(ROOT, "install.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, TASKLOOP_INSTALL_HOME: home, TASKLOOP_INSTALL_REPO: ROOT } });
+
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  assert.doesNotMatch(installed.stdout, /Codex taskloop Stop hook|cannot inspect Codex Hook configuration.*config\.toml/);
+  assert.deepEqual(fs.readFileSync(config), original);
+});
+
+test("installer diagnoses inline TOML taskloop Stop handlers without rewriting TOML", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-install-hook-toml-")); const home = path.join(root, "home");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(home, ".codex", "config.toml");
+  fs.mkdirSync(path.dirname(config), { recursive: true });
+  const original = Buffer.from('[[hooks.Stop]]\nmatcher = "*"\n\n[[hooks.Stop.hooks]]\ntype = "command"\ncommand = \'node "/installed/taskloop.mjs"\'\n');
+  fs.writeFileSync(config, original);
+
+  const installed = run(path.join(ROOT, "install.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, TASKLOOP_INSTALL_HOME: home, TASKLOOP_INSTALL_REPO: ROOT } });
+
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  assert.match(installed.stdout, /legacy Codex taskloop Stop hook.*config\.toml/);
+  assert.deepEqual(fs.readFileSync(config), original);
+});
+
+test("installer warns when taskloop TOML hook syntax cannot be inspected safely", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-install-hook-toml-unsafe-")); const home = path.join(root, "home");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(home, ".codex", "config.toml");
+  fs.mkdirSync(path.dirname(config), { recursive: true });
+  const original = Buffer.from('hooks = { Stop = [{ command = "node /installed/taskloop.mjs" }] }\n');
+  fs.writeFileSync(config, original);
+
+  const installed = run(path.join(ROOT, "install.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, TASKLOOP_INSTALL_HOME: home, TASKLOOP_INSTALL_REPO: ROOT } });
+
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  assert.match(installed.stdout, /cannot inspect Codex Hook configuration.*config\.toml/);
+  assert.deepEqual(fs.readFileSync(config), original);
+});
+
+test("installer warns about unsupported taskloop Stop syntax even beside a recognized PreToolUse section", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-install-hook-toml-mixed-")); const home = path.join(root, "home");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(home, ".codex", "config.toml");
+  fs.mkdirSync(path.dirname(config), { recursive: true });
+  const original = Buffer.from('[[hooks.PreToolUse.hooks]]\ncommand = "node /installed/taskloop.mjs hook --profile codex-safe"\n\nhooks.Stop.command = "node /installed/taskloop.mjs"\n');
+  fs.writeFileSync(config, original);
+
+  const installed = run(path.join(ROOT, "install.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, TASKLOOP_INSTALL_HOME: home, TASKLOOP_INSTALL_REPO: ROOT } });
+
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  assert.match(installed.stdout, /cannot inspect Codex Hook configuration.*config\.toml/);
+  assert.deepEqual(fs.readFileSync(config), original);
+});
+
+test("installer warns about a multiline dotted taskloop Stop value", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-install-hook-toml-multiline-")); const home = path.join(root, "home");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(home, ".codex", "config.toml");
+  fs.mkdirSync(path.dirname(config), { recursive: true });
+  const original = Buffer.from('hooks.Stop = [\n  { command = "node /installed/taskloop.mjs" }\n]\n');
+  fs.writeFileSync(config, original);
+
+  const installed = run(path.join(ROOT, "install.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, TASKLOOP_INSTALL_HOME: home, TASKLOOP_INSTALL_REPO: ROOT } });
+
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  assert.match(installed.stdout, /cannot inspect Codex Hook configuration.*config\.toml/);
+  assert.deepEqual(fs.readFileSync(config), original);
+});
+
 test("runtime-contract-4 installer refuses a contract-3 source rollback", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-install-no-v3-rollback-")); const home = path.join(root, "home"); const source = path.join(root, "source");
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
