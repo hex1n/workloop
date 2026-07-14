@@ -3,7 +3,7 @@
 - Issue ID: `ISSUE-002`
 - Type: product/Windows concurrency
 - Severity: P0
-- Disposition: `OPEN`
+- Disposition: `CLOSED`
 - Affected scenarios / edges: W05/W06, E2E-009, Oracle 8; task-lock contention → optional stale-lock reaper acquisition → authority mutation.
 - Expected: a contender that cannot acquire `.task.lock.reaper` waits for the real `.task.lock`; no authorized Hook write is lost or spuriously denied.
 - Actual: diagnostic run `29336791375` failed Windows 2022 + Node 22 and Windows 2025 + Node 24 because `mkdir('.task.lock.reaper')` returned transient `EPERM`, which propagated to the generic supervisor-unavailable deny. The other two Windows cells passed the same SHA.
@@ -15,3 +15,4 @@
 - Post-fix E2E rerun: push the exact fix SHA and require all eight `test` workflow jobs to pass, with W01–W08 green in each Windows job.
 - Closure rule: move to `CLOSED` only after the exact fix SHA passes all four Windows cells and all portable dependents; a later committed closeout-doc change must itself receive exact matrix proof.
 - Cleanup / data impact: no persistent local fixture; preserve runs `29336558086` and `29336791375` as failure evidence.
+- Closure evidence: SHA `d89e8871924ddeb9ddbb8f8b030ebedc8d186fd6`, run `29337249679`, all four Windows cells and all portable jobs successful.

@@ -4,24 +4,24 @@
 
 | Result | Count |
 |---|---:|
-| Passed | 2 |
+| Passed | 4 |
 | Failed | 0 |
-| Blocked | 3 |
+| Blocked | 1 |
 | Skipped | 0 |
 
-首个精确候选提交 `118cf8943c647703cb366407cc048b1ebd156792` 已触发 GitHub Actions run `29335557499`。五个矩阵格通过；Ubuntu Node 22/24 与 Windows 2025 + Node 22 暴露同一个 W05 Hook stdin 竞态。根因已在本地确定性复现并修复，远端精确修复提交验证尚未执行。
+首个精确候选提交 `118cf8943c647703cb366407cc048b1ebd156792` 暴露 Hook stdin `EAGAIN`；后续诊断 run 暴露 Windows reaper `EPERM/EACCES`。两项根因均已修复，精确修复提交 `d89e8871924ddeb9ddbb8f8b030ebedc8d186fd6` 的 GitHub Actions run `29337249679` 已通过全部 8 个矩阵任务。
 
 ## Run Lineage & Emergent Scenarios
 
 - Upstream plan: [2026-07-14-schema-v3-event-sourcing-e2e-test-plan.md](../2026-07-14-schema-v3-event-sourcing-e2e-test-plan.md)
 - Upstream run: [e2e-rerun-release-gates-20260714](../e2e-rerun-release-gates-20260714/execution-report.md)
-- Downstream: pending exact-fix CI rerun
+- Downstream: final evidence-only release SHA CI, then Fable closing
 - Status: open
 
 | Emergent scenario | Source trigger | Risk family | Plan section to update | Status |
 |---|---|---|---|---|
-| EM-005 nonblocking Hook stdin | exact CI W05 lost events while every child exited 0 | Hook protocol / concurrency | W05 and Oracle 7/8 | accepted; local fix proved, remote closure pending |
-| EM-006 Windows reaper `EPERM` | fix CI exposed transient `EPERM` while contenders create/remove `.task.lock.reaper` | Windows lock recovery | W05/W06 and Oracle 8 | accepted; fix pending exact CI |
+| EM-005 nonblocking Hook stdin | exact CI W05 lost events while every child exited 0 | Hook protocol / concurrency | W05 and Oracle 7/8 | closed by run `29337249679` |
+| EM-006 Windows reaper `EPERM` | fix CI exposed transient `EPERM` while contenders create/remove `.task.lock.reaper` | Windows lock recovery | W05/W06 and Oracle 8 | closed by run `29337249679` |
 
 ## Execution Contract Override
 
@@ -31,13 +31,13 @@
 
 ## Environment State Ledger
 
-- Target: local source CLI plus GitHub Actions run `29335557499`, local/test only.
+- Target: local source CLI plus GitHub Actions runs `29335557499` through `29337249679`, local/test only.
 - Datasource: isolated temporary repositories created by `tests/runtime-v4.test.mjs`; GitHub `hex1n/taskloop` Actions metadata.
-- Deployment/freshness evidence: failed remote SHA `118cf8943c647703cb366407cc048b1ebd156792`; local working tree adds the stdin retry fix and deterministic regression.
+- Deployment/freshness evidence: remote SHA `d89e8871924ddeb9ddbb8f8b030ebedc8d186fd6`, run `29337249679`, conclusion `success`, eight successful matrix jobs.
 - Isolation namespace: `schema-v3-ci-w05-20260714`.
 - Created data: temporary W05 repositories only; test teardown removed them.
 - Cleanup policy: preserve this report and local issue; temporary fixtures self-clean.
-- Remaining traces: GitHub run `29335557499`, this report, and `issues/ISSUE-001-hook-stdin-eagain.md`.
+- Remaining traces: four GitHub runs, this report, and two closed local issue documents.
 - Tool permissions: authenticated GitHub Actions read/push access and local process/filesystem access; no production target.
 
 ## Run Metadata
@@ -47,6 +47,8 @@
 | Run kind | exact-CI failure continuation and local fix loop |
 | Failed remote SHA | `118cf8943c647703cb366407cc048b1ebd156792` |
 | GitHub run | [29335557499](https://github.com/hex1n/taskloop/actions/runs/29335557499) |
+| Successful fix SHA | `d89e8871924ddeb9ddbb8f8b030ebedc8d186fd6` |
+| Successful fix run | [29337249679](https://github.com/hex1n/taskloop/actions/runs/29337249679), 8/8 jobs |
 | Local runtimes | Node `v22.14.0` and `v26.0.0` |
 | Selected scenarios | W05, E2E-009, GATE-005 |
 | Retention | preserve evidence |
@@ -58,8 +60,8 @@
 | exact SHA CI metadata and failed logs | available | GitHub run `29335557499` |
 | local Node 22 reproduction | available | `TASKLOOP_W05_CONCURRENCY=100` |
 | delayed nonblocking stdin control | available | deterministic 50 ms regression test |
-| exact fix Windows matrix | blocked | fix not yet committed/pushed |
-| Fable closing | blocked | requires four exact-fix Windows cells first |
+| exact fix Windows matrix | available/passed | run `29337249679`: Windows 2022/2025 × Node 22/24 all successful |
+| Fable closing | blocked | requires exact CI for the evidence-only successor SHA |
 
 ## DAG Schedule
 
@@ -69,8 +71,8 @@
 | C1 | amplify W05 locally | C0 | isolated Node 22 stress | passed |
 | C2 | deterministic delayed-stdin regression | C1 | red before fix, green after fix | passed |
 | C3 | complete local regression | C2 | Node 22 then Node 26 | passed |
-| C3b | Windows reaper contention classification | second/third exact CI | preserve task-lock fail-closed semantics | passed by code inspection; remote proof pending |
-| C4 | exact-fix matrix | C3 + new SHA | pending | blocked |
+| C3b | Windows reaper contention classification | second/third exact CI | preserve task-lock fail-closed semantics | passed |
+| C4 | exact-fix matrix | C3 + new SHA | run all eight jobs | passed |
 | C5 | Fable closing | C4 all green | pending | blocked |
 
 ## Scenario Results
@@ -79,9 +81,9 @@
 |---|---|---|---|---|---|---|
 | W05-REPRO | passed | amplify the exact silent-loss symptom | Node 22 at 100 concurrency produced `29/101` records; all children exited 0 with empty output | product | [ISSUE-001](issues/ISSUE-001-hook-stdin-eagain.md) | [W05 reproduction](#w05-repro--silent-authority-loss) |
 | W05-FIX | passed | delayed stdin and 100 concurrent hooks preserve every event | delayed test `2/2`; stress `101/101`; Node 22/26 full suites green | product | [ISSUE-001](issues/ISSUE-001-hook-stdin-eagain.md) | [W05 fix](#w05-fix--bounded-stdin-read-retry) |
-| W05-WINDOWS-REAPER | blocked | reaper-directory contention retries without losing the real task lock | two diagnostic Windows jobs show transient `EPERM`; source fix not yet run remotely | product | [ISSUE-002](issues/ISSUE-002-windows-reaper-eperm.md) | [Windows reaper](#w05-windows-reaper--transient-eperm) |
-| E2E-009 | blocked | all eight matrix jobs, including four Windows cells, pass the exact fix SHA | stdin fix made Ubuntu green; Windows reaper fix has no exact run | product | [ISSUE-001](issues/ISSUE-001-hook-stdin-eagain.md), [ISSUE-002](issues/ISSUE-002-windows-reaper-eperm.md) | [Exact CI](#e2e-009--exact-fix-ci) |
-| GATE-005 | blocked | Fable returns final GO on the exact green release commit | Windows prerequisite not yet met | tooling | — | [Fable gate](#gate-005--fable-closing) |
+| W05-WINDOWS-REAPER | passed | reaper-directory contention retries without losing the real task lock | all four Windows cells passed W01–W08 and downstream suites | product | [ISSUE-002](issues/ISSUE-002-windows-reaper-eperm.md) | [Windows reaper](#w05-windows-reaper--transient-eperm) |
+| E2E-009 | passed | all eight matrix jobs, including four Windows cells, pass the exact fix SHA | run `29337249679` is 8/8 successful on `d89e887…6fd6` | product | [ISSUE-001](issues/ISSUE-001-hook-stdin-eagain.md), [ISSUE-002](issues/ISSUE-002-windows-reaper-eperm.md) | [Exact CI](#e2e-009--exact-fix-ci) |
+| GATE-005 | blocked | Fable returns final GO on the exact green release commit | this evidence closeout must be committed and receive exact CI before Fable | tooling | — | [Fable gate](#gate-005--fable-closing) |
 
 ## Evidence & Failure Scenes
 
@@ -125,9 +127,22 @@ fail 0
 
 ### E2E-009 — exact fix CI
 
-- Probe: query the `test` workflow for the next pushed SHA and inspect all jobs.
+- Probe: query the `test` workflow for SHA `d89e8871924ddeb9ddbb8f8b030ebedc8d186fd6` and inspect all jobs.
 - Expected: portable macOS/Ubuntu Node 22/24 and Windows 2022/2025 × Node 22/24 all succeed; each Windows job passes W01–W08.
-- Actual: run `29336558086` made all four portable jobs green but all Windows W steps failed; diagnostic run `29336791375` produced two Windows passes and two failures whose child stderr was `EPERM` on `.task.lock.reaper`.
+- Actual: run `29337249679` completed `success`; four portable and four Windows jobs all succeeded. Every Windows cell passed W01–W08, Architecture, Installer, and Behavioral/hook protocol.
+- Raw job receipt:
+
+```text
+portable (macos-latest, 22) success
+portable (macos-latest, 24) success
+portable (ubuntu-latest, 22) success
+portable (ubuntu-latest, 24) success
+windows (windows-2022, 22) success
+windows (windows-2022, 24) success
+windows (windows-2025, 22) success
+windows (windows-2025, 24) success
+```
+
 - Prior failure scene: run `29335557499` passed five jobs and failed Ubuntu Node 22/24 plus Windows 2025 + Node 22 on W05.
 - Re-query: `gh run list --workflow test --branch agent/schema-v3-event-sourcing --json databaseId,headSha,status,conclusion`.
 - Cleanup safety: remote run is immutable evidence.
@@ -147,13 +162,14 @@ permissionDecisionReason: taskloop: supervisor unavailable; refusing a write who
 - Fix: on Windows only, classify `EPERM/EACCES` from reaper `mkdir` as contention and return to the bounded outer task-lock retry; persistent failure still reaches `TASKLOCK_TIMEOUT`.
 - Created identifiers: GitHub jobs `87097933087` and `87097933131`; no retained local data.
 - Re-query: exact Windows 2022/2025 × Node 22/24 W01–W08 step.
+- Post-fix result: run `29337249679` passed all four cells and every downstream job step.
 - Cleanup safety: remote logs are immutable; diagnostic assertion remains useful failure evidence.
 
 ### GATE-005 — Fable closing
 
 - Probe: one Fable deep review after E2E-009 passes.
 - Expected: final GO bound to the same release SHA, with no later material edit.
-- Actual: prerequisite remains blocked.
+- Actual: product-fix prerequisite passed; the evidence-only closeout commit still needs its own exact CI before review.
 - Re-query: launch only after all four Windows cells for the final SHA pass.
 - Cleanup safety: review is read-only.
 
@@ -161,8 +177,8 @@ permissionDecisionReason: taskloop: supervisor unavailable; refusing a write who
 
 | ID | Type | Disposition | Detail | Close condition |
 |---|---|---|---|---|
-| [ISSUE-001](issues/ISSUE-001-hook-stdin-eagain.md) | product/concurrency | OPEN | Hook stdin `EAGAIN` was swallowed as an empty payload, silently losing event authority writes | exact fix SHA passes all eight matrix jobs and affected E2E dependents |
-| [ISSUE-002](issues/ISSUE-002-windows-reaper-eperm.md) | product/Windows concurrency | OPEN | transient reaper-directory `EPERM/EACCES` was propagated instead of retried as contention | exact fix SHA passes all four Windows cells and complete matrix |
+| [ISSUE-001](issues/ISSUE-001-hook-stdin-eagain.md) | product/concurrency | CLOSED | bounded stdin reader and deterministic regression pass locally and in run `29337249679` | closed by exact 8/8 fix run |
+| [ISSUE-002](issues/ISSUE-002-windows-reaper-eperm.md) | product/Windows concurrency | CLOSED | Windows reaper contention retries while the real task lock stays authoritative | closed by four exact Windows successes in run `29337249679` |
 | GAP-005 | review/tooling | CONDITIONAL | Fable must wait for exact-fix Windows success | all four Windows cells green, then final GO with no edit |
 
 ## Data Created & Cleanup
@@ -170,7 +186,7 @@ permissionDecisionReason: taskloop: supervisor unavailable; refusing a write who
 | Data | Owner marker | Retention | Cleanup |
 |---|---|---|---|
 | temporary W05 repositories | Node test temp prefix `taskloop-v4-` | cleaned | automatic `t.after` removal |
-| GitHub Actions run | run `29335557499` | preserve | immutable remote evidence |
+| GitHub Actions runs | runs `29335557499`, `29336558086`, `29336791375`, `29337249679` | preserve | immutable remote evidence |
 | report and issue | `e2e-rerun-ci-w05-20260714` | preserve | remove only by explicit instruction |
 
 ## Re-run Instructions
@@ -185,4 +201,4 @@ gh run list --workflow test --branch agent/schema-v3-event-sourcing --json datab
 
 ## Next Actions for Agent
 
-- [ISSUE-001](issues/ISSUE-001-hook-stdin-eagain.md) and [ISSUE-002](issues/ISSUE-002-windows-reaper-eperm.md): commit and push both bounded contention fixes, then rerun W05 and all matrix dependents on the exact new SHA. Close only after all eight jobs pass.
+No `OPEN` product or plan issue remains in this fix run. The release orchestrator must commit this evidence-only closeout, obtain exact 8/8 CI for that successor SHA, and only then run Fable closing.
