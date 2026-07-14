@@ -254,7 +254,7 @@ test("[W05] twenty concurrent mutations serialize without sequence gaps or lost 
     child.on("error", reject); child.on("close", (status) => resolve({ status, stdout, stderr })); child.stdin.end(payload);
   });
   const results = await Promise.all(Array.from({ length: concurrency }, invoke));
-  for (const result of results) { assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, ""); }
+  for (const result of results) { assert.equal(result.status, 0, result.stderr); assert.equal(result.stdout, "", JSON.stringify(result)); }
   const replay = readEventStore(fx.repo);
   assert.equal(replay.records.length, concurrency + 1, JSON.stringify(results, null, 2));
   assert.deepEqual(replay.records.map((record) => record.repo_sequence), Array.from({ length: concurrency + 1 }, (_, index) => index + 1));
