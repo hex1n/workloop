@@ -1,0 +1,181 @@
+{
+  "owner": "schema-v3-e2e-20260714",
+  "repo": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo",
+  "home": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home",
+  "checks": {
+    "snapshot_recovery_semantically_equal": true,
+    "event_digest_unchanged_by_snapshot_recovery": true,
+    "repo_sequences": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "task_opened_sequences": [
+      1,
+      1
+    ],
+    "first_audit": {
+      "runtime_contract": 4,
+      "task_snapshot_schema_version": 3,
+      "event_record_schema_version": 1,
+      "outcome_projection_schema_version": 3,
+      "valid": true,
+      "record_count": 7,
+      "event_count": 7,
+      "valid_end_offset": 7570,
+      "last_repo_sequence": 7,
+      "last_record_digest": "sha256:6dc041d424fa1341530cd1aab4973f6e35a5e3d5e473a3b300313a66651db66d",
+      "recovered_tail": null,
+      "error": null
+    },
+    "second_audit": {
+      "runtime_contract": 4,
+      "task_snapshot_schema_version": 3,
+      "event_record_schema_version": 1,
+      "outcome_projection_schema_version": 3,
+      "valid": true,
+      "record_count": 8,
+      "event_count": 8,
+      "valid_end_offset": 10040,
+      "last_repo_sequence": 8,
+      "last_record_digest": "sha256:78309927aa0df9b47e6581bd2599b296bbee1bec895c4263d7069037b61fb241",
+      "recovered_tail": null,
+      "error": null
+    },
+    "first_sync": {
+      "valid": true,
+      "added": 0,
+      "total": 8,
+      "projection_path": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home/.taskloop/outcomes-v3.jsonl",
+      "cursor_path": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home/.taskloop/outcomes-v3-cursors/0e7915c010fb29ab2fc27a6d3fb79f0c5f6ec5a53956c90ec184f9b438873a6a.json"
+    },
+    "second_sync": {
+      "valid": true,
+      "added": 0,
+      "total": 8,
+      "projection_path": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home/.taskloop/outcomes-v3.jsonl",
+      "cursor_path": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home/.taskloop/outcomes-v3-cursors/0e7915c010fb29ab2fc27a6d3fb79f0c5f6ec5a53956c90ec184f9b438873a6a.json"
+    },
+    "rebuild_sync": {
+      "valid": true,
+      "added": 8,
+      "total": 8,
+      "projection_path": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home/.taskloop/outcomes-v3.jsonl",
+      "cursor_path": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home/.taskloop/outcomes-v3-cursors/0e7915c010fb29ab2fc27a6d3fb79f0c5f6ec5a53956c90ec184f9b438873a6a.json"
+    },
+    "outcome_audit": {
+      "valid": true,
+      "row_count": 8,
+      "projection_path": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home/.taskloop/outcomes-v3.jsonl"
+    }
+  },
+  "results": [
+    {
+      "command": "node bin/taskloop.mjs info",
+      "status": 0,
+      "stdout": "{\"name\":\"taskloop\",\"runtime_contract\":4,\"task_snapshot_schema_version\":3,\"event_record_schema_version\":1,\"outcome_projection_schema_version\":3,\"event_store\":\".taskloop/events-v3.jsonl\",\"outcome_projection\":\"~/.taskloop/outcomes-v3.jsonl\",\"distribution_owner\":\"taskloop\"}\n",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs open --repo /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo --goal schema-v3 manual E2E --criterion-file check.mjs --criterion-policy default --alignment-because the fixture checker covers terminal behavior --files work.txt --risk routine --risk-reason isolated self-owned E2E fixture",
+      "status": 0,
+      "stdout": "taskloop: opened /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo/.taskloop/task.json; criterion unsatisfied; policy default\n",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs status --repo /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo",
+      "status": 0,
+      "stdout": "{\n  \"runtime_contract\": 4,\n  \"task_snapshot_schema_version\": 3,\n  \"event_record_schema_version\": 1,\n  \"outcome_projection_schema_version\": 3,\n  \"task_schema_version\": 3,\n  \"task_id\": \"d2d19ab9-e285-4f7b-aaae-f01e85570a26\",\n  \"lifecycle\": {\n    \"state\": \"active\"\n  },\n  \"goal\": \"schema-v3 manual E2E\",\n  \"policy\": {\n    \"close_policy\": \"automatic\",\n    \"open_requirement\": \"unsatisfied\",\n    \"witness_requirement\": \"required\"\n  },\n  \"criterion\": {\n    \"criterion_definition_hash\": \"sha256:03e3d512d5b0bc270c1e8f39e531250decc2de6d718bda15220e37d2d8743ef1\",\n    \"criterion_generation_id\": \"e351a8ea-3772-4e7e-b5fe-42ac073a4fba\",\n    \"criterion_input_fingerprint\": \"sha256:cf7b5bc6119299c7711547a98dbddb8e76d7fc0912232a1b6581347b9334b0af\",\n    \"declared_inputs\": [\n      {\n        \"hash\": \"sha256:30570ab519607a5a3614efdb3b448605f0847be492d3f0b7d224239bcb2f8da9\",\n        \"path\": \"check.mjs\"\n      }\n    ],\n    \"input_coverage\": \"full\",\n    \"last_observation\": {\n      \"changed_paths\": [],\n      \"criterion_generation_id\": \"e351a8ea-3772-4e7e-b5fe-42ac073a4fba\",\n      \"execution\": {\n        \"duration_ms\": 56,\n        \"execution_error\": null,\n        \"exit_code\": 1,\n        \"output_tail\": \"\",\n        \"signal\": null,\n        \"timeout_seconds\": 120\n      },\n      \"observation_id\": \"5c68f742-755d-45ea-bf9c-21e1b2ab788a\",\n      \"observed_artifact_revision\": 0,\n      \"observed_at\": \"2026-07-14T12:12:28.509Z\",\n      \"verdict\": \"unsatisfied\"\n    },\n    \"protocol\": \"binary\",\n    \"provenance\": \"repo\",\n    \"source\": {\n      \"kind\": \"file\",\n      \"value\": \"check.mjs\"\n    },\n    \"subjects\": [],\n    \"timeout_seconds\": 120\n  },\n  \"proof_assurance\": {\n    \"state\": \"adequate\",\n    \"reasons\": [],\n    \"acceptance\": null\n  },\n  \"review_requirement\": {\n    \"level\": null,\n    \"reasons\": [],\n    \"accepted\": true,\n    \"waived\": false\n  },\n  \"machine_risk_floor\": {\n    \"risk\": \"routine\",\n    \"reasons\": []\n  },\n  \"next_actions\": [],\n  \"closure\": {\n    \"state\": \"not_ready\",\n    \"reason\": \"criterion_unsatisfied\"\n  },\n  \"alignment\": {\n    \"because\": \"the fixture checker covers terminal behavior\",\n    \"not_covered\": []\n  },\n  \"assurance\": {\n    \"change_classes\": [\n      \"internal\"\n    ],\n    \"declared_risk\": \"routine\",\n    \"proof_gap_acceptances\": [],\n    \"required_review_level\": null,\n    \"review_policy\": \"risk_based\",\n    \"review_waiver_granted_by\": null,\n    \"review_waiver_reason\": null,\n    \"risk_declared_by\": \"self\",\n    \"risk_floor_events\": [],\n    \"risk_reason\": \"isolated self-owned E2E fixture\"\n  },\n  \"budget\": {\n    \"output_tokens\": null,\n    \"rounds\": 8,\n    \"wall_clock_minutes\": null,\n    \"writes\": null\n  },\n  \"spent\": {\n    \"output_tokens_estimate\": 0,\n    \"rounds\": 0,\n    \"wall_clock_ms\": 0,\n    \"writes\": 0\n  },\n  \"artifact_revision\": 0,\n  \"last_substantive_task_revision\": 1,\n  \"session_binding\": {\n    \"bound\": true,\n    \"cli_identity_matches_owner\": true,\n    \"last_observed_owner_hook_contact\": null,\n    \"next_action\": null\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs status --repo /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo",
+      "status": 0,
+      "stdout": "{\n  \"runtime_contract\": 4,\n  \"task_snapshot_schema_version\": 3,\n  \"event_record_schema_version\": 1,\n  \"outcome_projection_schema_version\": 3,\n  \"task_schema_version\": 3,\n  \"task_id\": \"d2d19ab9-e285-4f7b-aaae-f01e85570a26\",\n  \"lifecycle\": {\n    \"state\": \"active\"\n  },\n  \"goal\": \"schema-v3 manual E2E\",\n  \"policy\": {\n    \"open_requirement\": \"unsatisfied\",\n    \"witness_requirement\": \"required\",\n    \"close_policy\": \"automatic\"\n  },\n  \"criterion\": {\n    \"criterion_definition_hash\": \"sha256:03e3d512d5b0bc270c1e8f39e531250decc2de6d718bda15220e37d2d8743ef1\",\n    \"criterion_generation_id\": \"e351a8ea-3772-4e7e-b5fe-42ac073a4fba\",\n    \"criterion_input_fingerprint\": \"sha256:cf7b5bc6119299c7711547a98dbddb8e76d7fc0912232a1b6581347b9334b0af\",\n    \"declared_inputs\": [\n      {\n        \"hash\": \"sha256:30570ab519607a5a3614efdb3b448605f0847be492d3f0b7d224239bcb2f8da9\",\n        \"path\": \"check.mjs\"\n      }\n    ],\n    \"input_coverage\": \"full\",\n    \"protocol\": \"binary\",\n    \"provenance\": \"repo\",\n    \"source\": {\n      \"kind\": \"file\",\n      \"value\": \"check.mjs\"\n    },\n    \"subjects\": [],\n    \"timeout_seconds\": 120,\n    \"last_observation\": {\n      \"changed_paths\": [],\n      \"criterion_generation_id\": \"e351a8ea-3772-4e7e-b5fe-42ac073a4fba\",\n      \"execution\": {\n        \"duration_ms\": 56,\n        \"execution_error\": null,\n        \"exit_code\": 1,\n        \"output_tail\": \"\",\n        \"signal\": null,\n        \"timeout_seconds\": 120\n      },\n      \"observation_id\": \"5c68f742-755d-45ea-bf9c-21e1b2ab788a\",\n      \"observed_artifact_revision\": 0,\n      \"observed_at\": \"2026-07-14T12:12:28.509Z\",\n      \"verdict\": \"unsatisfied\"\n    }\n  },\n  \"proof_assurance\": {\n    \"state\": \"adequate\",\n    \"reasons\": [],\n    \"acceptance\": null\n  },\n  \"review_requirement\": {\n    \"level\": null,\n    \"reasons\": [],\n    \"accepted\": true,\n    \"waived\": false\n  },\n  \"machine_risk_floor\": {\n    \"risk\": \"routine\",\n    \"reasons\": []\n  },\n  \"next_actions\": [],\n  \"closure\": {\n    \"state\": \"not_ready\",\n    \"reason\": \"criterion_unsatisfied\"\n  },\n  \"alignment\": {\n    \"because\": \"the fixture checker covers terminal behavior\",\n    \"not_covered\": []\n  },\n  \"assurance\": {\n    \"declared_risk\": \"routine\",\n    \"risk_reason\": \"isolated self-owned E2E fixture\",\n    \"risk_declared_by\": \"self\",\n    \"change_classes\": [\n      \"internal\"\n    ],\n    \"review_policy\": \"risk_based\",\n    \"required_review_level\": null,\n    \"review_waiver_reason\": null,\n    \"review_waiver_granted_by\": null,\n    \"proof_gap_acceptances\": [],\n    \"risk_floor_events\": []\n  },\n  \"budget\": {\n    \"rounds\": 8,\n    \"writes\": null,\n    \"wall_clock_minutes\": null,\n    \"output_tokens\": null\n  },\n  \"spent\": {\n    \"rounds\": 0,\n    \"writes\": 0,\n    \"wall_clock_ms\": 0,\n    \"output_tokens_estimate\": 0\n  },\n  \"artifact_revision\": 0,\n  \"last_substantive_task_revision\": 1,\n  \"session_binding\": {\n    \"bound\": true,\n    \"cli_identity_matches_owner\": true,\n    \"last_observed_owner_hook_contact\": null,\n    \"next_action\": null\n  }\n}\n",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs",
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs suspend --repo /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo --reason needs-input --remaining continue --failure manual pause --next-action resume",
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs resume --repo /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo --reason continue E2E",
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs review --repo /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo --level fresh-context --reviewer e2e-peer --blocking-findings 0 --advisory-findings 1",
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs amend --repo /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo --reason raise test write budget --writes 5",
+      "status": 0,
+      "stdout": "",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs abandon --repo /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo --reason finish first E2E task",
+      "status": 0,
+      "stdout": "taskloop: terminal(abandoned)\n",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs audit --repo /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo",
+      "status": 0,
+      "stdout": "{\n  \"runtime_contract\": 4,\n  \"task_snapshot_schema_version\": 3,\n  \"event_record_schema_version\": 1,\n  \"outcome_projection_schema_version\": 3,\n  \"valid\": true,\n  \"record_count\": 7,\n  \"event_count\": 7,\n  \"valid_end_offset\": 7570,\n  \"last_repo_sequence\": 7,\n  \"last_record_digest\": \"sha256:6dc041d424fa1341530cd1aab4973f6e35a5e3d5e473a3b300313a66651db66d\",\n  \"recovered_tail\": null,\n  \"error\": null\n}\n",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs open --repo /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo --goal second task in same authority --criterion-file check.mjs --criterion-policy default --alignment-because the second task proves multi-task replay --files work.txt --risk routine --risk-reason isolated self-owned E2E fixture",
+      "status": 0,
+      "stdout": "taskloop: opened /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo/.taskloop/task.json; criterion unsatisfied; policy default\n",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs audit --repo /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo",
+      "status": 0,
+      "stdout": "{\n  \"runtime_contract\": 4,\n  \"task_snapshot_schema_version\": 3,\n  \"event_record_schema_version\": 1,\n  \"outcome_projection_schema_version\": 3,\n  \"valid\": true,\n  \"record_count\": 8,\n  \"event_count\": 8,\n  \"valid_end_offset\": 10040,\n  \"last_repo_sequence\": 8,\n  \"last_record_digest\": \"sha256:78309927aa0df9b47e6581bd2599b296bbee1bec895c4263d7069037b61fb241\",\n  \"recovered_tail\": null,\n  \"error\": null\n}\n",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs sync-outcomes --repo /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo",
+      "status": 0,
+      "stdout": "{\n  \"valid\": true,\n  \"added\": 0,\n  \"total\": 8,\n  \"projection_path\": \"/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home/.taskloop/outcomes-v3.jsonl\",\n  \"cursor_path\": \"/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home/.taskloop/outcomes-v3-cursors/0e7915c010fb29ab2fc27a6d3fb79f0c5f6ec5a53956c90ec184f9b438873a6a.json\"\n}\n",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs sync-outcomes --repo /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo",
+      "status": 0,
+      "stdout": "{\n  \"valid\": true,\n  \"added\": 0,\n  \"total\": 8,\n  \"projection_path\": \"/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home/.taskloop/outcomes-v3.jsonl\",\n  \"cursor_path\": \"/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home/.taskloop/outcomes-v3-cursors/0e7915c010fb29ab2fc27a6d3fb79f0c5f6ec5a53956c90ec184f9b438873a6a.json\"\n}\n",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs sync-outcomes --repo /Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/repo",
+      "status": 0,
+      "stdout": "{\n  \"valid\": true,\n  \"added\": 8,\n  \"total\": 8,\n  \"projection_path\": \"/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home/.taskloop/outcomes-v3.jsonl\",\n  \"cursor_path\": \"/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home/.taskloop/outcomes-v3-cursors/0e7915c010fb29ab2fc27a6d3fb79f0c5f6ec5a53956c90ec184f9b438873a6a.json\"\n}\n",
+      "stderr": ""
+    },
+    {
+      "command": "node bin/taskloop.mjs audit-outcomes",
+      "status": 0,
+      "stdout": "{\n  \"valid\": true,\n  \"row_count\": 8,\n  \"projection_path\": \"/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/home/.taskloop/outcomes-v3.jsonl\"\n}\n",
+      "stderr": ""
+    }
+  ]
+}

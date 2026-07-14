@@ -84,18 +84,33 @@ required|waived` for an explicit override; every waiver requires a reason and is
 audited. `status` reports `proof_assurance`, `machine_risk_floor`, and
 `review_requirement` without launching a reviewer.
 
-`task.json` is schema v2 only. Archive an incompatible task without interpreting
-it using `archive-incompatible-state --reason ... --granted-by user`, then open
-a new task. The new runtime writes only `~/.taskloop/outcomes-v2.jsonl`.
-Persisted taskloop times use local wall-clock `YYYY-MM-DD HH:mm:ss`; generated
-artifact names use `YYYYMMDD-HHmmss`. Both forms are intentionally
-timezone-free and second-granular.
+Runtime contract 4 uses `.taskloop/events-v3.jsonl` as the only repository
+authority. `.taskloop/task.json` is a schema-v3 snapshot that may be deleted and
+rebuilt; it is never promoted to authority. Every public mutation commits one
+hash-chained transaction before refreshing the snapshot. Transcript byte ranges
+and output-token deltas are events in that same transaction, so retries cannot
+double-count a committed range.
+
+Schema-2 tasks and orphan/mixed snapshots fail closed. Preserve an incompatible
+`task.json` byte-for-byte with `archive-incompatible-state --reason ...
+--granted-by user`; no v2 state is interpreted or migrated. Runtime contract 3
+is not a supported rollback target after the cutover.
+
+`~/.taskloop/outcomes-v3.jsonl` is a best-effort HOME projection, not task
+authority. Rebuild it idempotently with `taskloop sync-outcomes --repo .`; use
+`taskloop audit --repo .` for repository authority and `taskloop audit-outcomes`
+for the HOME projection. Old `outcomes-v2.jsonl`, `transcript-cursors.json`, and
+`history/` artifacts are ignored and are never removed automatically.
+
+Persisted authority timestamps are epoch milliseconds plus UTC ISO strings.
+Generated diagnostic artifact names remain local `YYYYMMDD-HHmmss` labels.
 
 ## Install and verify
 
 ```sh
 node install.mjs
 npm test
+npm run bench:event-store -- --json
 node bin/taskloop.mjs help
 ```
 
@@ -103,5 +118,9 @@ Use `TASKLOOP_INSTALL_HOME` for manual install tests. Installation distributes
 the runtime, `skills/loop-core`, and `skills/workloop` as one release. It
 preserves unowned, locally modified, symlinked, or externally taken-over skill
 trees and deduplicates aliased Claude/Codex roots.
+
+`status`, `verify`, `report --json`, `audit`, and `info` include the independent
+runtime, snapshot, event-record, and outcome-projection version fields. The
+Windows release gate runs W01–W08 on Windows 2022/2025 with Node 22/24.
 
 See [loop-core reference](skills/loop-core/REFERENCE.md) for the full contract.

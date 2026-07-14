@@ -1,0 +1,11 @@
+{
+  "id": "runtime",
+  "command": "/opt/homebrew/Cellar/node/26.0.0/bin/node --test --test-name-pattern=authority guard|transcript|outcomes-v3|HOME projection|twenty concurrent tests/runtime-v4.test.mjs",
+  "started_at": "2026-07-14T12:16:46.506Z",
+  "duration_ms": 3996,
+  "status": 0,
+  "signal": null,
+  "stdout": "✔ authority guard rejects legacy, orphan, mixed, and corrupt state without overwriting events (742.305416ms)\n✔ transcript baseline and increment are in authority and a denied retry cannot double tally (480.737917ms)\n✔ [W07] transcript ranges use UTF-8 byte offsets, CRLF, partial records, and replacement generations (526.525416ms)\n✔ outcomes-v3 is best-effort, idempotent, and rebuildable from repository authority (489.650541ms)\n✔ HOME projection and cursor failures never roll back repository authority (608.2865ms)\n✔ [W05] twenty concurrent mutations serialize without sequence gaps or lost writes (1023.727625ms)\nℹ tests 6\nℹ suites 0\nℹ pass 6\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 3942.013042\n",
+  "stderr": "",
+  "error": null
+}

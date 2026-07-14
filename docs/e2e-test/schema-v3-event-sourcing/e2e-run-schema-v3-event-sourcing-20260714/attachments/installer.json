@@ -1,0 +1,11 @@
+{
+  "id": "installer",
+  "command": "/opt/homebrew/Cellar/node/26.0.0/bin/node --test tests/installer.test.mjs",
+  "started_at": "2026-07-14T12:16:50.503Z",
+  "duration_ms": 4429,
+  "status": 0,
+  "signal": null,
+  "stdout": "✔ installer puts runtime and skills from one release under a temporary home (145.814666ms)\n✔ runtime-contract-4 installer refuses a contract-3 source rollback (60.666917ms)\n✔ installed runtime exercises the assurance matrix (2915.090167ms)\n✔ every installer activation interruption leaves a journal and rerun converges (1186.740125ms)\nℹ tests 4\nℹ suites 0\nℹ pass 4\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 4375.158125\n",
+  "stderr": "",
+  "error": null
+}

@@ -1,0 +1,328 @@
+{
+  "manifest_version": 1,
+  "plan_revision_sha256": "7989bdbd061165efb23618a52c7819d61db29d9449a2549ea2b24508ca1dfcf0",
+  "cases": [
+    {
+      "id": "A01",
+      "phase": "authority",
+      "precondition": "event store and task snapshot are absent",
+      "injection_point": "open or any other repo-local command",
+      "expected": "only open may create a native v3 genesis; other task commands report no task"
+    },
+    {
+      "id": "A02",
+      "phase": "authority",
+      "precondition": "event store is absent and task snapshot has schema 2",
+      "injection_point": "ordinary command before explicit archive",
+      "expected": "fail closed with LEGACY_STATE_UNSUPPORTED and do not mutate either artifact"
+    },
+    {
+      "id": "A03",
+      "phase": "authority",
+      "precondition": "event store is absent and task snapshot has schema 3",
+      "injection_point": "ordinary command before explicit archive",
+      "expected": "fail closed with ORPHAN_V3_SNAPSHOT and never promote the snapshot to authority"
+    },
+    {
+      "id": "A04",
+      "phase": "authority",
+      "precondition": "event store is valid and snapshot is absent, invalid, or behind",
+      "injection_point": "authority discrimination and recovery",
+      "expected": "recover from genesis or the verified source cursor without using snapshot as authority"
+    },
+    {
+      "id": "A05",
+      "phase": "authority",
+      "precondition": "event store is valid and snapshot has schema 2 or an unknown schema",
+      "injection_point": "ordinary command before explicit side-artifact archive",
+      "expected": "fail closed with MIXED_OR_INVALID_AUTHORITY and leave event-store bytes unchanged"
+    },
+    {
+      "id": "A06",
+      "phase": "authority",
+      "precondition": "event store has internal corruption and any snapshot is present",
+      "injection_point": "authority validation",
+      "expected": "fail closed with CORRUPT_EVENT_AUTHORITY and never fall back to snapshot"
+    },
+    {
+      "id": "A07",
+      "phase": "authority",
+      "precondition": "a legacy process writes schema-2 task.json beside a valid v3 event store",
+      "injection_point": "next runtime-contract-4 entry",
+      "expected": "classify as mixed authority, preserve the event-store digest, and perform no mutation"
+    },
+    {
+      "id": "A08",
+      "phase": "authority",
+      "precondition": "installer is activating runtime contract 4",
+      "injection_point": "runtime-staged, skills-activated, shim-activated, or manifest-committed failpoint",
+      "expected": "stable shim resolves to one complete old or runtime-4 release and never a partial release"
+    },
+    {
+      "id": "C01",
+      "phase": "commit",
+      "precondition": "empty repository",
+      "injection_point": "before genesis temporary file creation",
+      "expected": "event store remains absent and repository authority remains empty"
+    },
+    {
+      "id": "C02",
+      "phase": "commit",
+      "precondition": "empty repository",
+      "injection_point": "short write or process termination during genesis temporary write",
+      "expected": "authority file remains absent and residual temporary bytes are never authority"
+    },
+    {
+      "id": "C03",
+      "phase": "commit",
+      "precondition": "complete genesis temporary file has been fsynced",
+      "injection_point": "after temporary fsync and before rename",
+      "expected": "authority file remains absent and recovery never promotes the temporary file"
+    },
+    {
+      "id": "C04",
+      "phase": "commit",
+      "precondition": "complete genesis temporary file has been renamed",
+      "injection_point": "after rename and before directory sync",
+      "expected": "process-crash recovery observes only a complete new genesis"
+    },
+    {
+      "id": "C05",
+      "phase": "commit",
+      "precondition": "valid event store exists",
+      "injection_point": "before the first append byte",
+      "expected": "recovery returns the complete old state"
+    },
+    {
+      "id": "C06",
+      "phase": "commit",
+      "precondition": "valid event store exists",
+      "injection_point": "append returns a short write, zero progress, or an exception",
+      "expected": "command fails and recovery treats only the incomplete final fragment as a partial tail"
+    },
+    {
+      "id": "C07",
+      "phase": "commit",
+      "precondition": "valid event store exists",
+      "injection_point": "parent terminates child in the middle of an appended record",
+      "expected": "raw tail is quarantined before truncation and recovery returns the complete old state"
+    },
+    {
+      "id": "C08",
+      "phase": "commit",
+      "precondition": "a complete newline-terminated record was written",
+      "injection_point": "after write and before event-file fsync",
+      "expected": "recovery returns either the complete old state or complete new state and never a partial transaction"
+    },
+    {
+      "id": "C09",
+      "phase": "commit",
+      "precondition": "new record has been fsynced",
+      "injection_point": "after event fsync and before snapshot replacement",
+      "expected": "event stream is authoritative and replay returns the complete new state"
+    },
+    {
+      "id": "C10",
+      "phase": "commit",
+      "precondition": "new event transaction is committed",
+      "injection_point": "snapshot temporary write or snapshot rename failure",
+      "expected": "command remains committed with a warning and replay reconstructs the complete new state"
+    },
+    {
+      "id": "C11",
+      "phase": "commit",
+      "precondition": "repo transaction is committed",
+      "injection_point": "HOME outcome append or HOME cursor update failure",
+      "expected": "repo state does not roll back and sync-outcomes later converges without duplicate rows"
+    },
+    {
+      "id": "C12",
+      "phase": "commit",
+      "precondition": "partial tail quarantine and receipt are durable but source truncation is pending",
+      "injection_point": "process termination before event-store truncate",
+      "expected": "next recovery reuses or deduplicates quarantine and truncates without losing original tail evidence"
+    },
+    {
+      "id": "R01",
+      "phase": "recovery",
+      "precondition": "event store ends with a fragment lacking newline",
+      "injection_point": "full replay",
+      "expected": "quarantine the final fragment, truncate to the last complete record, and recover prior state"
+    },
+    {
+      "id": "R02",
+      "phase": "recovery",
+      "precondition": "a newline-terminated record contains invalid JSON or an unknown field",
+      "injection_point": "record validation",
+      "expected": "fail closed and leave the original event store unchanged"
+    },
+    {
+      "id": "R03",
+      "phase": "recovery",
+      "precondition": "a record or event digest is invalid",
+      "injection_point": "digest validation",
+      "expected": "fail closed and leave the original event store unchanged"
+    },
+    {
+      "id": "R04",
+      "phase": "recovery",
+      "precondition": "repo or task event sequence has a gap or regression",
+      "injection_point": "sequence validation",
+      "expected": "fail closed and leave the original event store unchanged"
+    },
+    {
+      "id": "R05",
+      "phase": "recovery",
+      "precondition": "previous-record digest does not match the prior record",
+      "injection_point": "hash-chain validation",
+      "expected": "fail closed and leave the original event store unchanged"
+    },
+    {
+      "id": "R06",
+      "phase": "recovery",
+      "precondition": "task A snapshot is behind and task_opened for B is committed",
+      "injection_point": "snapshot source-cursor replay",
+      "expected": "verify A at its own cursor and replay through B without reporting mixed authority"
+    },
+    {
+      "id": "R07",
+      "phase": "recovery",
+      "precondition": "snapshot cursor is ahead or its source digest or identity is invalid",
+      "injection_point": "snapshot verification",
+      "expected": "fail closed and never use the snapshot as authority"
+    },
+    {
+      "id": "R08",
+      "phase": "recovery",
+      "precondition": "event store is valid and snapshot is absent, invalid JSON, or has a bad self-digest",
+      "injection_point": "snapshot load",
+      "expected": "retain diagnostics and rebuild the snapshot from event-store genesis"
+    },
+    {
+      "id": "T01",
+      "phase": "transcript",
+      "precondition": "tally event is fsynced and snapshot is stale",
+      "injection_point": "retry the same hook payload after process termination",
+      "expected": "output token delta is applied exactly once"
+    },
+    {
+      "id": "T02",
+      "phase": "transcript",
+      "precondition": "tally event is committed",
+      "injection_point": "delete snapshot and retry the same range",
+      "expected": "cursor replays from events and no second tally event is produced"
+    },
+    {
+      "id": "T03",
+      "phase": "transcript",
+      "precondition": "authoritative transcript cursor exists",
+      "injection_point": "submit a duplicate, overlapping, or regressing range",
+      "expected": "reducer and audit fail closed without increasing token spend"
+    },
+    {
+      "id": "T04",
+      "phase": "transcript",
+      "precondition": "transcript contains UTF-8, CRLF, and a final incomplete line",
+      "injection_point": "read transcript range",
+      "expected": "advance Buffer byte offsets only through the last complete 0x0A-terminated line"
+    },
+    {
+      "id": "T05",
+      "phase": "transcript",
+      "precondition": "transcript path is truncated, replaced, or fails anchor validation",
+      "injection_point": "next transcript observation",
+      "expected": "open a new generation with zero-delta baseline and never guess missing tokens"
+    },
+    {
+      "id": "T06",
+      "phase": "transcript",
+      "precondition": "owner PreToolUse reads a new complete range but final adjudication denies the write",
+      "injection_point": "tally-then-adjudicate command",
+      "expected": "commit only output_tokens_tallied, emit no write_authorized event, and preserve deny stdout bytes"
+    },
+    {
+      "id": "W01",
+      "phase": "windows",
+      "precondition": "repository path contains spaces, Unicode, and drive-letter case variants",
+      "injection_point": "genesis temporary write, fsync, rename, and replay",
+      "expected": "all four Windows CI combinations produce one normalized repository authority"
+    },
+    {
+      "id": "W02",
+      "phase": "windows",
+      "precondition": "event record is fsynced on a real Windows file",
+      "injection_point": "terminate before snapshot replacement",
+      "expected": "replay returns the complete new state"
+    },
+    {
+      "id": "W03",
+      "phase": "windows",
+      "precondition": "Windows event store has a partial final record",
+      "injection_point": "mid-record termination and repeated C12 recovery",
+      "expected": "quarantine is durable and repeated recovery converges without losing tail evidence"
+    },
+    {
+      "id": "W04",
+      "phase": "windows",
+      "precondition": "task A snapshot exists and task B opening event is committed",
+      "injection_point": "snapshot replacement boundary",
+      "expected": "R06 replay reaches task B without a mixed-authority false positive"
+    },
+    {
+      "id": "W05",
+      "phase": "windows",
+      "precondition": "twenty Node processes target one repository",
+      "injection_point": "concurrent mutations under the repo lock",
+      "expected": "repo sequence is continuous with no duplicate or lost mutation"
+    },
+    {
+      "id": "W06",
+      "phase": "windows",
+      "precondition": "task lock is stale",
+      "injection_point": "recovery process acquires the lock and then terminates",
+      "expected": "subsequent recovery converges without two simultaneous lock owners"
+    },
+    {
+      "id": "W07",
+      "phase": "windows",
+      "precondition": "Windows transcript contains UTF-8 and CRLF",
+      "injection_point": "range read followed by truncate or replacement",
+      "expected": "byte offsets remain exact and replacement starts a zero-delta generation"
+    },
+    {
+      "id": "W08",
+      "phase": "windows",
+      "precondition": "event file is durable and parent-directory fsync capability is probed",
+      "injection_point": "directory fsync",
+      "expected": "only exact fixture-listed unsupported codes degrade with a receipt; all other errors fail closed"
+    },
+    {
+      "id": "P01",
+      "phase": "performance",
+      "precondition": "fixed-seed 10001-record production dataset after one warm-up",
+      "injection_point": "three fresh-process full replays",
+      "expected": "every full replay completes below 200 milliseconds on the recorded environment"
+    },
+    {
+      "id": "P02",
+      "phase": "performance",
+      "precondition": "fixed-seed production dataset is fully replayed",
+      "injection_point": "one hundred single-record incremental tail reads",
+      "expected": "incremental tail-read P95 remains below 5 milliseconds on the recorded environment"
+    },
+    {
+      "id": "P03",
+      "phase": "performance",
+      "precondition": "fixed-seed production store is on the measured filesystem",
+      "injection_point": "fifty append plus event-file fsync operations",
+      "expected": "append-plus-fsync P95 remains below 20 milliseconds on the recorded environment"
+    },
+    {
+      "id": "P04",
+      "phase": "performance",
+      "precondition": "all performance samples have completed",
+      "injection_point": "JSON receipt generation",
+      "expected": "receipt records environment, raw samples, P50, P95, maximum, thresholds, and a non-fabricated pass decision"
+    }
+  ]
+}

@@ -63,7 +63,6 @@ jobs:
         run: node --test --test-name-pattern="Windows install is repeatable" tests/windows.test.mjs
       - name: Windows hook protocol (cmd)
         id: hook_cmd
-        continue-on-error: true
         timeout-minutes: 3
         run: |
           $output = & node --test --test-reporter=spec --test-name-pattern="Windows generated hook command.*cmd$" tests/windows.test.mjs 2>&1 | Out-String
@@ -75,7 +74,6 @@ jobs:
           Write-Output $output
       - name: Windows hook protocol (Windows PowerShell)
         id: hook_windows_powershell
-        continue-on-error: true
         timeout-minutes: 3
         run: |
           $output = & node --test --test-reporter=spec --test-name-pattern="Windows generated hook command.*Windows PowerShell$" tests/windows.test.mjs 2>&1 | Out-String
@@ -87,7 +85,6 @@ jobs:
           Write-Output $output
       - name: Windows hook protocol (PowerShell Core)
         id: hook_powershell_core
-        continue-on-error: true
         timeout-minutes: 3
         run: |
           $output = & node --test --test-reporter=spec --test-name-pattern="Windows generated hook command.*PowerShell Core$" tests/windows.test.mjs 2>&1 | Out-String
@@ -97,16 +94,6 @@ jobs:
             exit 1
           }
           Write-Output $output
-      - name: Require Windows hook protocols
-        if: always()
-        timeout-minutes: 1
-        run: |
-          if ("${{ steps.hook_cmd.outcome }}" -ne "success" -or "${{ steps.hook_windows_powershell.outcome }}" -ne "success" -or "${{ steps.hook_powershell_core.outcome }}" -ne "success") {
-            exit 1
-          }
-      - name: Windows paths and state replacement
-        timeout-minutes: 3
-        run: node --test --test-name-pattern="Windows repeatedly replaces task state" tests/windows.test.mjs
       - name: Windows child termination
         timeout-minutes: 3
         run: |
@@ -120,6 +107,9 @@ jobs:
       - name: Windows stale installer lock
         timeout-minutes: 3
         run: node --test --test-name-pattern="Windows installer reaps a stale lock" tests/windows.test.mjs
+      - name: W01-W08 event authority, recovery, transcript, and concurrency
+        timeout-minutes: 5
+        run: node --test --test-reporter=spec --test-name-pattern="\[W0[1-8]\]" tests/windows.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v4.test.mjs tests/taskloop-architecture.test.mjs
       - name: Architecture
         timeout-minutes: 3
         run: |

@@ -1,0 +1,11 @@
+{
+  "id": "windows-cases-local",
+  "command": "/opt/homebrew/Cellar/node/26.0.0/bin/node --test --test-reporter=spec --test-name-pattern=\\[W0[1-8]\\] tests/windows.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v4.test.mjs tests/taskloop-architecture.test.mjs",
+  "started_at": "2026-07-14T12:16:55.130Z",
+  "duration_ms": 1966,
+  "status": 0,
+  "signal": null,
+  "stdout": "✔ [W08] production event store probes directory fsync while committing a canonical genesis (24.429292ms)\n✔ [W08] directory fsync degrades only for the frozen Windows capability allowlist (0.197209ms)\n✔ [W03] crash child proves partial-tail quarantine and reentrant recovery (732.101791ms)\n✔ [W07] transcript ranges use UTF-8 byte offsets, CRLF, partial records, and replacement generations (701.77ms)\n✔ [W05] twenty concurrent mutations serialize without sequence gaps or lost writes (1092.77725ms)\n✔ [W04] a terminal task A snapshot replays through a committed task B open (52.489ms)\n✔ [W02] process termination after event commit and during snapshot replacement preserves authority (195.655291ms)\n✔ [W06] task lock recovers an aged lock and reaper left by crashed processes without double ownership (81.057542ms)\n﹣ [W01] Windows genesis and replay survive spaces, Unicode, and drive-case path variants (0.659583ms) # SKIP\nℹ tests 9\nℹ suites 0\nℹ pass 8\nℹ fail 0\nℹ cancelled 0\nℹ skipped 1\nℹ todo 0\nℹ duration_ms 1905.4035\n",
+  "stderr": "",
+  "error": null
+}

@@ -12,6 +12,12 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const __filename = fileURLToPath(import.meta.url);
 const SOURCE = path.resolve(process.env.TASKLOOP_INSTALL_REPO ?? path.dirname(__filename));
 const HOME = path.resolve(process.env.TASKLOOP_INSTALL_HOME ?? os.homedir());
+const RUNTIME_CONTRACT = (() => {
+  const source = fs.readFileSync(path.join(SOURCE, "lib", "prims.mjs"), "utf8");
+  const value = Number(source.match(/const RUNTIME_CONTRACT = (\d+);/)?.[1]);
+  if (value !== 4) throw new Error(`taskloop installer requires runtime contract 4 source; refusing contract ${Number.isFinite(value) ? value : "unknown"}`);
+  return value;
+})();
 const ACTIONS = [];
 const INSTALL_LOCK_TIMEOUT_MS = 30_000;
 const INSTALL_LOCK_STALE_MS = 5 * 60_000;
@@ -755,7 +761,7 @@ export function installTaskloop(repo, home, dry = false) {
     const journalRow = {
       journal_version: 1,
       release_id: releaseId,
-      runtime_contract: 3,
+      runtime_contract: RUNTIME_CONTRACT,
       status: "activating",
       steps: { runtime_staged: true, skills_activated: false, shim_activated: false, manifest_committed: false },
     };
@@ -778,7 +784,7 @@ export function installTaskloop(repo, home, dry = false) {
     const manifestRow = {
       release_manifest_version: 1,
       release_id: releaseId,
-      runtime_contract: 3,
+      runtime_contract: RUNTIME_CONTRACT,
       runtime_digest: runtime.hash,
       managed_skills_manifest_digest: dry || !exists(skillManifest) ? null : createHash("sha256").update(fs.readFileSync(skillManifest)).digest("hex"),
     };

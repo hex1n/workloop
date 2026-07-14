@@ -1,0 +1,52 @@
+{
+  "owner": "schema-v3-e2e-20260714",
+  "generated_at": "2026-07-14T12:12:29.670Z",
+  "artifacts": [
+    {
+      "id": "event-authority",
+      "attachment": "events-v3.jsonl",
+      "byte_count": 10040,
+      "sha256": "sha256:9591c01854414676fab3da825e7315e5861311d63238ee9138673781e73870df"
+    },
+    {
+      "id": "task-snapshot",
+      "attachment": "task-snapshot-v3.json",
+      "byte_count": 3113,
+      "sha256": "sha256:24d635d5cdc44e5172ae118ac854750a61edc423269817b548854e23d8b0230e"
+    },
+    {
+      "id": "outcome-projection",
+      "attachment": "outcomes-v3.jsonl",
+      "byte_count": 8108,
+      "sha256": "sha256:0a060be85a17871bd41d7a82a6840e6ee2c852b86e53dfad0fd4ac6bf8f47b0c"
+    }
+  ],
+  "authority": {
+    "record_count": 8,
+    "event_count": 8,
+    "repo_sequences": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "task_ids": [
+      "d2d19ab9-e285-4f7b-aaae-f01e85570a26",
+      "f403a10c-f2f6-4eae-94ab-32b76ed44d70"
+    ],
+    "record_digests": [
+      "sha256:1ae66e26371a504249865696588060ab934552d13c1f26d240131ad25b2461fd",
+      "sha256:dda9bc4baa647bbcbd82720c150961695088f6300f8df703345bfa31c79bd76f",
+      "sha256:7506a798d3505a8f271c9fd53eecd5074023f761eb01bbf74aedd83dfcb3a5ec",
+      "sha256:57d98045bc22bb3aea1b890e04ff00baed79a5ee27bc7fa215f9fd9c28d85ccd",
+      "sha256:0ec56c4f17767a67e322dba1d2bc48710a9f52d8f3786a8dbddad21795f193d3",
+      "sha256:7834e9de4ffca836b193c427bfbd1cbe44d4b81a5644a5b4afbc66ba84ef941e",
+      "sha256:6dc041d424fa1341530cd1aab4973f6e35a5e3d5e473a3b300313a66651db66d",
+      "sha256:78309927aa0df9b47e6581bd2599b296bbee1bec895c4263d7069037b61fb241"
+    ]
+  }
+}

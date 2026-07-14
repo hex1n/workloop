@@ -1,0 +1,115 @@
+{
+  "queried_at": "2026-07-14T13:10:05.455Z",
+  "repository": {
+    "nameWithOwner": "hex1n/taskloop",
+    "url": "https://github.com/hex1n/taskloop"
+  },
+  "baseline_head": "7dd7d3473e587c8b13a8619a4f5359150fade6e6",
+  "candidate_digest": "sha256:97c33dde8b7911586dc4a62ebd6fd99996dcf104248b6fa99c12b9be65716608",
+  "exact_candidate_run_exists": false,
+  "reason": "the candidate is an uncommitted working tree and therefore has no Git head SHA",
+  "remote_workflow_attachment": "remote-workflow-baseline.yml",
+  "remote_workflow_sha256": "sha256:7a65eec4d770d88ce2ff9e919f20e7554d88d2883714040a2d5cd618aaf1f9d8",
+  "recent_runs": [
+    {
+      "conclusion": "success",
+      "createdAt": "2026-07-14T02:04:58Z",
+      "databaseId": 29300181286,
+      "headBranch": "main",
+      "headSha": "7dd7d3473e587c8b13a8619a4f5359150fade6e6",
+      "status": "completed",
+      "url": "https://github.com/hex1n/taskloop/actions/runs/29300181286",
+      "workflowName": "test"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-07-14T02:02:45Z",
+      "databaseId": 29300084605,
+      "headBranch": "fix/windows-compatibility",
+      "headSha": "7dd7d3473e587c8b13a8619a4f5359150fade6e6",
+      "status": "completed",
+      "url": "https://github.com/hex1n/taskloop/actions/runs/29300084605",
+      "workflowName": "test"
+    },
+    {
+      "conclusion": "success",
+      "createdAt": "2026-07-13T11:50:03Z",
+      "databaseId": 29247620683,
+      "headBranch": "fix/windows-compatibility",
+      "headSha": "f40dfb96025c3ee9b0de17268d3ed398dcf5cfa4",
+      "status": "completed",
+      "url": "https://github.com/hex1n/taskloop/actions/runs/29247620683",
+      "workflowName": "test"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-13T11:46:27Z",
+      "databaseId": 29247416858,
+      "headBranch": "fix/windows-compatibility",
+      "headSha": "0a327e1c7eb34f635c054c26b641b37f28674bf5",
+      "status": "completed",
+      "url": "https://github.com/hex1n/taskloop/actions/runs/29247416858",
+      "workflowName": "test"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-13T11:41:27Z",
+      "databaseId": 29247119661,
+      "headBranch": "fix/windows-compatibility",
+      "headSha": "54948d5de8c31d9a2f17cad9841005168fbf3124",
+      "status": "completed",
+      "url": "https://github.com/hex1n/taskloop/actions/runs/29247119661",
+      "workflowName": "test"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-13T11:38:55Z",
+      "databaseId": 29246972861,
+      "headBranch": "fix/windows-compatibility",
+      "headSha": "4324db986902bb5eef4f937f05f424873dcb8edb",
+      "status": "completed",
+      "url": "https://github.com/hex1n/taskloop/actions/runs/29246972861",
+      "workflowName": "test"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-13T11:36:16Z",
+      "databaseId": 29246824540,
+      "headBranch": "fix/windows-compatibility",
+      "headSha": "59dd5fbcfce4eee8b9212c580a25b428cdb78615",
+      "status": "completed",
+      "url": "https://github.com/hex1n/taskloop/actions/runs/29246824540",
+      "workflowName": "test"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-13T11:34:36Z",
+      "databaseId": 29246723260,
+      "headBranch": "fix/windows-compatibility",
+      "headSha": "0f040aa45176bbec227684ff848a4e5d89f1ba7c",
+      "status": "completed",
+      "url": "https://github.com/hex1n/taskloop/actions/runs/29246723260",
+      "workflowName": "test"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-13T11:33:18Z",
+      "databaseId": 29246647303,
+      "headBranch": "fix/windows-compatibility",
+      "headSha": "1d052293619d4f134f9c2295fff18e6b1282a6ff",
+      "status": "completed",
+      "url": "https://github.com/hex1n/taskloop/actions/runs/29246647303",
+      "workflowName": "test"
+    },
+    {
+      "conclusion": "failure",
+      "createdAt": "2026-07-13T11:31:57Z",
+      "databaseId": 29246567842,
+      "headBranch": "fix/windows-compatibility",
+      "headSha": "52c1c9f49625343718350ad08cd2d14c49a7a55f",
+      "status": "completed",
+      "url": "https://github.com/hex1n/taskloop/actions/runs/29246567842",
+      "workflowName": "test"
+    }
+  ]
+}

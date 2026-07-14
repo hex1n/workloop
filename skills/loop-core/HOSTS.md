@@ -13,9 +13,10 @@ Each line was earned in a live dual-host spike (Claude Code 2.1.207, Codex CLI
   pushing a suspended task gets a clean release each time (the Stop hook does
   not burn budget on a suspended task), so every extra push is pure driver
   waste.
-- Judge success from the outcome ledger (`~/.taskloop/outcomes-v2.jsonl`), not
-  from the transcript: the terminal row is the machine's verdict, the
-  transcript is the story.
+- Judge success from the rebuildable outcome projection
+  (`~/.taskloop/outcomes-v3.jsonl`), not from the transcript: the terminal event
+  is the machine's verdict, while repository authority remains
+  `.taskloop/events-v3.jsonl`.
 - Give the driver itself an outer wall-clock budget: a wedged host session
   (observed live: one `codex exec` hung for twenty minutes) must die by
   timeout, not by a human noticing.
@@ -56,13 +57,13 @@ Each line was earned in a live dual-host spike (Claude Code 2.1.207, Codex CLI
   not an OS security boundary.
 - Session-internal stop-block driving works out of the box in `codex exec`;
   the block reason arrives as the resume message.
-- The default workspace-write sandbox does not cover the ledger home:
-  agent-run CLI verbs inside the sandbox lose their ledger rows. Pair sessions
+- The default workspace-write sandbox does not cover the projection home:
+  agent-run CLI verbs inside the sandbox may defer their projection rows. Pair sessions
   with `--add-dir ~/.taskloop` (or grant the home). `node install.mjs` detects a
   missing persistent binding without editing user config; opt in with
-  `node install.mjs --configure-codex` to merge the ledger root into
+  `node install.mjs --configure-codex` to merge the projection root into
   `sandbox_workspace_write.writable_roots`. The failure is visible as
-  `taskloop: outcome ledger append failed (...)` on stderr — treat that line
+  `warning: outcome-v3 projection deferred: ...` on stderr — treat that line
   as "the sandbox split the write surface", not as noise.
 - Keep hooks configuration single-source: hooks living in both
   `~/.codex/hooks.json` and `config.toml` draw a startup warning and can

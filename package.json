@@ -7,9 +7,12 @@
     "taskloop": "bin/taskloop.mjs"
   },
   "scripts": {
-    "test": "node --test tests/taskloop.test.mjs tests/taskloop-architecture.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
+    "test": "node --test tests/taskloop.test.mjs tests/taskloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v4.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
     "test:behavioral": "node --test tests/taskloop.test.mjs",
     "test:architecture": "node --test tests/taskloop-architecture.test.mjs",
+    "test:event-store": "node --test tests/event-store.test.mjs",
+    "test:snapshot": "node --test tests/task-snapshot-v3.test.mjs",
+    "bench:event-store": "node tests/event-store-benchmark.mjs",
     "test:installer": "node --test tests/installer.test.mjs",
     "test:skills": "node --test tests/skills.test.mjs",
     "test:windows": "node --test tests/windows.test.mjs",

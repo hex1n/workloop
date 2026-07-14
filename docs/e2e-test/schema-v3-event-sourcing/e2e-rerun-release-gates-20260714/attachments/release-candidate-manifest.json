@@ -1,0 +1,366 @@
+{
+  "schema_version": 1,
+  "purpose": "pre-commit release-candidate fingerprint; not a Git commit or Oracle-13 receipt",
+  "generated_at": "2026-07-14T13:10:02.616Z",
+  "baseline_head": "7dd7d3473e587c8b13a8619a4f5359150fade6e6",
+  "branch": "main",
+  "excluded_prefixes": [
+    "output/",
+    "tmp/",
+    "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/fixture/",
+    "docs/e2e-test/schema-v3-event-sourcing/e2e-rerun-release-gates-20260714/attachments/"
+  ],
+  "entries": [
+    {
+      "status": "tracked-change",
+      "path": ".github/workflows/test.yml",
+      "byte_count": 5422,
+      "sha256": "sha256:e94c1c39d4f62ae98fc441a60a8fa894a5324ece82f56b3db907b2375495c673"
+    },
+    {
+      "status": "tracked-change",
+      "path": "AGENTS.md",
+      "byte_count": 3495,
+      "sha256": "sha256:18df170ff0c8036f803a51f1b4726f45ecca1e9f81482d6b817c5a1cbd7e5a0e"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/2026-07-14-schema-v3-event-sourcing-e2e-test-plan.md",
+      "byte_count": 18963,
+      "sha256": "sha256:2fc913449e660dc91c444114237ed5dca4b18bfa627046f4d09b7016f57627c6"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-rerun-release-gates-20260714/execution-report.md",
+      "byte_count": 11777,
+      "sha256": "sha256:d7e987b0d38d36a70e438444855275538c865d5d3648902465e2fadb4ff6bb7b"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-rerun-release-gates-20260714/scripts/capture-release-candidate.mjs",
+      "byte_count": 4068,
+      "sha256": "sha256:d937099705c643605584ba42c072c2cf634c565885d0712ff02e68fec3b715aa"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-rerun-release-gates-20260714/scripts/run-local-release-prereqs.mjs",
+      "byte_count": 1948,
+      "sha256": "sha256:1d5a77c7d629dfd01be5a0063b499ceb0a2d4e0aa48807c8660aa569d55a983a"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/benchmark.json",
+      "byte_count": 4147,
+      "sha256": "sha256:1f8eeb85f9c0211c1a6c99a5b115581c60f776fa6c70f5dc794c8fd779e21f75"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/events-v3.jsonl",
+      "byte_count": 10040,
+      "sha256": "sha256:9591c01854414676fab3da825e7315e5861311d63238ee9138673781e73870df"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/fable-closing-attempt.json",
+      "byte_count": 484,
+      "sha256": "sha256:37a0ca7311d9669d854b429ef2b230801143c4379d038e559e889e4ac1d764b4"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/installer.json",
+      "byte_count": 734,
+      "sha256": "sha256:4584761d8d9eb21b4bcd3cb15c6423176fbfbf15d1a38d6e5a4af04679f267a9"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/manual-e2e-result-first-run.json",
+      "byte_count": 17921,
+      "sha256": "sha256:aa45d26c49a1bcfa3590d85b17b96180d691f11c4c643af33bd674b945f52be4"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/manual-e2e-result.json",
+      "byte_count": 17920,
+      "sha256": "sha256:62eed0a0d8597aaa06646d8ceb99a600c240cbbab20eaf7d31037ccedb3a562a"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/npm-test.json",
+      "byte_count": 15543,
+      "sha256": "sha256:c533a710078454e7598a54855d8829b8b29ef5fbf6e85e59d0d53874b0a2de89"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/outcomes-v3.jsonl",
+      "byte_count": 8108,
+      "sha256": "sha256:0a060be85a17871bd41d7a82a6840e6ee2c852b86e53dfad0fd4ac6bf8f47b0c"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/recovery.json",
+      "byte_count": 4720,
+      "sha256": "sha256:93666ebe17293e6a133b7e5057799906fb103da5aa5aff1e8ca5aac0d9c67222"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/retained-artifact-manifest.json",
+      "byte_count": 1676,
+      "sha256": "sha256:ba68a90538253d196b17fb6f7f2feec0d45e20bdccb73aea083e53c7822c3899"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/runtime.json",
+      "byte_count": 1115,
+      "sha256": "sha256:533890af900c7f18679bf171d8d04306429980be726e0c1c6fe78e6a2f82b8b6"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/stale-lock.json",
+      "byte_count": 547,
+      "sha256": "sha256:21a963c3a3ad4fe5deeb9afd395c0b96965134f52a8a36f80fd85ac0b1f5518b"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/suite-summary.json",
+      "byte_count": 2054,
+      "sha256": "sha256:6be4e182b275f478525936513be19259e2f15a35e1f2238da8d52b0042734d51"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/task-snapshot-v3.json",
+      "byte_count": 3113,
+      "sha256": "sha256:24d635d5cdc44e5172ae118ac854750a61edc423269817b548854e23d8b0230e"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/verify-full.json",
+      "byte_count": 14595,
+      "sha256": "sha256:4ac315c022f3452438dde3e271f883ce165a553006645b486348c6b05f9b29e3"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/windows-cases-local.json",
+      "byte_count": 1521,
+      "sha256": "sha256:4f61a0b0510773cc7e7d2d404835bd8f1138e7abe0e12dd0e0b740ce492764f9"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/execution-report.md",
+      "byte_count": 16590,
+      "sha256": "sha256:23b79a276f70772cde1732b30c55bb109b94f910d6e67f76ede717bdab7c69c4"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/scripts/cleanup-fixture.mjs",
+      "byte_count": 479,
+      "sha256": "sha256:fae28b2e0d713874215618b7ce379acc3e49a30398e54c58ea771c3fec478e01"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/scripts/run-manual-e2e.mjs",
+      "byte_count": 6138,
+      "sha256": "sha256:2498a2e03d65a9f57c7e87417e922b3465e3cf7a55cf24e3ff1c467d9434731b"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/scripts/run-suite-evidence.mjs",
+      "byte_count": 2582,
+      "sha256": "sha256:f6c0a1e57bf3d6c8db93dbc6cd623a48f9c733fe1eb44ca21014efd04f141a80"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/scripts/seed-fixture.mjs",
+      "byte_count": 1406,
+      "sha256": "sha256:ad02856cff45c7a3a389001c74280b1605085bb76920750d186993385fe468ed"
+    },
+    {
+      "status": "untracked",
+      "path": "docs/plans/2026-07-14-schema-v3-event-sourcing.md",
+      "byte_count": 47902,
+      "sha256": "sha256:7989bdbd061165efb23618a52c7819d61db29d9449a2549ea2b24508ca1dfcf0"
+    },
+    {
+      "status": "tracked-change",
+      "path": "docs/taskloop-balsamiq-architecture.svg",
+      "byte_count": 12561,
+      "sha256": "sha256:0098da59bd006ba86652e47d4fa6488f7ed735d77f4b9a9cbbb3c9c9dbecded5"
+    },
+    {
+      "status": "tracked-change",
+      "path": "install.mjs",
+      "byte_count": 31053,
+      "sha256": "sha256:9dec06c611864e1c374e2764a8af35f9f2069b1835281860ed98349449428512"
+    },
+    {
+      "status": "tracked-change",
+      "path": "lib/application.mjs",
+      "byte_count": 63888,
+      "sha256": "sha256:d6696fa4b9b71c31e8bf7dc3c02dfd85cd8e692e4afd26e78fe608642059588d"
+    },
+    {
+      "status": "tracked-change",
+      "path": "lib/criterion.mjs",
+      "byte_count": 10012,
+      "sha256": "sha256:65086a8f6c849147af24899a72a3653a27a138a07603e485f981b87e3e182c19"
+    },
+    {
+      "status": "untracked",
+      "path": "lib/event-store.mjs",
+      "byte_count": 36853,
+      "sha256": "sha256:572ded0d03224ca1e2c9da2b64252a0cf7b8e9fd3e2a5d30694ca1c0929f941b"
+    },
+    {
+      "status": "deleted",
+      "path": "lib/outcome-ledger.mjs",
+      "byte_count": 0,
+      "sha256": null
+    },
+    {
+      "status": "untracked",
+      "path": "lib/outcome-projector.mjs",
+      "byte_count": 5225,
+      "sha256": "sha256:ff759287eb42dfc10adea563ac686356e339bcd1b67ebce315d0aebcc3c242fa"
+    },
+    {
+      "status": "tracked-change",
+      "path": "lib/prims.mjs",
+      "byte_count": 7336,
+      "sha256": "sha256:225cc5398e5dfdf8b24705af324cfc198a3e88148622dbb84be104ea593225e0"
+    },
+    {
+      "status": "tracked-change",
+      "path": "lib/supervision.mjs",
+      "byte_count": 26135,
+      "sha256": "sha256:fabe91f556fb37c743e27ce565d0d0161badc6a9d15160da2fd9d86e12657a91"
+    },
+    {
+      "status": "tracked-change",
+      "path": "lib/task-engine.mjs",
+      "byte_count": 66126,
+      "sha256": "sha256:ddb1a90fd6c10c50628be694821677a5bb9d0af9d59683bf1c69c6b5c3ef9239"
+    },
+    {
+      "status": "tracked-change",
+      "path": "lib/task-store.mjs",
+      "byte_count": 15377,
+      "sha256": "sha256:653f8c4e312e9f7db3df281025cc0e54fdebfc062dc672a4fc219ea562d43d77"
+    },
+    {
+      "status": "tracked-change",
+      "path": "package.json",
+      "byte_count": 1311,
+      "sha256": "sha256:ea03cbbb57128522c69e2d4ebffac08f6c85b224b69c1cec96fcfaf2af3827e7"
+    },
+    {
+      "status": "tracked-change",
+      "path": "README.md",
+      "byte_count": 5680,
+      "sha256": "sha256:064811470f90432820979ff7a00384da86d0e689e470973c22f75bb262dcd818"
+    },
+    {
+      "status": "tracked-change",
+      "path": "skills/loop-core/HOSTS.md",
+      "byte_count": 4676,
+      "sha256": "sha256:d54f123c771e72c2f94933fd195885ec5eaa6e89fc6ee460c4e344f01e76fd21"
+    },
+    {
+      "status": "tracked-change",
+      "path": "skills/loop-core/REFERENCE.md",
+      "byte_count": 8282,
+      "sha256": "sha256:e8ee1d18c4f5068b3e282659e5f46cf84bca96570881f9adefe05c2eb56474aa"
+    },
+    {
+      "status": "untracked",
+      "path": "tests/event-store-benchmark.mjs",
+      "byte_count": 6091,
+      "sha256": "sha256:c8a82b40e7d3f4af040e3766dfc13230a506b0994b31316a934de58c69387ca8"
+    },
+    {
+      "status": "untracked",
+      "path": "tests/event-store.test.mjs",
+      "byte_count": 71539,
+      "sha256": "sha256:02eebfedd857c3b10eef043a96839fdf25cd481d41a86e78b612a871d4848bc7"
+    },
+    {
+      "status": "untracked",
+      "path": "tests/fixtures/event-store-cases-v3.json",
+      "byte_count": 13747,
+      "sha256": "sha256:758d2036556fdeb32a46f8ec7f842abda4dec336dc0bd92a2dd113aad83dc078"
+    },
+    {
+      "status": "deleted",
+      "path": "tests/fixtures/runtime-contract-3.mjs",
+      "byte_count": 0,
+      "sha256": null
+    },
+    {
+      "status": "untracked",
+      "path": "tests/fixtures/runtime-contract-4.mjs",
+      "byte_count": 20831,
+      "sha256": "sha256:16019e5190b88ef8c990e8156e0880b25a9f927ceb0b31fbe0e5cdafcb5ecc90"
+    },
+    {
+      "status": "untracked",
+      "path": "tests/helpers/event-store-crash-child.mjs",
+      "byte_count": 3607,
+      "sha256": "sha256:deecfd26758fb10a8d964756961f04d038b1ac5168aa44739f4639bf5e546232"
+    },
+    {
+      "status": "untracked",
+      "path": "tests/helpers/event-v3-fixture.mjs",
+      "byte_count": 5350,
+      "sha256": "sha256:f98b157042b6a7a1ad7a1970c8f30ecc51dc779a4858ad6f51fb0c6a23854f36"
+    },
+    {
+      "status": "tracked-change",
+      "path": "tests/installer.test.mjs",
+      "byte_count": 8929,
+      "sha256": "sha256:20729b2f37a03bbedde2ed32d38b736162f142bddbf4db14ed4a026ff4d81fa2"
+    },
+    {
+      "status": "untracked",
+      "path": "tests/runtime-v4.test.mjs",
+      "byte_count": 15949,
+      "sha256": "sha256:8fe1f48ff968a41ca835ff9c8e924cba37cda08b2ccd38379598953d77be5904"
+    },
+    {
+      "status": "tracked-change",
+      "path": "tests/skills.test.mjs",
+      "byte_count": 3444,
+      "sha256": "sha256:61e319aa163b8ee8dad72426e6bf6aae1f261a49ce7d83891304a23d82cb8c59"
+    },
+    {
+      "status": "untracked",
+      "path": "tests/task-snapshot-v3.test.mjs",
+      "byte_count": 17700,
+      "sha256": "sha256:c2fdebbd9d12ecca31c42b7a5d7d24d5d63cc08fb4ce6db089bce84d14955ff6"
+    },
+    {
+      "status": "tracked-change",
+      "path": "tests/taskloop-architecture.test.mjs",
+      "byte_count": 10375,
+      "sha256": "sha256:dc2984b9fa693c4cf9bfafb9aa3992009bd851ab700daa4e4ab8c49e8a110969"
+    },
+    {
+      "status": "tracked-change",
+      "path": "tests/taskloop.test.mjs",
+      "byte_count": 96780,
+      "sha256": "sha256:ef3bf4adec1efd9c60ef47a0b4cd6403ba429bb985bb61a2ef561b6356972362"
+    },
+    {
+      "status": "tracked-change",
+      "path": "tests/verify-full.mjs",
+      "byte_count": 713,
+      "sha256": "sha256:93d775d654ce9e2f956ba42e1179863824c89a1939ebf9ddac288069318883db"
+    },
+    {
+      "status": "tracked-change",
+      "path": "tests/windows.test.mjs",
+      "byte_count": 9763,
+      "sha256": "sha256:0b1ae118491e13d241519c79a2cbf0b8cff0c9689ce3767dccdb26826c7422f0"
+    }
+  ],
+  "entry_count": 58,
+  "candidate_digest": "sha256:97c33dde8b7911586dc4a62ebd6fd99996dcf104248b6fa99c12b9be65716608",
+  "self_excluded": "docs/e2e-test/schema-v3-event-sourcing/e2e-rerun-release-gates-20260714/attachments/release-candidate-manifest.json"
+}

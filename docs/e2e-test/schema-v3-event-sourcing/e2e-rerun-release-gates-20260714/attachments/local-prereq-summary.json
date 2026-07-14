@@ -1,0 +1,23 @@
+[
+  {
+    "id": "windows-cases-local",
+    "status": 0,
+    "signal": null,
+    "duration_ms": 1736,
+    "attachment": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-rerun-release-gates-20260714/attachments/windows-cases-local.json"
+  },
+  {
+    "id": "npm-test",
+    "status": 0,
+    "signal": null,
+    "duration_ms": 41665,
+    "attachment": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-rerun-release-gates-20260714/attachments/npm-test.json"
+  },
+  {
+    "id": "verify-full",
+    "status": 0,
+    "signal": null,
+    "duration_ms": 40938,
+    "attachment": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-rerun-release-gates-20260714/attachments/verify-full.json"
+  }
+]

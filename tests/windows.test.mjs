@@ -73,7 +73,7 @@ test("Windows install is repeatable and exposes taskloop to cmd and both PowerSh
   ];
   for (const [executable, args, label] of commands) {
     const info = parsed(spawnSync(executable, args, { env: shellEnv, encoding: "utf8", timeout: 30_000 }), label);
-    assert.equal(info.runtime_contract, 3, label);
+    assert.equal(info.runtime_contract, 4, label);
   }
 });
 
@@ -103,7 +103,7 @@ for (const [label, executable, argsFor, spawnOptions] of hookShells) {
   });
 }
 
-test("Windows repeatedly replaces task state across drive-case and Unicode path variants", { skip: !WINDOWS }, (t) => {
+test("[W01] Windows genesis and replay survive spaces, Unicode, and drive-case path variants", { skip: !WINDOWS }, (t) => {
   const fixture = installedFixture(t);
   const repo = path.join(fixture.root, "repo with spaces 项目");
   fs.mkdirSync(repo, { recursive: true });
@@ -114,14 +114,18 @@ test("Windows repeatedly replaces task state across drive-case and Unicode path 
   const alternateDriveCase = repo.replace(/^([A-Za-z]):/, (_, drive) => `${drive === drive.toLowerCase() ? drive.toUpperCase() : drive.toLowerCase()}:`);
   const opened = runNode(fixture.shim, ["open", "--repo", alternateDriveCase, "--goal", "windows state", "--criterion-file", "check.mjs", "--criterion-policy", "default", "--alignment-because", "the checker exercises the result", "--files", "work.txt", "--risk", "routine", "--risk-reason", "isolated fixture"], { cwd: repo, env: fixture.env });
   assert.equal(opened.status, 0, opened.stderr || opened.stdout);
+  const audited = parsed(runNode(fixture.shim, ["audit", "--repo", repo], { cwd: repo, env: fixture.env }), "W01 audit");
+  assert.equal(audited.valid, true);
+  assert.equal(audited.last_repo_sequence, 1);
+  assert.equal(fs.readdirSync(path.join(repo, ".taskloop")).some((name) => name.includes(".genesis.") && name.endsWith(".tmp")), false);
   const taskFile = path.join(repo, ".taskloop", "task.json");
-  let previousRevision = JSON.parse(fs.readFileSync(taskFile, "utf8")).task_revision;
+  let previousRevision = JSON.parse(fs.readFileSync(taskFile, "utf8")).projection.task_revision;
 
   for (const content of ["second\n", "third\n"]) {
     const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: repo, tool_name: "Write", tool_input: { file_path: path.join(repo, "work.txt"), content } });
     const recorded = runNode(fixture.shim, [], { cwd: repo, env: fixture.env, input: payload });
     assert.equal(recorded.status, 0, recorded.stderr || recorded.stdout);
-    const revision = JSON.parse(fs.readFileSync(taskFile, "utf8")).task_revision;
+    const revision = JSON.parse(fs.readFileSync(taskFile, "utf8")).projection.task_revision;
     assert.ok(revision > previousRevision, `${revision} must be newer than ${previousRevision}`);
     previousRevision = revision;
   }

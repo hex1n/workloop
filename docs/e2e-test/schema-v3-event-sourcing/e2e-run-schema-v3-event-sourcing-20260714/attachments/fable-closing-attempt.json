@@ -1,0 +1,15 @@
+{
+  "reviewer": "Fable",
+  "mode": "claude-review deep",
+  "base": "7dd7d3473e587c8b13a8619a4f5359150fade6e6",
+  "scope": "working tree including staged, unstaged, and untracked changes",
+  "status": "no_final_result",
+  "exit_status": 1,
+  "error": "Claude reached the configured budget before producing a final result",
+  "usage": {
+    "turns": 12,
+    "duration_ms": 271730,
+    "cost_usd": 3.372162
+  },
+  "disposition": "not a GO or NO-GO verdict; automatic retry prohibited"
+}

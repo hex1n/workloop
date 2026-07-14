@@ -8,7 +8,7 @@ This repository is a dependency-free Node.js CLI plus the portable loop kernel s
 
 - `bin/taskloop.mjs` is only the process entry; `lib/application.mjs` is the single assembly module.
 - Leaf modules may import only `lib/prims.mjs`, never sibling leaf modules. The architecture suite enforces this dependency direction.
-- Lifecycle state changes belong in `lib/task-engine.mjs`. Critical task-state writes fail loudly; outcome-ledger and untracked-work telemetry degrade open.
+- Lifecycle state changes belong in `lib/task-engine.mjs`. Critical task-state writes fail loudly; outcome projection and untracked-work telemetry degrade open.
 - Tests assert public CLI/hook output and module interfaces. Keep byte-exact hook protocol compatibility unless a deliberate interface change is documented.
 - Stop self-suspension is part of the hook contract: `out_of_budget` at budget exhaustion, `stuck` on three identical failure signatures or on seven revision-stagnant unsatisfied attempts (hosts force-release pure spinning around nine metered stops and reset their counters on intervening writes; probed live 2026-07-13).
 - Untracked nudge/deny messages carry criterion-sourcing discipline and route to the workloop skill by name; keep them host-neutral (no host-specific skill invocation syntax).

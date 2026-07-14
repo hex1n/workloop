@@ -6,12 +6,13 @@ import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { transition } from "../lib/task-engine.mjs";
+import { decide, evolve } from "../lib/task-engine.mjs";
 import { withTaskLock } from "../lib/task-store.mjs";
+import { makeTaskOpenedCommand } from "./helpers/event-v3-fixture.mjs";
 
 const ROOT = path.resolve(".");
 const CLI = path.join(ROOT, "bin", "taskloop.mjs");
-const MODULES = ["application.mjs", "criterion.mjs", "outcome-ledger.mjs", "prims.mjs", "supervision.mjs", "task-engine.mjs", "task-store.mjs", "untracked.mjs"];
+const MODULES = ["application.mjs", "criterion.mjs", "event-store.mjs", "outcome-projector.mjs", "prims.mjs", "supervision.mjs", "task-engine.mjs", "task-store.mjs", "untracked.mjs"];
 
 function run(script, args = [], options = {}) { return spawnSync(process.execPath, [script, ...args], { cwd: options.cwd ?? ROOT, env: options.env ?? process.env, input: options.input ?? "", encoding: "utf8" }); }
 function imports(file) { return [...fs.readFileSync(file, "utf8").matchAll(/(?:import|export)\s+(?:[^"']+?\s+from\s+)?["']([^"']+)["']/g)].map((m) => m[1]).filter((x) => x.startsWith(".")); }
@@ -22,18 +23,20 @@ test("assembly remains the only cross-leaf seam", () => {
   for (const name of MODULES.filter((x) => !new Set(["application.mjs", "prims.mjs"]).has(x))) assert.ok(imports(path.join(ROOT, "lib", name)).every((x) => x === "./prims.mjs"), name);
 });
 
-test("integration handshake exposes all three coordinated schema contracts", () => {
+test("integration handshake exposes runtime-contract-4 independent schemas", () => {
   const info = JSON.parse(run(CLI, ["info"]).stdout);
-  assert.deepEqual({ runtime: info.runtime_contract, task: info.task_schema_version, ledger: info.ledger_event_schema_version }, { runtime: 3, task: 2, ledger: 2 });
-  assert.match(info.ledger_path, /outcomes-v2\.jsonl$/);
+  assert.deepEqual({ runtime: info.runtime_contract, task: info.task_snapshot_schema_version, record: info.event_record_schema_version, outcome: info.outcome_projection_schema_version }, { runtime: 4, task: 3, record: 1, outcome: 3 });
+  assert.equal(info.event_store, ".taskloop/events-v3.jsonl");
+  assert.equal(info.outcome_projection, "~/.taskloop/outcomes-v3.jsonl");
 });
 
-test("persisted timestamps use the canonical local rendering", () => {
+test("authority timestamps are UTC while human artifact names remain local", () => {
   const prims = fs.readFileSync(path.join(ROOT, "lib", "prims.mjs"), "utf8");
   const untracked = fs.readFileSync(path.join(ROOT, "lib", "untracked.mjs"), "utf8");
   const application = fs.readFileSync(path.join(ROOT, "lib", "application.mjs"), "utf8");
-  assert.match(prims, /function localTimestamp/); assert.match(prims, /function artifactTimestamp/);
+  assert.match(prims, /function utcTimestamp/); assert.match(prims, /function artifactTimestamp/);
   assert.match(untracked, /localTimestamp/); assert.match(application, /localTimestamp/);
+  assert.match(application, /utcTimestamp\(Date\.now\(\)\)/);
 });
 
 test("Stop hooks exit zero with no task and with incompatible task state", (t) => {
@@ -41,14 +44,25 @@ test("Stop hooks exit zero with no task and with incompatible task state", (t) =
   fs.mkdirSync(repo, { recursive: true }); fs.mkdirSync(home, { recursive: true }); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const env = { ...process.env, HOME: home, USERPROFILE: home }; const payload = JSON.stringify({ hook_event_name: "Stop", cwd: repo });
   let stopped = run(CLI, [], { cwd: repo, env, input: payload }); assert.equal(stopped.status, 0); assert.equal(stopped.stdout, "");
-  fs.mkdirSync(path.join(repo, ".taskloop")); fs.writeFileSync(path.join(repo, ".taskloop", "task.json"), '{"schema_version":1}\n');
+  fs.mkdirSync(path.join(repo, ".taskloop"), { recursive: true }); fs.writeFileSync(path.join(repo, ".taskloop", "task.json"), '{"schema_version":1}\n');
   stopped = run(CLI, [], { cwd: repo, env, input: payload }); assert.equal(stopped.status, 0); assert.match(stopped.stdout, /"decision":"block"/);
 });
 
-test("task-engine transitions are pure", () => {
-  const source = { schema_version: 1, task_revision: 1, last_substantive_task_revision: 1, artifact_revision: 0, lifecycle: { state: "active" }, policy: { open_requirement: "unsatisfied", witness_requirement: "required", close_policy: "automatic" }, criterion: { criterion_generation_id: "g" }, spent: { writes: 0 }, evidence: { touched_files: [] }, reviews: [] };
-  const changed = transition(source, { type: "record-write", files: ["a"], at: "2026-01-01T00:00:00Z" }).task;
-  assert.equal(source.artifact_revision, 0); assert.equal(changed.artifact_revision, 1); assert.notEqual(changed, source);
+test("task-engine decide/evolve are pure", () => {
+  const command = makeTaskOpenedCommand({ atEpochMs: 1_784_000_000_000 });
+  const decision = decide(null, command);
+  const event = { ...decision.events[0], task_event_sequence: 1 };
+  const changed = evolve(null, event);
+  assert.equal(decision.events[0].task_event_sequence, undefined);
+  assert.equal(changed.schema_version, 3);
+});
+
+test("production assembly has no direct authoritative task writer", () => {
+  const source = fs.readFileSync(path.join(ROOT, "lib", "application.mjs"), "utf8");
+  assert.doesNotMatch(source, /\bsaveTask\s*\(/);
+  assert.doesNotMatch(source, /\btransition\s*\(/);
+  assert.match(source, /commitRecord\s*\(/);
+  assert.match(source, /saveTaskSnapshot\s*\(/);
 });
 
 test("task lock serializes concurrent updates and fails closed on timeout", async (t) => {
@@ -65,6 +79,57 @@ test("task lock serializes concurrent updates and fails closed on timeout", asyn
   });
   assert.throws(() => withTaskLock(repo, () => assert.fail("must not run"), { timeoutMs: 20 }), /lock unavailable/);
   await new Promise((resolve) => child.once("close", resolve));
+});
+
+test("[W06] task lock recovers a crashed owner and crashed reaper without double ownership", async (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-stale-lock-v4-"));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const stateDir = path.join(repo, ".taskloop");
+  const lock = path.join(stateDir, ".task.lock");
+  const reaper = `${lock}.reaper`;
+  const taskStoreUrl = pathToFileURL(path.join(ROOT, "lib", "task-store.mjs")).href;
+  const crashedOwnerHelper = path.join(repo, "crashed-owner.mjs");
+  fs.writeFileSync(crashedOwnerHelper, `import {withTaskLock} from ${JSON.stringify(taskStoreUrl)}; withTaskLock(${JSON.stringify(repo)},()=>{process.stdout.write('held\\n');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,60_000)});`);
+  const crashedOwner = spawn(process.execPath, [crashedOwnerHelper], { stdio: ["ignore", "pipe", "pipe"] });
+  let ownerStderr = "";
+  crashedOwner.stderr.on("data", (chunk) => { ownerStderr += chunk; });
+  await new Promise((resolve, reject) => {
+    crashedOwner.stdout.once("data", resolve);
+    crashedOwner.once("error", reject);
+    crashedOwner.once("close", (code) => reject(new Error(`W06 owner exited before readiness (${code}): ${ownerStderr}`)));
+  });
+  assert.equal(fs.existsSync(lock), true);
+  crashedOwner.kill("SIGKILL");
+  await new Promise((resolve) => crashedOwner.once("close", resolve));
+
+  fs.mkdirSync(reaper, { recursive: true });
+  const exited = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" });
+  assert.equal(exited.status, 0, exited.stderr);
+  fs.writeFileSync(path.join(reaper, "owner.json"), JSON.stringify({ pid: Number(exited.stdout), token: "crashed-reaper" }));
+  const old = new Date(Date.now() - 10_000);
+  fs.utimesSync(lock, old, old);
+  fs.utimesSync(reaper, old, old);
+
+  const ownershipLog = path.join(repo, "ownership.log");
+  const contenderHelper = path.join(repo, "contender.mjs");
+  fs.writeFileSync(contenderHelper, `import fs from 'node:fs'; import {withTaskLock} from ${JSON.stringify(taskStoreUrl)}; withTaskLock(${JSON.stringify(repo)},()=>{fs.appendFileSync(${JSON.stringify(ownershipLog)},'enter:'+process.pid+'\\n');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,50);fs.appendFileSync(${JSON.stringify(ownershipLog)},'exit:'+process.pid+'\\n')},{timeoutMs:2000});`);
+  const runContender = () => new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [contenderHelper], { stdio: ["ignore", "ignore", "pipe"] });
+    let stderr = "";
+    child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.once("error", reject);
+    child.once("close", (code) => code === 0 ? resolve() : reject(new Error(`W06 contender failed (${code}): ${stderr}`)));
+  });
+  await Promise.all([runContender(), runContender()]);
+  const ownership = fs.readFileSync(ownershipLog, "utf8").trim().split("\n");
+  assert.equal(ownership.length, 4);
+  assert.match(ownership[0], /^enter:\d+$/);
+  assert.equal(ownership[1], ownership[0].replace("enter:", "exit:"));
+  assert.match(ownership[2], /^enter:\d+$/);
+  assert.equal(ownership[3], ownership[2].replace("enter:", "exit:"));
+  assert.notEqual(ownership[0], ownership[2]);
+  assert.equal(fs.existsSync(lock), false);
+  assert.equal(fs.existsSync(reaper), false);
 });
 
 test("PreToolUse lock timeout denies the write instead of preserving stale proof", (t) => {

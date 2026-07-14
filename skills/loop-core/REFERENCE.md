@@ -63,7 +63,7 @@ The CLI accepts three named policies and persists only their tuple:
 | `deferred-witness` | `deferred_witness` | determinate | required | automatic |
 | `steady-satisfied` | `steady_satisfied` | determinate | none | explicit |
 
-No other tuple is valid in schema v2. Non-default policies require a rationale.
+No other tuple is valid in schema v3. Non-default policies require a rationale.
 Default open takes its unsatisfied witness immediately. Deferred witness can
 open satisfied, but closure remains held until a metered Stop or `achieve`
 observes unsatisfied. Diagnostic `verify` never records an observation,
@@ -155,19 +155,27 @@ current session; `resume --reason` continues a suspended one.
 the host hook payload's domain. Per-host binding mechanics are in
 [HOSTS.md](HOSTS.md).
 
-## State, ledger, and upgrade
+## State, projection, and hard cutover
 
-`task.json` accepts only `schema_version: 2`. Incompatible state is never
-interpreted or migrated. Preserve it byte-for-byte with explicit authorization:
+Runtime contract 4 treats `.taskloop/events-v3.jsonl` as the only repository
+authority. `task.json` is a disposable schema-v3 snapshot; missing or damaged
+snapshots rebuild from the event genesis, while internal event corruption fails
+closed. Schema-2 and orphan/mixed snapshots are never interpreted or migrated.
+Preserve an incompatible snapshot byte-for-byte with explicit authorization:
 
 ```text
 taskloop archive-incompatible-state --repo <repo> \
-  --reason "upgrade to schema v2" --granted-by user
+  --reason "runtime-contract-4 hard cutover" --granted-by user
 ```
 
-The runtime writes only `~/.taskloop/outcomes-v2.jsonl`. Ledger events use
-`event_schema_version: 2`; task adjudication never reads the ledger. Appends are
-best-effort and report task id, revision, and allocated sequence on failure.
-`audit` reports gaps as incomplete telemetry and isolates corrupt rows.
+The runtime projects repository events to `~/.taskloop/outcomes-v3.jsonl` on a
+best-effort basis. Task adjudication never reads that projection. Rebuild it
+with `sync-outcomes --repo`; audit repository authority with `audit --repo` and
+the HOME projection with `audit-outcomes`. A HOME failure never rolls back a
+committed repository event. Runtime contract 3 is not a rollback target.
+
+Old `outcomes-v2.jsonl`, `transcript-cursors.json`, and `history/` artifacts are
+non-authoritative diagnostics: runtime 4 ignores them and never auto-deletes
+them.
 
 Git mutations still require explicit user intent and an envelope grant.

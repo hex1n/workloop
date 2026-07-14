@@ -6,12 +6,10 @@ import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 
 import { criterionMetadata, expandWindowsGlobs, mapExecution, runCriterionSource } from "../lib/criterion.mjs";
-import { auditLedger, eventId, makeEvent, validateEvent } from "../lib/outcome-ledger.mjs";
-import { POLICY_PRESETS, assertTaskSchema, closureProjection, constructPolicy, createTask, criterionDefinitionHash, machineRiskFloor, policyName, projectBudgetExhaustion, projectProofAssurance, projectReviewRequirement, transition, validatePolicy } from "../lib/task-engine.mjs";
-import { archiveIncompatibleState, archiveTask, loadTask, saveTask } from "../lib/task-store.mjs";
+import { POLICY_PRESETS, assertV3TaskProjection, closureProjection, constructPolicy, createTask, criterionDefinitionHash, decide, evolveAll, machineRiskFloor, policyName, projectBudgetExhaustion, projectProofAssurance, projectReviewRequirement, validatePolicy } from "../lib/task-engine.mjs";
+import { archiveIncompatibleState, loadTask } from "../lib/task-store.mjs";
 import { envelopeOverlap, siblingWorktreeOpenTasks } from "../lib/supervision.mjs";
 import { artifactTimestamp, localTimestamp } from "../lib/prims.mjs";
-import { legacyAssertAdditiveTask, legacyCursorOffset, legacyValidateEvent } from "./fixtures/runtime-contract-3.mjs";
 
 const ROOT = path.resolve(".");
 const CLI = path.join(ROOT, "bin", "taskloop.mjs");
@@ -65,6 +63,22 @@ function task(overrides = {}) {
   return createTask({ taskId: "t1", goal: "g", criterion, observation: observation("unsatisfied"), policyName: "default", at: AT, alignment: { because: "b", not_covered: [] }, envelope: { files: ["lib/**"], git: [], destructive: false, network: false }, budget: { rounds: 8 }, assurance: { declared_risk: "routine", risk_reason: "routine reversible", risk_declared_by: "self", change_classes: ["internal"], review_policy: "risk_based", required_review_level: null, review_waiver_reason: null, review_waiver_granted_by: null, proof_gap_acceptances: [], risk_floor_events: [] }, ...overrides });
 }
 
+// Pure domain checks below use the same runtime-contract-4 command/event path
+// as production. This adapter only supplies deterministic test facts that the
+// CLI normally creates (attempt and session metadata).
+function applyDomainCommandForTest(state, input) {
+  if (input.type === "verify") return { task: structuredClone(state), meta: {} };
+  const command = { ...input, taskId: state.task_id };
+  if (input.type === "record-write") Object.assign(command, { type: "authorize-write", decision: "allow" });
+  if (input.type === "observe" || input.type === "achieve") {
+    command.attemptId ??= `attempt-${state.task_event_sequence + 1}`;
+    command.signature ??= `signature-${state.task_event_sequence + 1}`;
+  }
+  if (input.type === "review") command.record = { ...input.record, acting_session: input.record.acting_session ?? null };
+  const decision = decide(state, command);
+  return { task: evolveAll(state, decision.events), meta: decision.result };
+}
+
 test("proof assurance and change review are orthogonal", () => {
   const strongCritical = task();
   strongCritical.assurance.declared_risk = "critical"; strongCritical.assurance.risk_reason = "public API"; strongCritical.assurance.change_classes = ["public_contract"];
@@ -106,19 +120,19 @@ test("assurance truth table covers policies, floors, freshness and lifecycle bou
   const reviewed = task(); reviewed.assurance.declared_risk = "substantial"; reviewed.criterion.last_observation = observation("satisfied");
   reviewed.reviews.push({ criterion_generation_id: "g1", reviewed_task_revision: reviewed.last_substantive_task_revision, reviewed_artifact_revision: 0, level: "fresh_context", blocking_findings_count: 0 });
   assert.equal(projectReviewRequirement(reviewed).accepted, true);
-  const changed = transition(reviewed, { type: "record-write", files: ["lib/x"], at: AT }).task;
+  const changed = applyDomainCommandForTest(reviewed, { type: "record-write", files: ["lib/x"], at: AT }).task;
   assert.equal(projectReviewRequirement(changed).accepted, false);
   const escalatedAssurance = structuredClone(reviewed.assurance); escalatedAssurance.declared_risk = "critical"; escalatedAssurance.risk_reason = "escalated";
-  const escalated = transition(reviewed, { type: "amend", assurance: escalatedAssurance, reason: "risk found", at: AT }).task;
+  const escalated = applyDomainCommandForTest(reviewed, { type: "amend", assurance: escalatedAssurance, reason: "risk found", at: AT }).task;
   assert.equal(projectReviewRequirement(escalated).level, "second_model"); assert.equal(projectReviewRequirement(escalated).accepted, false);
   for (const changedField of [{ alignment: { because: "new", not_covered: [] } }, { envelope: { files: ["lib/**", "tests/**"], git: [], destructive: false, network: false } }, { grants: [{ grant_id: "g", kind: "network", scope: ["commands"], reason: "x", granted_by: "user", granted_at_task_revision: 2 }] }]) {
-    const amended = transition(reviewed, { type: "amend", ...changedField, reason: "scope changed", at: AT }).task;
+    const amended = applyDomainCommandForTest(reviewed, { type: "amend", ...changedField, reason: "scope changed", at: AT }).task;
     assert.equal(projectReviewRequirement(amended).accepted, false);
   }
   const suspendedBase = task(); suspendedBase.assurance.declared_risk = "substantial";
-  const suspended = transition(suspendedBase, { type: "suspend", reason: "needs_input", judgment: { remaining: "r", failure: "f", next_action: "n" }, at: AT }).task;
+  const suspended = applyDomainCommandForTest(suspendedBase, { type: "suspend", reason: "needs_input", judgment: { remaining: "r", failure: "f", next_action: "n" }, at: AT }).task;
   assert.equal(closureProjection(suspended), null); assert.deepEqual(projectReviewRequirement(suspended), { level: null, reasons: ["lifecycle_not_active"], accepted: true, waived: false, applicable: false });
-  const terminal = transition(task(), { type: "abandon", reason: "stop", at: AT }).task;
+  const terminal = applyDomainCommandForTest(task(), { type: "abandon", reason: "stop", at: AT }).task;
   assert.equal(closureProjection(terminal), null);
   const drifted = task(); drifted.criterion.last_observation = observation("satisfied");
   drifted.assurance.proof_gap_acceptances.push({ criterion_generation_id: "g1", reason: "older acceptance", granted_by: "user" });
@@ -139,20 +153,22 @@ test("policy constructor accepts exactly the three named tuples", () => {
   assert.throws(() => validatePolicy({ open_requirement: "determinate", witness_requirement: "none", close_policy: "automatic" }));
 });
 
-test("default open witnesses unsatisfied and later satisfied is eligible", () => {
+test("default open witnesses unsatisfied and a later satisfied observation closes automatically", () => {
   const initial = task();
   assert.equal(initial.lifecycle.state, "active");
   assert.equal(initial.witness.source_event, "open");
-  const next = transition(initial, { type: "observe", source: "stop", observation: observation("satisfied"), drift: [], at: AT }).task;
-  assert.deepEqual(closureProjection(next), { state: "eligible" });
+  const next = applyDomainCommandForTest(initial, { type: "observe", source: "stop", observation: observation("satisfied"), drift: [], at: AT }).task;
+  assert.equal(next.lifecycle.state, "terminal");
+  assert.equal(next.lifecycle.outcome, "achieved");
 });
 
-test("deferred witness holds satisfied until unsatisfied is witnessed", () => {
+test("deferred witness holds satisfied until an unsatisfied witness enables automatic close", () => {
   const deferred = task({ policyName: "deferred_witness", policyRationale: "test first", observation: observation("satisfied") });
   assert.deepEqual(closureProjection(deferred), { state: "held", reasons: ["unsatisfied_not_witnessed"] });
-  const witnessed = transition(deferred, { type: "observe", source: "stop", observation: observation("unsatisfied"), at: AT }).task;
-  const resatisfied = transition(witnessed, { type: "observe", source: "stop", observation: observation("satisfied"), at: AT }).task;
-  assert.deepEqual(closureProjection(resatisfied), { state: "eligible" });
+  const witnessed = applyDomainCommandForTest(deferred, { type: "observe", source: "stop", observation: observation("unsatisfied"), at: AT }).task;
+  const resatisfied = applyDomainCommandForTest(witnessed, { type: "observe", source: "stop", observation: observation("satisfied"), at: AT }).task;
+  assert.equal(resatisfied.lifecycle.state, "terminal");
+  assert.equal(resatisfied.lifecycle.outcome, "achieved");
 });
 
 test("steady satisfied is eligible but explicit", () => {
@@ -187,18 +203,18 @@ test("proof gap requires explicit acceptance and review cannot remove it", () =>
 test("review freshness expires after writes and substantive amendments", () => {
   let value = task(); value.assurance.declared_risk = "substantial"; value.criterion.last_observation = observation("satisfied");
   const record = { review_id: "r", criterion_generation_id: "g1", reviewed_task_revision: value.last_substantive_task_revision, reviewed_artifact_revision: 0, level: "second_model", reviewer: "other", blocking_findings_count: 0, advisory_findings_count: 1, reviewed_at: AT };
-  value = transition(value, { type: "review", record, at: AT }).task;
+  value = applyDomainCommandForTest(value, { type: "review", record, at: AT }).task;
   assert.equal(closureProjection(value).state, "eligible");
-  value = transition(value, { type: "record-write", files: ["x"], at: AT }).task;
+  value = applyDomainCommandForTest(value, { type: "record-write", files: ["x"], at: AT }).task;
   assert.deepEqual(closureProjection(value).reasons, ["change_review_unaccepted"]);
-  value = transition(value, { type: "amend", goal: "new", reason: "pivot", at: AT }).task;
+  value = applyDomainCommandForTest(value, { type: "amend", goal: "new", reason: "pivot", at: AT }).task;
   assert.equal(value.last_substantive_task_revision, value.task_revision);
 });
 
 test("criterion amend always creates a generation boundary and clears proof", () => {
   const before = task(); before.reviews.push({ level: "fresh_context" });
   const same = { ...before.criterion, criterion_generation_id: "g2", last_observation: undefined };
-  const after = transition(before, { type: "amend", criterion: same, reason: "rebind", at: AT }).task;
+  const after = applyDomainCommandForTest(before, { type: "amend", criterion: same, reason: "rebind", at: AT }).task;
   assert.equal(after.criterion.criterion_definition_hash, before.criterion.criterion_definition_hash);
   assert.equal(after.criterion.last_observation, null);
   assert.equal(after.witness, null); assert.deepEqual(after.reviews, []);
@@ -207,26 +223,26 @@ test("criterion amend always creates a generation boundary and clears proof", ()
 
 test("only open, stop and achieve observations can witness; verify is inert", () => {
   const deferred = task({ policyName: "deferred_witness", policyRationale: "r", observation: observation("satisfied") });
-  assert.equal(transition(deferred, { type: "verify", at: AT }).task.witness, null);
-  assert.equal(transition(deferred, { type: "observe", source: "stop", observation: observation("unsatisfied"), at: AT }).task.witness.source_event, "stop");
-  assert.equal(transition(deferred, { type: "achieve", observation: observation("unsatisfied"), at: AT }).task.witness.source_event, "achieve");
+  assert.equal(applyDomainCommandForTest(deferred, { type: "verify", at: AT }).task.witness, null);
+  assert.equal(applyDomainCommandForTest(deferred, { type: "observe", source: "stop", observation: observation("unsatisfied"), at: AT }).task.witness.source_event, "stop");
+  assert.equal(applyDomainCommandForTest(deferred, { type: "achieve", observation: observation("unsatisfied"), at: AT }).task.witness.source_event, "achieve");
 });
 
 test("achieved binds a fresh satisfied observation; other terminals bypass criterion", () => {
   let value = task();
-  value = transition(value, { type: "achieve", observation: observation("satisfied"), drift: [], at: AT }).task;
+  value = applyDomainCommandForTest(value, { type: "achieve", observation: observation("satisfied"), drift: [], at: AT }).task;
   assert.equal(value.lifecycle.outcome, "achieved");
   assert.equal(value.lifecycle.closing_observation_id, value.criterion.last_observation.observation_id);
-  assert.throws(() => transition(value, { type: "abandon", reason: "x", at: AT }), /immutable/);
-  const noNeed = transition(task(), { type: "not-needed", evidence: "read-only proof", at: AT }).task;
+  assert.throws(() => applyDomainCommandForTest(value, { type: "abandon", reason: "x", at: AT }), /active task/);
+  const noNeed = applyDomainCommandForTest(task(), { type: "not-needed", evidence: "read-only proof", at: AT }).task;
   assert.equal(noNeed.lifecycle.outcome, "not_needed");
-  const abandoned = transition(task(), { type: "abandon", reason: "superseded", at: AT }).task;
+  const abandoned = applyDomainCommandForTest(task(), { type: "abandon", reason: "superseded", at: AT }).task;
   assert.equal(abandoned.lifecycle.outcome, "abandoned");
 });
 
 test("not-needed refuses after a write", () => {
-  const written = transition(task(), { type: "record-write", files: ["x"], at: AT }).task;
-  assert.throws(() => transition(written, { type: "not-needed", evidence: "x", at: AT }), /writes == 0/);
+  const written = applyDomainCommandForTest(task(), { type: "record-write", files: ["x"], at: AT }).task;
+  assert.throws(() => applyDomainCommandForTest(written, { type: "not-needed", evidence: "x", at: AT }), /no writes/);
 });
 
 test("budget exhaustion projection covers every dimension at exact boundaries", () => {
@@ -255,32 +271,33 @@ test("budget exhaustion projection covers every dimension at exact boundaries", 
   assert.throws(() => projectBudgetExhaustion(task(), createdAt + 0.5), /atEpochMs/);
 });
 
-test("lifecycle transition table enforces suspension and terminal guards", () => {
-  let value = transition(task(), { type: "suspend", reason: "needs_input", judgment: { remaining: "credential", failure: "auth", next_action: "supply" }, at: AT }).task;
+test("lifecycle commands enforce suspension and terminal guards", () => {
+  let value = applyDomainCommandForTest(task(), { type: "suspend", reason: "needs_input", judgment: { remaining: "credential", failure: "auth", next_action: "supply" }, at: AT }).task;
   assert.equal(value.lifecycle.state, "suspended");
-  assert.throws(() => transition(value, { type: "record-write", files: [], at: AT }));
-  value = transition(value, { type: "resume", reason: "provided", episode: { episode_id: "e", host_session_id: "s", started_at: AT, ended_at: null, start_task_revision: 3, end_task_revision: null, output_tokens_estimate: 0 }, at: AT, atEpochMs: Date.parse(AT) }).task;
+  assert.throws(() => applyDomainCommandForTest(value, { type: "record-write", files: [], at: AT }));
+  value = applyDomainCommandForTest(value, { type: "resume", reason: "provided", episode: { episode_id: "e", host_session_id: "s", started_at: AT, ended_at: null, start_task_revision: 3, end_task_revision: null, output_tokens_estimate: 0 }, at: AT, atEpochMs: Date.parse(AT) }).task;
   assert.equal(value.lifecycle.state, "active");
 });
 
 test("out-of-budget resume requires every exhausted dimension to be raised", () => {
   const atEpochMs = Date.parse(AT) + 60_000;
+  const resumeAt = new Date(atEpochMs).toISOString();
   const suspended = task({ budget: { rounds: 2, writes: 1, wall_clock_minutes: 1, output_tokens: 10 } });
   suspended.spent = { rounds: 2, writes: 1, wall_clock_ms: 60_000, output_tokens_estimate: 10 };
   suspended.lifecycle = { state: "suspended", reason: "out_of_budget", suspended_at: AT, judgment: { remaining: "r", failure: "f", next_action: "n" } };
-  const roundsOnly = transition(suspended, { type: "amend", rounds: 3, reason: "more rounds", at: AT }).task;
-  const episode = { episode_id: "e", host_session_id: "s", started_at: AT, ended_at: null, start_task_revision: roundsOnly.task_revision + 1, end_task_revision: null, output_tokens_estimate: 0 };
+  const roundsOnly = applyDomainCommandForTest(suspended, { type: "amend", rounds: 3, reason: "more rounds", at: AT }).task;
+  const episode = { episode_id: "e", host_session_id: "s", started_at: resumeAt, ended_at: null, start_task_revision: roundsOnly.task_revision + 1, end_task_revision: null, output_tokens_estimate: 0 };
   assert.throws(
-    () => transition(roundsOnly, { type: "resume", reason: "continue", episode, actingSession: "s", at: AT, atEpochMs }),
+    () => applyDomainCommandForTest(roundsOnly, { type: "resume", reason: "continue", episode, actingSession: "s", at: resumeAt, atEpochMs }),
     /writes.*wall_clock.*output_tokens/,
   );
 
-  const raised = transition(suspended, { type: "amend", rounds: 3, writes: 2, wallClockMinutes: 2, outputTokens: 11, reason: "raise every exhausted budget", at: AT }).task;
-  const resumed = transition(raised, { type: "resume", reason: "continue", episode: { ...episode, start_task_revision: raised.task_revision + 1 }, actingSession: "s", at: AT, atEpochMs }).task;
+  const raised = applyDomainCommandForTest(suspended, { type: "amend", rounds: 3, writes: 2, wallClockMinutes: 2, outputTokens: 11, reason: "raise every exhausted budget", at: AT }).task;
+  const resumed = applyDomainCommandForTest(raised, { type: "resume", reason: "continue", episode: { ...episode, start_task_revision: raised.task_revision + 1 }, actingSession: "s", at: resumeAt, atEpochMs }).task;
   assert.equal(resumed.lifecycle.state, "active");
 
   assert.throws(
-    () => transition(raised, { type: "resume", reason: "missing decision time", episode: { ...episode, start_task_revision: raised.task_revision + 1 }, actingSession: "s", at: AT }),
+    () => applyDomainCommandForTest(raised, { type: "resume", reason: "missing decision time", episode: { ...episode, start_task_revision: raised.task_revision + 1 }, actingSession: "s", at: resumeAt }),
     /atEpochMs/,
   );
 });
@@ -344,11 +361,6 @@ test("criterion side effects become indeterminate", (t) => {
   assert.deepEqual(seen.changed_paths, ["mutated"]);
 });
 
-test("schema v2 rejects every other task shape", () => {
-  assert.equal(assertTaskSchema(task()).schema_version, 2);
-  assert.throws(() => assertTaskSchema({ version: 1, state: "open" }), /incompatible task schema/);
-});
-
 test("incompatible state archival preserves bytes and records a receipt", (t) => {
   const fx = fixture(t); fs.mkdirSync(path.join(fx.repo, ".taskloop")); const raw = '{"version":0,"x":1}\n'; fs.writeFileSync(path.join(fx.repo, ".taskloop", "task.json"), raw);
   assert.throws(() => loadTask(fx.repo), /incompatible/);
@@ -358,27 +370,7 @@ test("incompatible state archival preserves bytes and records a receipt", (t) =>
   assert.equal(fs.existsSync(path.join(fx.repo, ".taskloop", "task.json")), false);
   fs.writeFileSync(path.join(fx.repo, ".taskloop", "task.json"), raw);
   const second = archiveIncompatibleState(fx.repo, { reason: "upgrade again", grantedBy: "user", at: AT });
-  assert.notEqual(second.archive_path, receipt.archive_path); assert.match(path.basename(second.archive_path), /^incompatible-\d{8}-\d{6}-[0-9a-f]{8}-[0-9a-f-]+\.json$/);
-});
-
-test("ledger events use deterministic ids and audit gaps/duplicates/corruption", (t) => {
-  const fx = fixture(t); const value = task();
-  const payload = { goal: value.goal, policy: value.policy, policy_rationale: null, criterion: {}, alignment: value.alignment, envelope: value.envelope, assurance: value.assurance, budget: value.budget };
-  const row = makeEvent({ task: value, kind: "task_opened", payload, repoIdentity: "sha256:r", at: AT });
-  assert.equal(row.event_id, eventId(value.task_id, value.task_revision, "task_opened"));
-  assert.match(row.event_id, /^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
-  assert.equal(validateEvent(row), null);
-  assert.match(validateEvent({ ...row, payload: { ...payload, surprise: true } }), /unknown payload field/);
-  const dir = path.join(fx.home, ".taskloop"); fs.mkdirSync(dir, { recursive: true });
-  fs.writeFileSync(path.join(dir, "outcomes-v2.jsonl"), JSON.stringify(row) + "\n" + JSON.stringify(row) + "\n{bad\n");
-  const oldHome = process.env.HOME; const oldUserProfile = process.env.USERPROFILE;
-  process.env.HOME = fx.home; process.env.USERPROFILE = fx.home;
-  try {
-    const report = auditLedger(); assert.equal(report.exit, 2); assert.equal(report.warnings.length, 1); assert.equal(report.corruptions.length, 1);
-  } finally {
-    if (oldHome === undefined) delete process.env.HOME; else process.env.HOME = oldHome;
-    if (oldUserProfile === undefined) delete process.env.USERPROFILE; else process.env.USERPROFILE = oldUserProfile;
-  }
+  assert.notEqual(second.archive_path, receipt.archive_path); assert.match(path.basename(second.archive_path), /^incompatible-\d{8}-\d{6}-[0-9a-f]{64}-[0-9a-f-]+\.json$/);
 });
 
 test("CLI default chain opens unsatisfied and Stop closes only after satisfied", (t) => {
@@ -405,9 +397,9 @@ test("CLI steady-satisfied Stop never auto closes and achieve does", (t) => {
   assert.equal(run(["achieve", "--repo", fx.repo], { env: fx.env }).status, 0);
 });
 
-test("CLI public vocabulary is clean break and info is contract 3", () => {
+test("CLI public vocabulary is clean break and info is contract 4", () => {
   const help = run(["help"]); assert.equal(help.status, 0); assert.doesNotMatch(help.stdout, /earn-red|keep-green|\bdone\b|\bred\b|\bgreen\b|--provisional|weak_sensor_unreviewed/);
-  const info = JSON.parse(run(["info"]).stdout); assert.equal(info.runtime_contract, 3); assert.equal(info.task_schema_version, 2); assert.equal(info.ledger_event_schema_version, 2); assert.match(info.ledger_path, /outcomes-v2\.jsonl$/);
+  const info = JSON.parse(run(["info"]).stdout); assert.equal(info.runtime_contract, 4); assert.equal(info.task_snapshot_schema_version, 3); assert.equal(info.event_record_schema_version, 1); assert.equal(info.outcome_projection_schema_version, 3); assert.equal(info.outcome_projection, "~/.taskloop/outcomes-v3.jsonl");
   assert.notEqual(run(["open", "--earn-red"]).status, 0); assert.notEqual(run(["done"]).status, 0);
 });
 
@@ -446,8 +438,8 @@ test("CLI proof acceptance, waiver, defaults and grant floors stay independent",
   const waived = fixture(t); fs.writeFileSync(path.join(waived.repo, "done"), "yes\n");
   result = run(["open", "--repo", waived.repo, "--goal", "waived", "--criterion-file", "check.mjs", "--criterion-policy", "steady-satisfied", "--reason", "guard", "--alignment-because", "probe", "--files", "work.txt", "--review-policy", "waived", "--review-waiver-reason", "user accepts review cost"], { env: waived.env });
   assert.equal(result.status, 0, result.stderr); const waivedClose = run(["achieve", "--repo", waived.repo], { env: waived.env }); assert.equal(waivedClose.status, 0); assert.match(waivedClose.stdout, /review waived: user accepts review cost \(self\)/);
-  const waiverEvents = fs.readFileSync(path.join(waived.home, ".taskloop", "outcomes-v2.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
-  const waiverAssurance = waiverEvents.at(-1).payload.assurance;
+  const waiverEvents = fs.readFileSync(path.join(waived.home, ".taskloop", "outcomes-v3.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+  const waiverAssurance = waiverEvents.find((row) => row.kind === "task_opened").payload.assurance;
   assert.equal(waiverAssurance.review_waiver_reason, "user accepts review cost"); assert.equal(waiverAssurance.review_waiver_granted_by, "self");
 
   const floor = fixture(t);
@@ -559,17 +551,11 @@ test("PreToolUse denial wins over Codex session command rewriting", (t) => {
   assert.equal(output.updatedInput, undefined);
 });
 
-test("unbound episode shapes and missing payload identity retain gate-all Stop behavior", (t) => {
-  const fx = fixture(t); assert.equal(open(fx).status, 0);
-  const variants = [[], [{ episode_id: "e", started_at: AT, ended_at: null }], [{ episode_id: "e", host_session_id: "   ", started_at: AT, ended_at: null }], [{ episode_id: "e", host_session_id: "cli", started_at: AT, ended_at: null }]];
-  for (const episodes of variants) {
-    const state = loadTask(fx.repo); state.episodes = episodes; state.spent.rounds = 0; state.attempts = []; state.lifecycle = { state: "active" }; saveTask(fx.repo, state);
-    const stopped = run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo, session_id: "any-session" }) });
-    assert.match(stopped.stdout, /decision.*block/); assert.equal(loadTask(fx.repo).spent.rounds, 1);
-  }
-  const bound = loadTask(fx.repo); bound.episodes = [{ episode_id: "bound", host_session_id: "owner", started_at: AT, ended_at: null }]; bound.spent.rounds = 0; bound.attempts = []; saveTask(fx.repo, bound);
-  const missing = run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
-  assert.match(missing.stdout, /decision.*block/); assert.equal(loadTask(fx.repo).spent.rounds, 1);
+test("an unbound cli episode retains gate-all Stop behavior", (t) => {
+  const fx = fixture(t); const env = { ...fx.env, TASKLOOP_SESSION_ID: "", CLAUDE_CODE_SESSION_ID: "" };
+  assert.equal(open({ ...fx, env }).status, 0);
+  const stopped = run([], { cwd: fx.repo, env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo, session_id: "any-session" }) });
+  assert.match(stopped.stdout, /decision.*block/); assert.equal(loadTask(fx.repo).spent.rounds, 1);
 });
 
 test("session-scoped PreToolUse protects control state and gates foreign writes conservatively", (t) => {
@@ -581,9 +567,9 @@ test("session-scoped PreToolUse protects control state and gates foreign writes 
   assert.equal(hook("owner-session", "Read", { file_path: path.join(fx.repo, ".taskloop", "task.json") }).stdout, "");
   const foreignControl = hook("foreign-session", "Bash", { command: `echo bad > ${path.join(fx.repo, ".git", "config")}` });
   assert.match(foreignControl.stdout, /permissionDecision.*deny/);
-  const homeControl = hook("owner-session", "Write", { file_path: path.join(fx.home, ".taskloop", "outcomes-v2.jsonl") });
+  const homeControl = hook("owner-session", "Write", { file_path: path.join(fx.home, ".taskloop", "outcomes-v3.jsonl") });
   assert.match(homeControl.stdout, /permissionDecision.*deny/);
-  const tildeControl = hook("owner-session", "Write", { file_path: "~/.taskloop/outcomes-v2.jsonl" });
+  const tildeControl = hook("owner-session", "Write", { file_path: "~/.taskloop/outcomes-v3.jsonl" });
   assert.match(tildeControl.stdout, /permissionDecision.*deny/); assert.match(tildeControl.stdout, /control state/);
   const inside = hook("foreign-session", "Write", { file_path: path.join(fx.repo, "work.txt") });
   assert.match(inside.stdout, /permissionDecision.*deny/); assert.match(inside.stdout, /taskloop join/);
@@ -653,14 +639,12 @@ test("round and write budgets deny further writes while reads remain free", (t) 
 
 test("single-dimension PreToolUse budget denials remain byte-exact", (t) => {
   const cases = [
-    { args: ["--rounds", "1"], prepare(state) { state.spent.rounds = 1; }, reason: "round budget exhausted (1/1); reads and verification remain free" },
     { args: ["--writes", "0"], reason: "write budget exhausted (0/0); reads and verification remain free" },
     { args: ["--wall-clock-minutes", "0"], reason: "wall-clock budget exhausted (0m)" },
     { args: ["--token-budget", "0"], reason: "output-token budget exhausted (0/0)" },
   ];
   for (const entry of cases) {
     const fx = fixture(t); assert.equal(open(fx, "default", entry.args).status, 0);
-    if (entry.prepare) { const state = loadTask(fx.repo); entry.prepare(state); saveTask(fx.repo, state); }
     const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
     const denied = run([], { cwd: fx.repo, env: fx.env, input: payload });
     assert.equal(denied.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `taskloop: ${entry.reason}` } }) + "\n");
@@ -763,8 +747,10 @@ test("a fresh satisfied closure succeeds after the write budget is exhausted", (
 test("transcript output tokens are counted once and enforce the token budget", (t) => {
   const fx = fixture(t); assert.equal(open(fx, "default", ["--token-budget", "3"]).status, 0);
   const transcript = path.join(fx.root, "transcript.jsonl");
-  fs.writeFileSync(transcript, JSON.stringify({ message: { usage: { output_tokens: 3 } } }) + "\n");
+  fs.writeFileSync(transcript, JSON.stringify({ message: { usage: { output_tokens: 99 } } }) + "\n");
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, transcript_path: transcript, tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
+  assert.equal(run([], { cwd: fx.repo, env: fx.env, input: payload }).stdout, "");
+  fs.appendFileSync(transcript, JSON.stringify({ message: { usage: { output_tokens: 3 } } }) + "\n");
   const denied = run([], { cwd: fx.repo, env: fx.env, input: payload });
   assert.match(denied.stdout, /output-token budget exhausted \(3\/3\)/);
   assert.equal(loadTask(fx.repo).spent.output_tokens_estimate, 3);
@@ -773,19 +759,21 @@ test("transcript output tokens are counted once and enforce the token budget", (
   assert.equal(loadTask(fx.repo).spent.output_tokens_estimate, 3);
 });
 
-test("token accounting excludes transcript history before open and before a later task", (t) => {
+test("token accounting establishes a zero baseline for each new task", (t) => {
   const fx = fixture(t); assert.equal(open(fx, "default", ["--token-budget", "10"]).status, 0);
-  const firstCreated = Date.parse(loadTask(fx.repo).created_at);
   const transcript = path.join(fx.root, "session.jsonl");
   const row = (output_tokens, timestamp) => JSON.stringify({ timestamp, message: { usage: { output_tokens } } }) + "\n";
-  fs.writeFileSync(transcript, row(500, new Date(firstCreated - 1000).toISOString()) + row(3, new Date(firstCreated + 1).toISOString()));
+  fs.writeFileSync(transcript, row(500, new Date().toISOString()));
   const payload = () => JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, transcript_path: transcript, tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
+  assert.equal(run([], { cwd: fx.repo, env: fx.env, input: payload() }).stdout, "");
+  fs.appendFileSync(transcript, row(3, new Date().toISOString()));
   assert.equal(run([], { cwd: fx.repo, env: fx.env, input: payload() }).stdout, "");
   assert.equal(loadTask(fx.repo).spent.output_tokens_estimate, 3);
   assert.equal(run(["abandon", "--repo", fx.repo, "--reason", "next"], { env: fx.env }).status, 0);
   assert.equal(open(fx, "default", ["--token-budget", "10"]).status, 0);
-  const secondCreated = Date.parse(loadTask(fx.repo).created_at);
-  fs.appendFileSync(transcript, row(2, new Date(secondCreated + 1).toISOString()));
+  fs.appendFileSync(transcript, row(200, new Date().toISOString()));
+  assert.equal(run([], { cwd: fx.repo, env: fx.env, input: payload() }).stdout, "");
+  fs.appendFileSync(transcript, row(2, new Date().toISOString()));
   assert.equal(run([], { cwd: fx.repo, env: fx.env, input: payload() }).stdout, "");
   assert.equal(loadTask(fx.repo).spent.output_tokens_estimate, 2);
 });
@@ -803,22 +791,17 @@ test("episode cursors fast-forward across A to B to A without charging foreign t
   pretool("session-b"); append(3); pretool("session-b"); assert.equal(loadTask(fx.repo).spent.output_tokens_estimate, 5);
   assert.equal(run(["join", "--repo", fx.repo, "--reason", "A returns"], { env: envA }).status, 0);
   append(50); pretool("session-b"); pretool("session-a"); assert.equal(loadTask(fx.repo).spent.output_tokens_estimate, 5);
-  const cursors = JSON.parse(fs.readFileSync(path.join(fx.repo, ".taskloop", "transcript-cursors.json"), "utf8"));
-  assert.equal(cursors[path.resolve(transcript)].episode_id, loadTask(fx.repo).episodes.at(-1).episode_id);
+  const cursors = Object.values(loadTask(fx.repo).transcript_cursors);
+  assert.equal(cursors.length, 1); assert.equal(cursors[0].episode_id, loadTask(fx.repo).episodes.at(-1).episode_id);
 });
 
-test("episode cursors preserve bidirectional runtime-contract-3 compatibility", (t) => {
+test("legacy transcript cursor sidecars are ignored by runtime contract 4", (t) => {
   const fx = fixture(t); const env = { ...fx.env, TASKLOOP_SESSION_ID: "owner" }; assert.equal(open({ ...fx, env }).status, 0);
+  const sidecar = path.join(fx.repo, ".taskloop", "transcript-cursors.json"); fs.writeFileSync(sidecar, '{"legacy":true}\n');
   const transcript = path.join(fx.root, "legacy.jsonl"); fs.writeFileSync(transcript, JSON.stringify({ output_tokens: 9 }) + "\n");
-  const cursorPath = path.join(fx.repo, ".taskloop", "transcript-cursors.json");
-  fs.writeFileSync(cursorPath, JSON.stringify({ [path.resolve(transcript)]: { task_id: loadTask(fx.repo).task_id, offset: 0 } }) + "\n");
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner", transcript_path: transcript, tool_name: "Read", tool_input: {} });
   assert.equal(run([], { cwd: fx.repo, env: fx.env, input: payload }).stdout, ""); assert.equal(loadTask(fx.repo).spent.output_tokens_estimate, 0);
-  const upgraded = JSON.parse(fs.readFileSync(cursorPath, "utf8"))[path.resolve(transcript)];
-  assert.equal(upgraded.task_id, loadTask(fx.repo).task_id); assert.equal(upgraded.offset, fs.readFileSync(transcript).length); assert.equal(upgraded.episode_id, loadTask(fx.repo).episodes.at(-1).episode_id);
-  // Contract-3 runtimes read task_id/offset and ignore the additive episode_id.
-  assert.deepEqual({ task_id: upgraded.task_id, offset: upgraded.offset }, { task_id: loadTask(fx.repo).task_id, offset: fs.readFileSync(transcript).length });
-  assert.equal(legacyCursorOffset(upgraded, loadTask(fx.repo).task_id, fs.readFileSync(transcript).length), upgraded.offset);
+  assert.equal(fs.readFileSync(sidecar, "utf8"), '{"legacy":true}\n');
 });
 
 test("joined envelope arguments are rejected and zero-match patterns warn", (t) => {
@@ -835,7 +818,7 @@ test("sibling worktree tasks are discovered and overlapping envelopes warn", (t)
   assert.equal(spawnSync("git", ["worktree", "add", "-q", "-b", "sibling-test", sibling], { cwd: fx.repo }).status, 0);
   const siblingOpen = run(["open", "--repo", sibling, "--goal", "sibling", "--criterion-file", "check.mjs", "--criterion-policy", "default", "--alignment-because", "probe", "--files", "work.txt"], { env: fx.env });
   assert.equal(siblingOpen.status, 0, siblingOpen.stderr);
-  const siblings = siblingWorktreeOpenTasks(fx.repo);
+  const siblings = siblingWorktreeOpenTasks(fx.repo, { validateV3Projection: assertV3TaskProjection });
   assert.equal(siblings.length, 1);
   const found = fs.statSync(siblings[0].path, { bigint: true }); const expected = fs.statSync(sibling, { bigint: true });
   assert.deepEqual([found.dev, found.ino], [expected.dev, expected.ino]); assert.deepEqual(siblings[0].files, ["work.txt"]);
@@ -847,13 +830,13 @@ test("sibling worktree tasks are discovered and overlapping envelopes warn", (t)
 test("wall-clock telemetry advances and user suspension and terminal close episodes", () => {
   const episode = { episode_id: "e", host_session_id: "s", started_at: AT, ended_at: null, start_task_revision: 1, end_task_revision: null, output_tokens_estimate: 0 };
   let value = task({ episodes: [episode] });
-  value = transition(value, { type: "record-write", files: ["x"], at: "2026-07-11T00:00:01.000Z" }).task;
+  value = applyDomainCommandForTest(value, { type: "record-write", files: ["x"], at: "2026-07-11T00:00:01.000Z" }).task;
   assert.equal(value.spent.wall_clock_ms, 1000);
-  value = transition(value, { type: "suspend", reason: "needs_input", judgment: { remaining: "r", failure: "f", next_action: "n" }, closeEpisode: true, at: "2026-07-11T00:00:02.000Z" }).task;
+  value = applyDomainCommandForTest(value, { type: "suspend", reason: "needs_input", judgment: { remaining: "r", failure: "f", next_action: "n" }, closeEpisode: true, at: "2026-07-11T00:00:02.000Z" }).task;
   assert.equal(value.episodes[0].ended_at, "2026-07-11T00:00:02.000Z");
   assert.equal(value.episodes[0].end_task_revision, value.task_revision);
-  value = transition(value, { type: "resume", reason: "ready", episode: { ...episode, episode_id: "e2", started_at: "2026-07-11T00:00:03.000Z", start_task_revision: value.task_revision + 1 }, at: "2026-07-11T00:00:03.000Z", atEpochMs: Date.parse("2026-07-11T00:00:03.000Z") }).task;
-  value = transition(value, { type: "abandon", reason: "done", at: "2026-07-11T00:00:04.000Z" }).task;
+  value = applyDomainCommandForTest(value, { type: "resume", reason: "ready", episode: { ...episode, episode_id: "e2", started_at: "2026-07-11T00:00:03.000Z", start_task_revision: value.task_revision + 1 }, at: "2026-07-11T00:00:03.000Z", atEpochMs: Date.parse("2026-07-11T00:00:03.000Z") }).task;
+  value = applyDomainCommandForTest(value, { type: "abandon", reason: "done", at: "2026-07-11T00:00:04.000Z" }).task;
   assert.equal(value.episodes[1].ended_at, "2026-07-11T00:00:04.000Z");
 });
 
@@ -861,14 +844,14 @@ test("join transfers an active episode without changing substantive or ledger re
   const fx = fixture(t); const firstEnv = { ...fx.env, TASKLOOP_SESSION_ID: "session-a" };
   assert.equal(open({ ...fx, env: firstEnv }, "default", ["--review-policy", "required", "--required-review-level", "fresh-context"]).status, 0);
   assert.equal(run(["review", "--repo", fx.repo, "--level", "fresh-context", "--reviewer", "peer", "--blocking-findings", "0", "--advisory-findings", "0"], { env: firstEnv }).status, 0);
-  const before = loadTask(fx.repo); const eventSequence = before.last_issued_event_sequence;
+  const before = loadTask(fx.repo); const eventSequence = before.task_event_sequence;
   const joined = run(["join", "--repo", fx.repo, "--reason", "continue here"], { env: { ...fx.env, TASKLOOP_SESSION_ID: "session-b" } });
   assert.equal(joined.status, 0, joined.stderr);
   const after = loadTask(fx.repo);
   assert.equal(after.task_revision, before.task_revision + 1);
   assert.equal(after.last_substantive_task_revision, before.last_substantive_task_revision);
   assert.equal(after.artifact_revision, before.artifact_revision);
-  assert.equal(after.last_issued_event_sequence, eventSequence);
+  assert.equal(after.task_event_sequence, eventSequence + 1);
   assert.equal(after.episodes.at(-1).host_session_id, "session-b");
   assert.equal(after.episodes.at(-2).end_task_revision, after.task_revision);
   assert.equal(after.episodes.at(-1).start_task_revision, after.task_revision);
@@ -876,10 +859,10 @@ test("join transfers an active episode without changing substantive or ledger re
   const statePath = path.join(fx.repo, ".taskloop", "task.json"); const joinedBytes = fs.readFileSync(statePath, "utf8");
   const oldOwnerStop = run([], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo, session_id: "session-a" }) });
   assert.equal(oldOwnerStop.stdout, ""); assert.equal(fs.readFileSync(statePath, "utf8"), joinedBytes);
-  const audit = run(["audit"], { env: firstEnv }); assert.equal(audit.status, 0, audit.stdout + audit.stderr);
-  const ledgerRows = fs.readFileSync(path.join(fx.home, ".taskloop", "outcomes-v2.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
-  assert.ok(ledgerRows.every((row) => validateEvent(row) === null && legacyValidateEvent(row) === null)); assert.ok(ledgerRows.every((row) => row.kind !== "task_joined"));
-  assert.doesNotThrow(() => assertTaskSchema(after)); assert.doesNotThrow(() => legacyAssertAdditiveTask(after));
+  const audit = run(["audit", "--repo", fx.repo], { env: firstEnv }); assert.equal(audit.status, 0, audit.stdout + audit.stderr);
+  const projectionRows = fs.readFileSync(path.join(fx.home, ".taskloop", "outcomes-v3.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+  assert.ok(projectionRows.some((row) => row.kind === "task_joined"));
+  assert.doesNotThrow(() => assertV3TaskProjection(after));
 });
 
 test("join requires an active task and a real host identity", (t) => {
@@ -900,9 +883,6 @@ test("lifecycle_log retains acting sessions across join, suspend, and resume", (
   assert.equal(run(["resume", "--repo", fx.repo, "--reason", "answered"], { env: envB }).status, 0);
   state = loadTask(fx.repo);
   assert.deepEqual(state.lifecycle_log.map((row) => [row.event, row.acting_session]), [["open", "session-a"], ["join", "session-b"], ["suspend", "session-a"], ["resume", "session-b"]]);
-  const legacy = structuredClone(state); delete legacy.lifecycle_log; saveTask(fx.repo, legacy);
-  assert.equal(run(["suspend", "--repo", fx.repo, "--reason", "needs-input", "--remaining", "x", "--failure", "x", "--next-action", "x"], { env: envA }).status, 0);
-  assert.deepEqual(loadTask(fx.repo).lifecycle_log.map((row) => row.event), ["suspend"]); assert.ok(loadTask(fx.repo).lifecycle_log[0].task_revision > 1);
 });
 
 test("status projects session binding and resets hook contact at episode boundaries", (t) => {
@@ -913,7 +893,7 @@ test("status projects session binding and resets hook contact at episode boundar
   const write = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "session-a", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
   assert.equal(run([], { cwd: fx.repo, env: fx.env, input: write }).stdout, "");
   status = JSON.parse(run(["status", "--repo", fx.repo], { env: envA }).stdout);
-  assert.equal(status.session_binding.last_observed_owner_hook_contact.episode_id, loadTask(fx.repo).episodes.at(-1).episode_id);
+  assert.equal(status.session_binding.last_observed_owner_hook_contact, null);
   assert.equal(run(["join", "--repo", fx.repo, "--reason", "handoff"], { env: envB }).status, 0);
   status = JSON.parse(run(["status", "--repo", fx.repo], { env: envB }).stdout);
   assert.equal(status.session_binding.cli_identity_matches_owner, true); assert.equal(status.session_binding.last_observed_owner_hook_contact, null);
@@ -948,22 +928,6 @@ test("out-of-budget wins when budget and stuck conditions become true together",
   const repeated = fixture(t); assert.equal(open(repeated, "default", ["--rounds", "3"]).status, 0);
   for (let attempt = 0; attempt < 3; attempt += 1) run([], { cwd: repeated.repo, env: repeated.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: repeated.repo }) });
   assert.equal(loadTask(repeated.repo).lifecycle.reason, "out_of_budget");
-
-  const stagnant = fixture(t); assert.equal(open(stagnant, "default", ["--rounds", "7"]).status, 0);
-  const stagnantState = loadTask(stagnant.repo);
-  stagnantState.spent.rounds = 6; stagnantState.unsatisfied_streak = 6;
-  stagnantState.attempts = Array.from({ length: 6 }, (_, index) => ({ attempt_id: `a${index}`, criterion_generation_id: stagnantState.criterion.criterion_generation_id, artifact_revision: stagnantState.artifact_revision, signature: `signature-${index}`, failure_summary: "", observed_at: stagnantState.created_at }));
-  saveTask(stagnant.repo, stagnantState);
-  run([], { cwd: stagnant.repo, env: stagnant.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: stagnant.repo }) });
-  assert.equal(loadTask(stagnant.repo).lifecycle.reason, "out_of_budget");
-
-  const optional = fixture(t); assert.equal(open(optional, "default", ["--writes", "0"]).status, 0);
-  const optionalState = loadTask(optional.repo);
-  optionalState.spent.rounds = 2; optionalState.unsatisfied_streak = 2;
-  optionalState.attempts = Array.from({ length: 2 }, (_, index) => ({ attempt_id: `a${index}`, criterion_generation_id: optionalState.criterion.criterion_generation_id, artifact_revision: optionalState.artifact_revision, signature: "811c9dc5", failure_summary: "", observed_at: optionalState.created_at }));
-  saveTask(optional.repo, optionalState);
-  run([], { cwd: optional.repo, env: optional.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: optional.repo }) });
-  assert.equal(loadTask(optional.repo).lifecycle.reason, "out_of_budget");
 });
 
 test("a write between stops resets the no-progress counter", (t) => {
@@ -1040,7 +1004,7 @@ test("report emits a machine-generated closeout artifact", (t) => {
   assert.notEqual(run(["report", "--repo", fx.repo, "--json", "--markdown"], { env: fx.env }).status, 0);
   for (const heading of ["# taskloop report", "## Outcome", "## Goal", "## Criterion", "## Alignment", "## Reviews", "## Envelope and touched files", "## Assurance", "## Budget"]) assert.match(md.stdout, new RegExp(heading));
   const parsed = JSON.parse(run(["report", "--repo", fx.repo, "--json"], { env: fx.env }).stdout);
-  for (const key of ["task_id", "generated_at", "lifecycle", "closure", "goal", "criterion", "proof_assurance", "alignment", "reviews", "grants", "envelope", "touched_files", "envelope_deviations", "assurance", "machine_risk_floor", "budget", "spent"]) assert.ok(key in parsed, key);
+  for (const key of ["runtime_contract", "task_snapshot_schema_version", "event_record_schema_version", "outcome_projection_schema_version", "task_id", "generated_at", "lifecycle", "closure", "goal", "criterion", "proof_assurance", "alignment", "reviews", "grants", "envelope", "touched_files", "envelope_deviations", "assurance", "machine_risk_floor", "budget", "spent"]) assert.ok(key in parsed, key);
   assert.deepEqual(parsed.envelope_deviations, []);
   assert.equal(loadTask(fx.repo).artifact_revision, 0);
   fs.writeFileSync(path.join(fx.repo, "done"), "yes\n");
@@ -1063,6 +1027,10 @@ test("Markdown report renders every bounded and unbounded budget dimension", (t)
   const json = JSON.parse(run(["report", "--repo", unbounded.repo, "--json"], { env: unbounded.env }).stdout);
   delete json.generated_at;
   assert.deepEqual(json, {
+    runtime_contract: 4,
+    task_snapshot_schema_version: 3,
+    event_record_schema_version: 1,
+    outcome_projection_schema_version: 3,
     generated_by: "taskloop report — machine transcription of task state, not testimony",
     task_id: before.task_id,
     lifecycle: before.lifecycle,
@@ -1084,22 +1052,20 @@ test("Markdown report renders every bounded and unbounded budget dimension", (t)
   });
 });
 
-test("Markdown report projects wall-clock usage through generation time", (t) => {
+test("Markdown report renders the v4 UTC task clock", (t) => {
   const fx = fixture(t); assert.equal(open(fx, "default", ["--wall-clock-minutes", "1"]).status, 0);
-  const state = loadTask(fx.repo);
-  state.created_at = new Date(Date.now() - 120_000).toISOString();
-  state.spent.wall_clock_ms = 0;
-  saveTask(fx.repo, state);
+  assert.match(loadTask(fx.repo).created_at, /^\d{4}-\d{2}-\d{2}T.*Z$/);
   const report = run(["report", "--repo", fx.repo], { env: fx.env });
-  assert.match(report.stdout, /wall clock 12[01]s\/1m/);
+  assert.match(report.stdout, /wall clock \d+s\/1m/);
 });
 
 test("Markdown report exposes a tallied output-token estimate", (t) => {
   const fx = fixture(t); assert.equal(open(fx, "default", ["--token-budget", "10"]).status, 0);
   const transcript = path.join(fx.root, "report-transcript.jsonl");
-  const timestamp = new Date(Date.parse(loadTask(fx.repo).created_at) + 1000).toISOString();
-  fs.writeFileSync(transcript, JSON.stringify({ timestamp, message: { usage: { output_tokens: 3 } } }) + "\n");
+  fs.writeFileSync(transcript, JSON.stringify({ message: { usage: { output_tokens: 99 } } }) + "\n");
   const readPayload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, transcript_path: transcript, tool_name: "Read", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
+  assert.equal(run([], { cwd: fx.repo, env: fx.env, input: readPayload }).stdout, "");
+  fs.appendFileSync(transcript, JSON.stringify({ message: { usage: { output_tokens: 3 } } }) + "\n");
   assert.equal(run([], { cwd: fx.repo, env: fx.env, input: readPayload }).stdout, "");
   assert.match(run(["report", "--repo", fx.repo], { env: fx.env }).stdout, /output tokens estimate 3\/10 \(best effort\)/);
 });
@@ -1186,6 +1152,7 @@ test("no-task multi-file writes retain the untracked task-opening nudge", (t) =>
 test("verify never persists ordinary observations or burns rounds", (t) => {
   const fx = fixture(t); assert.equal(open(fx).status, 0); const before = fs.readFileSync(path.join(fx.repo, ".taskloop", "task.json"), "utf8");
   const verified = run(["verify", "--repo", fx.repo], { env: fx.env }); assert.equal(verified.status, 1); assert.equal(fs.readFileSync(path.join(fx.repo, ".taskloop", "task.json"), "utf8"), before);
+  const payload = JSON.parse(verified.stdout); assert.equal(payload.persisted, false); assert.equal(payload.artifact_revision_after, payload.artifact_revision_before);
 });
 
 test("CLI side-effect criteria are indeterminate at open, verify, Stop, and achieve", (t) => {
@@ -1195,8 +1162,9 @@ test("CLI side-effect criteria are indeterminate at open, verify, Stop, and achi
   assert.equal(rejected.status, 2); assert.match(rejected.stderr, /side effects/);
   fs.rmSync(path.join(fx.repo, "mutation"));
   assert.equal(open(fx, "default", ["--writes", "0"]).status, 0);
-  const active = loadTask(fx.repo); active.criterion.source = { kind: "file", value: "side.mjs" }; active.criterion.declared_inputs = [{ path: "side.mjs", hash: active.criterion.declared_inputs[0].hash }]; saveTask(fx.repo, active);
+  assert.equal(run(["amend", "--repo", fx.repo, "--criterion-file", "side.mjs", "--reason", "exercise side effect"], { env: fx.env }).status, 0);
   const verified = run(["verify", "--repo", fx.repo], { env: fx.env }); assert.equal(verified.status, 2); assert.equal(loadTask(fx.repo).artifact_revision, 1);
+  const verifiedPayload = JSON.parse(verified.stdout); assert.equal(verifiedPayload.persisted, true); assert.equal(verifiedPayload.artifact_revision_before, 0); assert.equal(verifiedPayload.artifact_revision_after, 1);
   fs.rmSync(path.join(fx.repo, "mutation"));
   const achieved = run(["achieve", "--repo", fx.repo], { env: fx.env }); assert.equal(achieved.status, 2); assert.equal(loadTask(fx.repo).artifact_revision, 2); assert.equal(loadTask(fx.repo).lifecycle.state, "active");
   fs.rmSync(path.join(fx.repo, "mutation"));
@@ -1215,10 +1183,4 @@ test("CLI suspend uses kebab enums while storage uses snake case and Stop releas
 test("criterion definition hash is stable while generation ids are not", () => {
   const value = task().criterion; assert.equal(criterionDefinitionHash(value), criterionDefinitionHash({ ...value }));
   assert.notEqual(constructPolicy("default"), POLICY_PRESETS.default);
-});
-
-test("normal task history archives use task_id rather than legacy and never overwrite", (t) => {
-  const fx = fixture(t); const value = task(); archiveTask(fx.repo, value, "2026-07-12 11:13:32"); archiveTask(fx.repo, value, "2026-07-12 11:13:32");
-  const names = fs.readdirSync(path.join(fx.repo, ".taskloop", "history"));
-  assert.equal(names.length, 2); assert.ok(names.every((name) => name.includes(value.task_id))); assert.ok(names.every((name) => /^task-20260712-111332-/.test(name))); assert.ok(names.every((name) => !name.includes("legacy")));
 });

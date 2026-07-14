@@ -1,0 +1,58 @@
+[
+  {
+    "id": "recovery",
+    "status": 0,
+    "signal": null,
+    "duration_ms": 1127,
+    "attachment": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/recovery.json"
+  },
+  {
+    "id": "runtime",
+    "status": 0,
+    "signal": null,
+    "duration_ms": 3996,
+    "attachment": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/runtime.json"
+  },
+  {
+    "id": "installer",
+    "status": 0,
+    "signal": null,
+    "duration_ms": 4429,
+    "attachment": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/installer.json"
+  },
+  {
+    "id": "stale-lock",
+    "status": 0,
+    "signal": null,
+    "duration_ms": 198,
+    "attachment": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/stale-lock.json"
+  },
+  {
+    "id": "windows-cases-local",
+    "status": 0,
+    "signal": null,
+    "duration_ms": 1966,
+    "attachment": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/windows-cases-local.json"
+  },
+  {
+    "id": "benchmark",
+    "status": 0,
+    "signal": null,
+    "duration_ms": 1613,
+    "attachment": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/benchmark.json"
+  },
+  {
+    "id": "npm-test",
+    "status": 0,
+    "signal": null,
+    "duration_ms": 47407,
+    "attachment": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/npm-test.json"
+  },
+  {
+    "id": "verify-full",
+    "status": 0,
+    "signal": null,
+    "duration_ms": 44957,
+    "attachment": "/Users/hex1n/Workspace/taskloop/docs/e2e-test/schema-v3-event-sourcing/e2e-run-schema-v3-event-sourcing-20260714/attachments/verify-full.json"
+  }
+]

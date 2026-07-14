@@ -1,0 +1,11 @@
+{
+  "id": "stale-lock",
+  "command": "/opt/homebrew/Cellar/node/26.0.0/bin/node --test --test-name-pattern=aged lock tests/taskloop-architecture.test.mjs",
+  "started_at": "2026-07-14T12:16:54.932Z",
+  "duration_ms": 198,
+  "status": 0,
+  "signal": null,
+  "stdout": "✔ [W06] task lock recovers an aged lock and reaper left by crashed processes without double ownership (63.493166ms)\nℹ tests 1\nℹ suites 0\nℹ pass 1\nℹ fail 0\nℹ cancelled 0\nℹ skipped 0\nℹ todo 0\nℹ duration_ms 141.299875\n",
+  "stderr": "",
+  "error": null
+}

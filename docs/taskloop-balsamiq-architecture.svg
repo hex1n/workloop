@@ -99,23 +99,28 @@
 
   <rect x="1210" y="450" width="280" height="125" class="box green"/>
   <text x="1232" y="485" class="ink h2">task-store.mjs</text>
-  <text x="1232" y="514" class="ink body">task.json + lock</text>
-  <text x="1232" y="540" class="ink body">关键状态写入：失败即报错</text>
+  <text x="1232" y="514" class="ink body">schema-v3 snapshot + lock</text>
+  <text x="1232" y="540" class="ink body">快照可删除并重建</text>
 
-  <rect x="435" y="610" width="315" height="105" class="box gray"/>
-  <text x="457" y="645" class="ink h2">outcome-ledger.mjs</text>
-  <text x="457" y="675" class="ink body">追加 outcomes-v2.jsonl</text>
-  <text x="457" y="698" class="ink small">遥测：degrade open</text>
+  <rect x="280" y="610" width="280" height="105" class="box gray"/>
+  <text x="302" y="645" class="ink h2">event-store.mjs</text>
+  <text x="302" y="675" class="ink body">events-v3.jsonl 唯一权威</text>
+  <text x="302" y="698" class="ink small">append + fsync；失败即报错</text>
 
-  <rect x="785" y="610" width="315" height="105" class="box gray"/>
-  <text x="807" y="645" class="ink h2">untracked.mjs</text>
-  <text x="807" y="675" class="ink body">未跟踪工作提示</text>
-  <text x="807" y="698" class="ink small">遥测：degrade open</text>
+  <rect x="590" y="610" width="280" height="105" class="box gray"/>
+  <text x="612" y="645" class="ink h2">outcome-projector.mjs</text>
+  <text x="612" y="675" class="ink body">投影 outcomes-v3.jsonl</text>
+  <text x="612" y="698" class="ink small">HOME：degrade open</text>
 
-  <rect x="1135" y="610" width="315" height="105" class="box gray"/>
-  <text x="1157" y="645" class="ink h2">prims.mjs</text>
-  <text x="1157" y="675" class="ink body">常量与纯工具函数</text>
-  <text x="1157" y="698" class="ink small">所有叶子模块的唯一内部依赖</text>
+  <rect x="900" y="610" width="280" height="105" class="box gray"/>
+  <text x="922" y="645" class="ink h2">untracked.mjs</text>
+  <text x="922" y="675" class="ink body">未跟踪工作提示</text>
+  <text x="922" y="698" class="ink small">遥测：degrade open</text>
+
+  <rect x="1210" y="610" width="280" height="105" class="box gray"/>
+  <text x="1232" y="645" class="ink h2">prims.mjs</text>
+  <text x="1232" y="675" class="ink body">常量与纯工具函数</text>
+  <text x="1232" y="698" class="ink small">所有叶子模块的唯一内部依赖</text>
 
   <path d="M420 575 L420 594 L1265 594 L1265 610" class="dash"/>
   <path d="M730 575 L730 594 L1265 594 L1265 610" class="dash"/>
