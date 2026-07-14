@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { readEventStore } from "../lib/event-store.mjs";
+import { buildRecord, readEventStore } from "../lib/event-store.mjs";
+import { syncOutcomeRecords } from "../lib/outcome-projector.mjs";
 import { sha256Hex } from "../lib/prims.mjs";
 
 const ROOT = path.resolve(".");
@@ -207,6 +208,66 @@ test("outcomes-v3 is best-effort, idempotent, and rebuildable from repository au
   assert.equal(rescanned.status, 0, rescanned.stderr);
   assert.equal(JSON.parse(rescanned.stdout).added, 0);
   assert.equal(JSON.parse(fs.readFileSync(cursorFile, "utf8")).last_repo_sequence, 1);
+
+  const completeWithoutNewline = fs.readFileSync(projectionFile).subarray(0, fs.statSync(projectionFile).size - 1);
+  fs.writeFileSync(projectionFile, completeWithoutNewline);
+  const completed = run(["sync-outcomes", "--repo", fx.repo], { env: fx.env });
+  assert.equal(completed.status, 0, completed.stderr);
+  assert.equal(fs.readFileSync(projectionFile).at(-1), 0x0a);
+
+  fs.appendFileSync(projectionFile, '{"projection_schema_version":3');
+  assert.equal(run(["audit-outcomes"], { env: fx.env }).status, 2);
+  const recovered = run(["sync-outcomes", "--repo", fx.repo], { env: fx.env });
+  assert.equal(recovered.status, 0, recovered.stderr);
+  assert.equal(JSON.parse(recovered.stdout).added, 0);
+  assert.equal(run(["audit-outcomes"], { env: fx.env }).status, 0);
+  assert.equal(fs.readFileSync(projectionFile, "utf8").trim().split("\n").length, 1);
+});
+
+test("outcome cursor makes the normal commit path incremental", (t) => {
+  const fx = fixture(t); assert.equal(open(fx).status, 0);
+  const replay = readEventStore(fx.repo);
+  const first = replay.records[0];
+  const projectionFile = path.join(fx.home, ".taskloop", "outcomes-v3.jsonl");
+  const repoIdentity = JSON.parse(fs.readFileSync(projectionFile, "utf8")).repo_identity;
+  const second = buildRecord({
+    transactionId: "818af0be-e1c7-4cf2-8177-d605e10175f4",
+    commandId: null,
+    repoSequence: 2,
+    occurredAtEpochMs: first.occurred_at_epoch_ms + 1,
+    actor: first.actor,
+    previousRecordDigest: first.record_digest,
+    events: [{
+      task_id: first.events[0].task_id,
+      task_event_sequence: 2,
+      kind: "write_authorized",
+      payload_version: 1,
+      payload: { files: ["work.txt"] },
+    }],
+  });
+  let projectionReads = 0;
+  const fsOps = new Proxy(fs, { get(target, property) {
+    if (property !== "readFileSync") return target[property];
+    return (file, ...args) => {
+      if (path.resolve(file) === projectionFile) projectionReads += 1;
+      return target.readFileSync(file, ...args);
+    };
+  } });
+  const report = syncOutcomeRecords({ repoIdentity, records: [second], home: fx.home, fsOps, incremental: true });
+  assert.deepEqual({ valid: report.valid, added: report.added, total: report.total }, { valid: true, added: 1, total: null });
+  assert.equal(projectionReads, 0);
+  assert.equal(fs.readFileSync(projectionFile, "utf8").trim().split("\n").length, 2);
+});
+
+test("a normal commit repairs a prior torn outcome tail from repository authority", (t) => {
+  const fx = fixture(t); assert.equal(open(fx).status, 0);
+  const projectionFile = path.join(fx.home, ".taskloop", "outcomes-v3.jsonl");
+  fs.appendFileSync(projectionFile, '{"projection_schema_version":3');
+  const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v4", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
+  const committed = run([], { cwd: fx.repo, env: fx.env, input: payload });
+  assert.equal(committed.status, 0, committed.stderr);
+  assert.equal(run(["audit-outcomes"], { env: fx.env }).status, 0);
+  assert.equal(fs.readFileSync(projectionFile, "utf8").trim().split("\n").length, 2);
 });
 
 test("HOME projection and cursor failures never roll back repository authority", (t) => {

@@ -65,6 +65,29 @@ test("production assembly has no direct authoritative task writer", () => {
   assert.match(source, /saveTaskSnapshot\s*\(/);
 });
 
+test("PreToolUse reuses one validated authority through its single commit", () => {
+  const source = fs.readFileSync(path.join(ROOT, "lib", "application.mjs"), "utf8");
+  const hookBody = source.slice(source.indexOf("function hookPretool"), source.indexOf("function hookStop"));
+  assert.equal(hookBody.match(/loadV3Authority\s*\(/g)?.length, 1);
+  assert.doesNotMatch(hookBody, /readTask\s*\(/);
+  assert.match(hookBody, /commitTaskCommand[\s\S]*?\{ actorKind: "hook", authority \}/);
+  const loaderBody = source.slice(source.indexOf("function loadV3Authority"), source.indexOf("function sourceCursorFromCommit"));
+  assert.match(loaderBody, /recoverV3TaskSnapshotFromReplay\(repo, replay/);
+  assert.doesNotMatch(loaderBody, /recoverV3TaskSnapshot\(repo/);
+});
+
+test("Windows W01-W08 selection is non-vacuous in every listed source", () => {
+  for (const file of [
+    "windows.test.mjs",
+    "event-store.test.mjs",
+    "task-snapshot-v3.test.mjs",
+    "runtime-v4.test.mjs",
+    "taskloop-architecture.test.mjs",
+  ]) {
+    assert.match(fs.readFileSync(path.join(ROOT, "tests", file), "utf8"), /\[W0[1-8]\]/, file);
+  }
+});
+
 test("task lock serializes concurrent updates and fails closed on timeout", async (t) => {
   const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-lock-v1-")); t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const helper = path.join(repo, "holder.mjs");
