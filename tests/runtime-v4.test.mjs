@@ -118,6 +118,21 @@ test("PreToolUse validates repository authority once before its commit", (t) => 
   assert.equal(Number.parseInt(fs.readFileSync(countFile, "utf8"), 10), 1);
 });
 
+test("Stop preserves the task-state failure protocol for unclassified lock errors", (t) => {
+  const fx = fixture(t); assert.equal(open(fx).status, 0);
+  const preload = path.join(ROOT, "tests", "helpers", "fs-lock-failure.cjs");
+  const env = {
+    ...fx.env,
+    NODE_OPTIONS: [fx.env.NODE_OPTIONS, `--require=${preload}`].filter(Boolean).join(" "),
+    TASKLOOP_FAIL_TASK_LOCK: "1",
+  };
+  const payload = JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo, session_id: "owner-v4" });
+  const result = run([], { cwd: fx.repo, env, input: payload });
+  assert.equal(result.status, 0);
+  assert.equal(result.stderr, "synthetic task lock failure\n");
+  assert.equal(result.stdout, '{"decision":"block","reason":"taskloop: task state unavailable; refusing to adjudicate Stop"}\n');
+});
+
 test("authority guard rejects legacy, orphan, mixed, and corrupt state without overwriting events", (t) => {
   const fx = fixture(t);
   const stateDir = path.join(fx.repo, ".taskloop"); fs.mkdirSync(stateDir, { recursive: true });
