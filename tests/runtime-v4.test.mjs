@@ -25,7 +25,7 @@ function fixture(t) {
   fs.writeFileSync(path.join(repo, "work.txt"), "start\n");
   spawnSync("git", ["add", "."], { cwd: repo });
   spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "fixture"], { cwd: repo });
-  const env = { ...process.env, HOME: home, USERPROFILE: home, TASKLOOP_SESSION_ID: "owner-v4" };
+  const env = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home, TASKLOOP_SESSION_ID: "owner-v4" };
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return { root, repo, home, env };
 }
@@ -41,8 +41,8 @@ function projection(repo) {
 test("runtime contract 4 describes independent repository and HOME schemas", () => {
   const info = JSON.parse(run(["info"]).stdout);
   assert.deepEqual(info, {
-    name: "taskloop", runtime_contract: 4, task_snapshot_schema_version: 3,
-    event_record_schema_version: 1, outcome_projection_schema_version: 3,
+    name: "taskloop", runtime_contract: 4, criterion_adapter_protocol_version: 2, task_snapshot_schema_version: 3,
+    event_record_schema_version: 2, outcome_projection_schema_version: 3,
     event_store: ".taskloop/events-v3.jsonl", outcome_projection: "~/.taskloop/outcomes-v3.jsonl",
     distribution_owner: "taskloop",
   });
@@ -65,7 +65,7 @@ test("status, verify, report, and audit self-describe the active storage contrac
       snapshot: payload.task_snapshot_schema_version,
       record: payload.event_record_schema_version,
       outcome: payload.outcome_projection_schema_version,
-    }, { runtime: 4, snapshot: 3, record: 1, outcome: 3 }, args[0]);
+    }, { runtime: 4, snapshot: 3, record: 2, outcome: 3 }, args[0]);
   }
 
   fs.appendFileSync(path.join(fx.repo, ".taskloop", "events-v3.jsonl"), "{broken}\n");
@@ -425,4 +425,42 @@ test("[W05] hook payload reading waits through a temporarily empty nonblocking s
   assert.equal(result.stdout, "");
   assert.equal(result.stderr, "");
   assert.equal(readEventStore(fx.repo).records.length, 2, JSON.stringify(result));
+});
+
+test("[W05] hook payload reading accepts one complete JSON object without waiting for EOF", async (t) => {
+  const fx = fixture(t); assert.equal(open(fx, ["--writes", "1"]).status, 0);
+  const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v4", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI], { cwd: fx.repo, env: fx.env, stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "", stderr = "";
+    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; }); child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.stdin.on("error", () => {}); child.stdin.write(payload);
+    const timer = setTimeout(() => { child.kill("SIGKILL"); resolve({ status: "timeout", stdout, stderr }); }, 2000);
+    child.on("error", reject);
+    child.on("close", (status) => { clearTimeout(timer); resolve({ status, stdout, stderr }); });
+  });
+  assert.equal(result.status, 0, JSON.stringify(result));
+  assert.equal(result.stdout, ""); assert.equal(result.stderr, "");
+});
+
+test("[W05] hook payload reading waits when an intermediate chunk ends with a closing brace", async (t) => {
+  const fx = fixture(t); assert.equal(open(fx, ["--writes", "1"]).status, 0);
+  const prefix = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v4", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } }).slice(0, -1);
+  const payload = `${prefix},"ignored_tail":true}`;
+  const splitAt = prefix.length;
+  const result = await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CLI], { cwd: fx.repo, env: fx.env, stdio: ["pipe", "pipe", "pipe"] });
+    let stdout = "", stderr = "";
+    child.stdout.setEncoding("utf8"); child.stderr.setEncoding("utf8");
+    child.stdout.on("data", (chunk) => { stdout += chunk; }); child.stderr.on("data", (chunk) => { stderr += chunk; });
+    child.stdin.on("error", () => {}); child.stdin.write(payload.slice(0, splitAt));
+    const secondChunk = setTimeout(() => child.stdin.write(payload.slice(splitAt)), 50);
+    const deadline = setTimeout(() => { child.kill("SIGKILL"); resolve({ status: "timeout", stdout, stderr }); }, 2000);
+    child.on("error", reject);
+    child.on("close", (status) => { clearTimeout(secondChunk); clearTimeout(deadline); resolve({ status, stdout, stderr }); });
+  });
+  assert.equal(result.status, 0, JSON.stringify(result));
+  assert.equal(result.stdout, ""); assert.equal(result.stderr, "");
+  assert.equal(readEventStore(fx.repo).events.filter((event) => event.kind === "write_authorized").length, 1);
 });

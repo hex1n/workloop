@@ -13,6 +13,12 @@ vocabulary. Read
 
 ## 1. Source the criterion
 
+Open the task before the first product write. Investigation and diagnosis work
+defaults to `deferred_witness`: write the read-only failing check first, observe
+the expected failure, then fix. Escape hatch: when no honest executable check
+exists, do not manufacture one—stay outside the loop and ask for the missing
+done-when or choose a judgment workflow.
+
 Make the goal, executable criterion, structured alignment and envelope
 explicit. Use `default` when the criterion is currently unsatisfied,
 `deferred_witness` when the failing check must be written first, and
@@ -28,16 +34,30 @@ recovering the failure first — writing the failing check before the fix —
 opens `deferred-witness`; an absent criterion guarding a steady state opens
 `steady-satisfied`.
 
+At admission ask whether the criterion can run unattended tonight and whether
+the machine can reach the business truth. If either answer is no, do not treat
+an unattended run as eligible. When truth exists but only an artifact shadow is
+machine-reachable, declare a seal task up front: machine-side criterion,
+fingerprint binding, receipt plan, and the later acceptance path. Seal and
+review receipts belong in version control with the artifact history.
+
 ## 2. Open
 
-Open exactly one command or criterion file:
+Prefer a dedicated repository-relative `.mjs` criterion that emits one bounded
+`TASKLOOP_CRITERION: ...` summary on stdout and exits with the tri-state
+protocol (4 satisfied, 3 unsatisfied, 2 indeterminate). This avoids shell-text
+transport and keeps the failure identity portable. Open it with:
 
 ```text
-taskloop open --goal "<goal>" --criterion "<check>" \
-  --criterion-policy default \
+taskloop open --goal "<goal>" --criterion-file "acceptance.mjs" \
+  --criterion-protocol tri-state --criterion-policy default \
+  --criterion-authored-by self \
   --alignment-because "<coverage>" --not-covered "<gap>" \
   --files "<glob>"
 ```
+
+Inline binary criteria remain available for simple local checks, but they are
+not the canonical portable recipe.
 
 The task must open with a determinate observation allowed by the policy.
 Indeterminate refuses creation. Do not hand-write task state. When the

@@ -20,6 +20,7 @@ function makeTaskOpenedCommand({ seed = "taskloop-v3", index = 0, atEpochMs }) {
     goal: `fixture task ${index}`,
     criterion: {
       source: { kind: "command", value: "node check.mjs" },
+      authored_by: "self",
       protocol: "binary",
       timeout_seconds: 120,
       declared_inputs: [],

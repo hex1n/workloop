@@ -73,6 +73,8 @@ test("explicit profiles decode payloads and generate self-identifying recipes", 
       hook_event_name: "PreToolUse",
       cwd: "/repo",
       session_id: "owner",
+      agent_id: "child-agent",
+      permission_mode: "bypassPermissions",
       transcript_path: null,
       tool_name: "Bash",
       tool_input: { command: "taskloop status" },
@@ -82,6 +84,8 @@ test("explicit profiles decode payloads and generate self-identifying recipes", 
     event: "pre_tool_use",
     repo: "/repo",
     sessionId: "owner",
+    agentId: "child-agent",
+    permissionModeRaw: "bypassPermissions",
     transcriptPath: null,
     toolName: "Bash",
     toolInput: { command: "taskloop status" },
@@ -89,8 +93,8 @@ test("explicit profiles decode payloads and generate self-identifying recipes", 
 
   assert.deepEqual(buildHookRecipe({ profile: "codex-safe", command: 'node "/path/taskloop.mjs"' }), {
     hooks: {
-      PreToolUse: [{ matcher: "Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*", hooks: [{ type: "command", command: 'node "/path/taskloop.mjs" hook --profile codex-safe', timeout: 20 }] }],
-      Stop: [{ matcher: "*", hooks: [{ type: "command", command: 'node "/path/taskloop.mjs" hook --profile codex-safe', timeout: 300 }] }],
+        PreToolUse: [{ matcher: "Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*", hooks: [{ type: "command", command: 'node "/path/taskloop.mjs" hook --profile codex-safe --mode nudge', timeout: 20 }] }],
+        Stop: [{ matcher: "*", hooks: [{ type: "command", command: 'node "/path/taskloop.mjs" hook --profile codex-safe --mode nudge', timeout: 300 }] }],
     },
   });
 

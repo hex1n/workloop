@@ -75,7 +75,7 @@ test("schema-v3 task snapshots are disposable digest-checked projection wrappers
   assert.deepEqual(snapshot.source_cursor, replay.source_cursor);
   assert.deepEqual(snapshot.projection, projection);
   assert.match(snapshot.snapshot_digest, /^sha256:[0-9a-f]{64}$/);
-  assert.equal(snapshot.snapshot_digest, "sha256:3a0f0c9dcbe2443c1253a01d8b7e979e675cf03cfacdeab3144c13153ffeb947");
+  assert.equal(snapshot.snapshot_digest, "sha256:7b11875e800051cf3fdbbfde823af4e63370eede6c579af22d88bbfb90d042e5");
 
   saveSnapshot(repo, snapshot);
   assert.deepEqual(inspectSnapshot(repo), { status: "valid", snapshot });
@@ -122,6 +122,65 @@ test("missing or damaged schema-v3 snapshots rebuild from authoritative events",
   assert.deepEqual(badDigest.projection, projection);
   assert.equal(badDigest.diagnostic.reason, "snapshot_digest_mismatch");
   assert.equal(fs.existsSync(badDigest.diagnostic.quarantine_path), true);
+});
+
+test("legacy criterion amendments rebuild with authored_by backfilled", (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-legacy-amend-"));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const seed = "legacy-criterion-amend";
+  const opened = makeTaskOpenedCommand({ seed, index: 1, atEpochMs: 1_784_000_000_000 });
+  const openEvent = { ...decide(null, opened).events[0], task_event_sequence: 1 };
+  const makeLegacy = (record, mutateEvent) => {
+    const legacy = structuredClone(record);
+    legacy.record_schema_version = 1;
+    mutateEvent(legacy.events[0]);
+    const eventPreimage = Object.fromEntries(Object.entries(legacy.events[0]).filter(([key]) => key !== "event_id"));
+    legacy.events[0].event_id = sha256Hex(canonicalJson(eventPreimage));
+    const recordPreimage = Object.fromEntries(Object.entries(legacy).filter(([key]) => key !== "record_digest"));
+    legacy.record_digest = sha256Hex(canonicalJson(recordPreimage));
+    return legacy;
+  };
+  const first = makeLegacy(buildRecord({
+    transactionId: deterministicId(seed, "transaction", 1), commandId: null, repoSequence: 1,
+    occurredAtEpochMs: opened.atEpochMs, actor: { kind: "cli", session_id: opened.actingSession }, previousRecordDigest: null, events: [openEvent],
+  }), (event) => { delete event.payload.criterion.authored_by; });
+  commitRecord(repo, first);
+  const openedReplay = readEventStore(repo);
+  const initial = evolveAll(null, openedReplay.events);
+  assert.equal(initial.criterion.authored_by, "self");
+
+  const criterion = structuredClone(opened.criterion);
+  criterion.source.value = "node revised-check.mjs";
+  criterion.criterion_generation_id = deterministicId(seed, "criterion-generation", 2);
+  criterion.criterion_definition_hash = sha256Hex("legacy revised criterion");
+  const legacyAssurance = structuredClone(initial.assurance);
+  legacyAssurance.risk_floor_events = ["criterion_amend", "policy_amend"];
+  const amendedAt = 1_784_000_001_000;
+  const amendEvent = {
+    ...decide(initial, { type: "amend", taskId: opened.taskId, at: new Date(amendedAt).toISOString(), reason: "legacy criterion revision", criterion, assurance: legacyAssurance }).events[0],
+    task_event_sequence: 2,
+  };
+  const second = makeLegacy(buildRecord({
+    transactionId: deterministicId(seed, "transaction", 2), commandId: null, repoSequence: 2,
+    occurredAtEpochMs: amendedAt, actor: { kind: "cli", session_id: opened.actingSession }, previousRecordDigest: first.record_digest, events: [amendEvent],
+  }), (event) => { delete event.payload.criterion.authored_by; delete event.payload.artifact_revision; });
+  commitRecord(repo, second, { cursor: openedReplay.cursor });
+
+  const replay = readEventStore(repo);
+  const legacyProjection = evolveAll(null, replay.events);
+  delete legacyProjection.criterion.authored_by;
+  const snapshotPreimage = { schema_version: 3, runtime_contract: 4, source_cursor: replay.source_cursor, projection: legacyProjection };
+  fs.writeFileSync(taskPath(repo), `${canonicalJson({ ...snapshotPreimage, snapshot_digest: sha256Hex(canonicalJson(snapshotPreimage)) })}\n`);
+  assert.deepEqual(inspectSnapshot(repo), { status: "damaged", reason: "legacy_v3_criterion_authorship" });
+
+  const recovered = recoverV3TaskSnapshot(repo);
+  assert.equal(recovered.status, "rebuilt");
+  assert.equal(recovered.reason, "legacy_v3_criterion_authorship");
+  assert.equal(recovered.projection.criterion.authored_by, "self");
+  assert.equal(recovered.projection.criterion.criterion_generation_id, criterion.criterion_generation_id);
+  assert.equal(recovered.projection.criterion.criterion_definition_hash, criterion.criterion_definition_hash);
+  assert.deepEqual(recovered.projection.assurance.risk_floor_events, ["criterion_amend", "policy_amend"]);
+  assert.equal(inspectSnapshot(repo).status, "valid");
 });
 
 test("[W04] a terminal task A snapshot replays through a committed task B open", (t) => {

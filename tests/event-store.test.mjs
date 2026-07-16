@@ -177,7 +177,7 @@ test("runtime contract 4 keeps snapshot, record, and outcome versions independen
       activeRuntime: 4,
       task: 3,
       runtime: 4,
-      record: 1,
+      record: 2,
       outcome: 3,
       eventStore: "events-v3.jsonl",
       outcomeProjection: "outcomes-v3.jsonl",
@@ -262,7 +262,7 @@ test("runtime-contract-4 fixture freezes the external handshake and authority ho
   assert.deepEqual(RUNTIME4_INFO, {
     runtime_contract: 4,
     task_snapshot_schema_version: 3,
-    event_record_schema_version: 1,
+    event_record_schema_version: 2,
     outcome_projection_schema_version: 3,
     event_store: ".taskloop/events-v3.jsonl",
     outcome_projection: "~/.taskloop/outcomes-v3.jsonl",
@@ -341,7 +341,7 @@ test("runtime-contract-4 fixture freezes a closed persisted type graph and diges
   assert.deepEqual(Object.keys(PERSISTED_FIELD_CONTRACTS.task_projection), TASK_PROJECTION_FIELDS);
   assert.deepEqual(Object.keys(PERSISTED_FIELD_CONTRACTS.outcome_projection), OUTCOME_PROJECTION_FIELDS);
   assert.deepEqual(PERSISTED_FIELD_CONTRACTS.record, {
-    record_schema_version: "literal:1",
+    record_schema_version: "literal:2",
     transaction_id: "uuid",
     command_id: "null|non-empty-string",
     repo_sequence: "positive-safe-integer",
@@ -413,7 +413,7 @@ test("runtime-contract-4 fixture freezes a closed persisted type graph and diges
   }
   assert.equal(
     createHash("sha256").update(JSON.stringify({ fields: PERSISTED_FIELD_CONTRACTS, nested: PERSISTED_NESTED_OBJECTS })).digest("hex"),
-    "7e52ad6a1653e5138f1b45d43a719f950e62c57ce2a8605602b96c968e5eb493",
+    "2152756b56001cb64dacabb7ef50deb48e9d6f96b52cb0331831c6ed3ac9ce6e",
   );
 
   assert.deepEqual(PERSISTED_CANONICAL_PREIMAGES, {
@@ -499,7 +499,7 @@ test("record and transcript generators produce deterministic bounded inputs lazi
   assert.equal(last.repo_sequence, 10001);
   assert.equal(last.events[0].kind, "write_authorized");
   assert.equal(last.events[0].task_event_sequence, 10001);
-  assert.equal(datasetDigest.digest("hex"), "d53ddce2e582c39a56f982d0d9d8a23bc9739f00f8380a367b6ab058bf9968c0");
+  assert.equal(datasetDigest.digest("hex"), "76977fee184dab1d8c539862c77b24dde71a81999549c54c2b541a9e2cc05923");
 
   const transcript = makeTranscriptBytes({ seed: "transcript-v1", rows: 3, lineEnding: "\r\n", finalPartial: true });
   assert.ok(Buffer.isBuffer(transcript));
@@ -847,6 +847,7 @@ test("schema-v3 governance and criterion-side-effect events preserve revision se
   opened.criterion.provenance = "unresolved";
   opened.criterion.input_coverage = "unknown";
   let state = evolve(null, decide(null, opened).events[0]);
+  state.assurance.risk_floor_events.push("criterion_amended_after_write");
   const nonDefaultPolicy = { open_requirement: "determinate", witness_requirement: "required", close_policy: "automatic" };
   assert.throws(() => decide(state, {
     type: "amend", taskId: state.task_id, at: "2026-07-14T03:33:30.000Z", reason: "change policy", policy: nonDefaultPolicy,
@@ -882,6 +883,7 @@ test("schema-v3 governance and criterion-side-effect events preserve revision se
     goal: "fixture task with tighter scope", alignment: { because: "new evidence", not_covered: ["deployment"] }, rounds: 12,
   });
   assert.deepEqual(amended.events.map((event) => event.kind), ["task_amended"]);
+  assert.equal(amended.events[0].payload.artifact_revision, state.artifact_revision);
   state = evolveAll(state, amended.events);
   assert.equal(state.goal, "fixture task with tighter scope");
   assert.equal(state.budget.rounds, 12);
@@ -1004,8 +1006,8 @@ test("[W08] production event store probes directory fsync while committing a can
     previousRecordDigest: null,
     events: [{ ...domainEvent, task_event_sequence: 1 }],
   });
-  assert.equal(record.events[0].event_id, "sha256:2f7b06660652d74cb998ac45cee56c5f75e960f6c429941d220822310101617c");
-  assert.equal(record.record_digest, "sha256:2b0dfab23b4c7588792728273ffdd1a80cd81eaafc019e3288ca602306f9ce43");
+  assert.equal(record.events[0].event_id, "sha256:dab33a3f1b7e2ec0eddd17c0e6a730fa5b9f96a2f8268a03d1f0e34d7bae3c0b");
+  assert.equal(record.record_digest, "sha256:ab9436ad6e73a9a64f8b6e58abc4d90926259dc6d3d7970433f13bb8cb590923");
   assert.throws(() => buildRecord({
     transactionId: record.transaction_id, commandId: 42, repoSequence: 1,
     occurredAtEpochMs: command.atEpochMs, actor: record.actor, previousRecordDigest: null,
@@ -1089,6 +1091,36 @@ test("[W08] directory fsync degrades only for the frozen Windows capability allo
       : { openSync() { return 9; }, fsyncSync() { throw error; }, closeSync() {} };
     assert.throws(() => syncDirectory("C:\\repo\\.taskloop", operations, "win32"), (seen) => seen === error);
   }
+});
+
+test("record schema 2 appends to and replays a legacy schema-1 authority", (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-record-upgrade-"));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const opened = makeTaskOpenedCommand({ seed: "record-upgrade", index: 1, atEpochMs: 1_784_000_000_000 });
+  const openEvent = { ...decide(null, opened).events[0], task_event_sequence: 1 };
+  const modernGenesis = buildRecord({
+    transactionId: deterministicId("record-upgrade", "transaction", 1), commandId: null, repoSequence: 1,
+    occurredAtEpochMs: opened.atEpochMs, actor: { kind: "cli", session_id: opened.actingSession }, previousRecordDigest: null, events: [openEvent],
+  });
+  const legacyGenesis = structuredClone(modernGenesis);
+  legacyGenesis.record_schema_version = 1;
+  delete legacyGenesis.events[0].payload.criterion.authored_by;
+  const eventPreimage = Object.fromEntries(Object.entries(legacyGenesis.events[0]).filter(([key]) => key !== "event_id"));
+  legacyGenesis.events[0].event_id = sha256Hex(canonicalJson(eventPreimage));
+  const recordPreimage = Object.fromEntries(Object.entries(legacyGenesis).filter(([key]) => key !== "record_digest"));
+  legacyGenesis.record_digest = sha256Hex(canonicalJson(recordPreimage));
+  assert.equal(commitRecord(repo, legacyGenesis).committed, true);
+
+  const initial = evolve(null, openEvent);
+  const writeEvent = decide(initial, { type: "authorize-write", taskId: opened.taskId, decision: "allow", files: ["work.txt"], actingSession: null, at: "2026-07-14T03:34:21.000Z", atEpochMs: 1_784_000_001_000 }).events[0];
+  const currentRecord = buildRecord({
+    transactionId: deterministicId("record-upgrade", "transaction", 2), commandId: null, repoSequence: 2,
+    occurredAtEpochMs: 1_784_000_001_000, actor: { kind: "cli", session_id: null }, previousRecordDigest: legacyGenesis.record_digest,
+    events: [{ ...writeEvent, task_event_sequence: 2 }],
+  });
+  assert.equal(currentRecord.record_schema_version, 2);
+  assert.equal(commitRecord(repo, currentRecord).committed, true);
+  assert.deepEqual(readEventStore(repo).records.map((record) => record.record_schema_version), [1, 2]);
 });
 
 test("production event store appends one complete transaction and enforces the chain", (t) => {

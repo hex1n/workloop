@@ -94,22 +94,44 @@ and cannot name the criterion file itself.
 
 ## Assurance and review acceptance
 
-Proof assurance and change assurance are orthogonal. A criterion outside the
-repository or without full declared-input coverage produces
-`criterion_assurance_gap`. A review never removes that hold. Strengthen the
-criterion, or explicitly record the downgrade with `accept-proof-gap --reason
-... --granted-by user|self`; the latter makes proof provisional and raises the
+Proof assurance and change assurance are orthogonal. Criterion shape and path
+do not establish trust. `criterion.authored_by` records the author claim, while
+the proof hold is raised only when a criterion or policy is amended after an
+artifact write. A review never removes that hold. Strengthen the criterion, or
+explicitly record the downgrade with `accept-proof-gap --reason ...
+--granted-by user|self`; the latter makes proof provisional and raises the
 machine risk floor to substantial.
+
+Criterion authorship uses its own `--criterion-authored-by self|user` flag and
+defaults to `self`; `--granted-by` is reserved for grant, waiver, and risk
+provenance. Authorship is an audit claim, not a gate. Failure identity is also
+explicit: binary and tri-state criteria must emit a stable
+`TASKLOOP_CRITERION: <message>` stdout line to participate in the
+three-identical-failures suspension. Without it the signature is null; the
+seven-attempt revision-stagnation guard and configured round budget remain.
 
 Tasks declare `routine`, `substantial`, or `critical` risk. The default is
 substantial. Under `risk-based`, routine needs no review, substantial requires
 fresh-context, and critical requires second-model. `required` names an explicit
-minimum level; `waived` requires a reason and remains visible in the ledger.
-Machine facts only raise risk: destructive/whole-repository authority and
-public-contract/schema/security/permissions/migration classes are critical;
-network/install/git/trust changes, criterion/policy amendments, proof
-acceptance, multiple roots, and broad touched-file sets are at least
-substantial.
+minimum level; `waived` requires a reason and remains visible in the ledger,
+but it cannot erase a non-routine machine floor. The close-time floor reads
+actual touched roots, broad touched-file sets, unattributed writes, actual
+command shapes, post-write criterion/policy amendments, and proof acceptance.
+Unused grants and `change_classes` remain declaration records rather than gate
+keys. Actual publish/shared-push shapes are critical. Raw host permission mode
+is recorded; the kernel consumes only its `bypassPermissions`/other projection.
+This observed-use floor is intentionally conditional on an active PreToolUse
+sensor. Unknown or gapped sensor coverage remains ledger integrity metadata; it
+does not invent an authority use or silently replace the task's declared risk.
+On a Stop-only or plain CLI host, choose the declared risk and explicit review
+policy accordingly because taskloop cannot observe or mediate tool calls. An
+explicit waiver may therefore waive declared risk when no authority use was
+observed; an unused grant does not raise the machine floor. Evidence append
+failures intentionally burn their reserved sequence number: the resulting gap
+means an observation was lost and must not be hidden by number reuse.
+Ledger consumers must treat evidence-derived negatives as tri-state. When the
+bounded stream is corrupt, gapped, or truncated, unanchored-review claims and
+unseen authority-use history are `unknown`, never an empty list or `false`.
 
 An accepted review is bound to the current `criterion_generation_id`, last
 substantive task revision, and artifact revision, with zero blocking findings
@@ -150,7 +172,10 @@ parallel work belongs in a separate worktree. Empty, missing, whitespace, or
 identities are unbound and retain gate-all compatibility.
 
 Two verbs move ownership: `join --reason` transfers an active task to the
-current session; `resume --reason` continues a suspended one.
+current session; `resume --reason` continues a suspended one. Ownership stays
+bound to the host session, while episode-less authority changes such as
+`amend`, `accept-proof-gap`, and `review` record the injected acting agent when
+the host exposes one.
 `TASKLOOP_SESSION_ID` is an explicit override and must carry an identity from
 the host hook payload's domain. Per-host binding mechanics are in
 [HOSTS.md](HOSTS.md).

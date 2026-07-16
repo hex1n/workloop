@@ -71,8 +71,8 @@ active-task handoff; suspended tasks continue with `resume`.
 Host Hook recipes require an explicit protocol profile:
 
 ```sh
-taskloop hooks --profile codex-safe
-taskloop hooks --profile claude
+taskloop hooks --profile codex-safe --mode nudge
+taskloop hooks --profile claude --mode nudge
 ```
 
 `codex-safe` preserves PreToolUse deny/rewrite behavior but releases a held
@@ -84,10 +84,13 @@ explicit experiment and must never be used in Codex App. Old no-argument Hook
 commands retain PreToolUse protection but release held Stop safely and warn to
 regenerate the recipe.
 
-Proof assurance and change assurance are separate. Weak criterion inputs cause
-`criterion_assurance_gap`; strengthen the criterion or explicitly record a
-proof downgrade with `accept-proof-gap`. Change review is driven by declared
-risk plus machine floors:
+Proof assurance and change assurance are separate. A criterion or policy
+amended after an artifact write creates `criterion_assurance_gap`; strengthen
+and re-witness the proof, or explicitly record a provisional downgrade with
+`accept-proof-gap`. Criterion provenance and declared-input coverage remain
+visible audit metadata but are not gate keys. Change review is driven by
+declared risk plus machine floors; `--change-class` is an audit declaration
+and does not independently raise a gate:
 
 ```sh
 taskloop review --level fresh-context --reviewer peer \
@@ -100,12 +103,35 @@ required|waived` for an explicit override; every waiver requires a reason and is
 audited. `status` reports `proof_assurance`, `machine_risk_floor`, and
 `review_requirement` without launching a reviewer.
 
+Machine floors price only authority use observed by an active PreToolUse hook;
+unused grants and absent sensors do not fabricate use. Without that hook,
+taskloop cannot mediate or price tool calls: `ledger --json` reports coverage
+`unknown`, and callers must rely on declared risk or an explicit required
+review policy. An explicit waiver still waives declared risk when no use was
+observed; granting authority alone is not evidence that it was exercised.
+Irreversible commands are protected before use only when the host approval-key
+PreToolUse integration is active. This is a capability floor: an active-task
+host must expose raw `permission_mode` for publish/shared-push calls; hosts that
+omit it are unsupported for those calls and fail closed regardless of grants.
+`observe` mode does not weaken this owned-task approval gate. Evidence sequence reservations are durable:
+an append failure intentionally leaves a gap because an observation was lost,
+so coverage remains visibly incomplete instead of silently reusing its number.
+Because this evidence window is bounded, `ledger --json` never turns truncated
+history into a clean negative: anchor claims, unseen host-key modes, and command
+shape history become `unknown` whenever coverage is known to be lossy.
+
 Runtime contract 4 uses `.taskloop/events-v3.jsonl` as the only repository
 authority. `.taskloop/task.json` is a schema-v3 snapshot that may be deleted and
 rebuilt; it is never promoted to authority. Every public mutation commits one
 hash-chained transaction before refreshing the snapshot. Transcript byte ranges
 and output-token deltas are events in that same transaction, so retries cannot
 double-count a committed range.
+
+The v3 criterion transport is a deliberate one-time adapter cutover: tri-state
+adapters must use 4/3/2 for satisfied/unsatisfied/indeterminate. Legacy 0/1
+adapters hold loudly as silent/invalid and must be updated before upgrade; the
+runtime never guesses that exit 0 meant satisfied. `taskloop info` exposes
+`criterion_adapter_protocol_version: 2` as the cutover signal.
 
 Schema-2 tasks and orphan/mixed snapshots fail closed. Preserve an incompatible
 `task.json` byte-for-byte with `archive-incompatible-state --reason ...
@@ -131,7 +157,8 @@ node bin/taskloop.mjs help
 ```
 
 Use `TASKLOOP_INSTALL_HOME` for manual install tests. Installation distributes
-the runtime, `skills/loop-core`, and `skills/workloop` as one release. It
+the runtime, `skills/loop-core`, `skills/workloop`, `skills/judgmentloop`, and
+`skills/meta-loop` as one release. It
 preserves unowned, locally modified, symlinked, or externally taken-over skill
 trees and deduplicates aliased Claude/Codex roots.
 

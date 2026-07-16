@@ -5,7 +5,7 @@
 const RUNTIME4_INFO = Object.freeze({
   runtime_contract: 4,
   task_snapshot_schema_version: 3,
-  event_record_schema_version: 1,
+  event_record_schema_version: 2,
   outcome_projection_schema_version: 3,
   event_store: ".taskloop/events-v3.jsonl",
   outcome_projection: "~/.taskloop/outcomes-v3.jsonl",
@@ -36,7 +36,7 @@ const RUNTIME4_EVENT_PAYLOAD_FIELDS = Object.freeze({
   criterion_observed: Object.freeze(["observation", "attempt_id", "signature", "failure_summary", "drift", "source"]),
   criterion_side_effect_recorded: Object.freeze(["observation"]),
   output_tokens_tallied: Object.freeze(["source_id", "source_generation_id", "episode_id", "from_offset", "to_offset", "range_sha256", "end_anchor_sha256", "output_tokens_delta", "mode"]),
-  task_amended: Object.freeze(["reason", "goal", "alignment", "envelope", "grants", "rounds", "writes", "wall_clock_minutes", "output_tokens", "assurance", "criterion", "policy", "policy_rationale", "generation_id"]),
+  task_amended: Object.freeze(["reason", "goal", "alignment", "envelope", "grants", "rounds", "writes", "wall_clock_minutes", "output_tokens", "assurance", "criterion", "policy", "policy_rationale", "generation_id", "artifact_revision"]),
   review_recorded: Object.freeze(["record"]),
   proof_gap_accepted: Object.freeze(["record"]),
 });
@@ -114,7 +114,7 @@ const PERSISTED_VALUE_CONSTRAINTS = Object.freeze({
 // any validator, but must accept exactly this persisted value domain.
 const PERSISTED_FIELD_CONTRACTS = Object.freeze({
   record: Object.freeze({
-    record_schema_version: "literal:1",
+    record_schema_version: "literal:2",
     transaction_id: "uuid",
     command_id: "null|non-empty-string",
     repo_sequence: "positive-safe-integer",
@@ -197,6 +197,7 @@ const PERSISTED_NESTED_OBJECTS = Object.freeze({
   "declared-input": Object.freeze({ path: "repo-relative-path", hash: "sha256-digest" }),
   criterion: Object.freeze({
     source: "object:criterion-source",
+    authored_by: "enum:self|user",
     protocol: "enum:binary|tri-state",
     timeout_seconds: "positive-safe-integer",
     declared_inputs: "array<object:declared-input>",
@@ -210,6 +211,7 @@ const PERSISTED_NESTED_OBJECTS = Object.freeze({
   }),
   "criterion-definition": Object.freeze({
     source: "object:criterion-source",
+    authored_by: "enum:self|user",
     protocol: "enum:binary|tri-state",
     timeout_seconds: "positive-safe-integer",
     declared_inputs: "array<object:declared-input>",
@@ -280,7 +282,7 @@ const PERSISTED_NESTED_OBJECTS = Object.freeze({
     review_waiver_reason: "null|non-empty-string",
     review_waiver_granted_by: "null|enum:self|user",
     proof_gap_acceptances: "array<object:proof-gap-record>",
-    risk_floor_events: "array<enum:criterion_amend|policy_amend>",
+    risk_floor_events: "array<enum:criterion_amend|policy_amend|criterion_amended_after_write|policy_amended_after_write>",
   }),
   budget: Object.freeze({
     rounds: "positive-safe-integer",
@@ -314,7 +316,7 @@ const PERSISTED_NESTED_OBJECTS = Object.freeze({
     attempt_id: "uuid",
     criterion_generation_id: "uuid",
     artifact_revision: "non-negative-safe-integer",
-    signature: "non-empty-string",
+    signature: "null|non-empty-string",
     failure_summary: "string:max-160-utf8-bytes",
     observed_at: "utc-iso-milliseconds",
   }),
@@ -392,7 +394,7 @@ const PERSISTED_NESTED_OBJECTS = Object.freeze({
     envelope: "null|object:envelope", grants: "null|non-empty-array<object:grant>", rounds: "null|positive-safe-integer",
     writes: "null|non-negative-safe-integer", wall_clock_minutes: "null|non-negative-safe-integer",
     output_tokens: "null|non-negative-safe-integer", assurance: "null|object:assurance", criterion: "null|object:criterion-definition",
-    policy: "null|object:policy", policy_rationale: "null|non-empty-string", generation_id: "null|uuid",
+    policy: "null|object:policy", policy_rationale: "null|non-empty-string", generation_id: "null|uuid", artifact_revision: "non-negative-safe-integer",
   }),
   "payload.review_recorded": Object.freeze({ record: "object:review-record" }),
   "payload.proof_gap_accepted": Object.freeze({ record: "object:proof-gap-record" }),

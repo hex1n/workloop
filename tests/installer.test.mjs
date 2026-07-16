@@ -17,7 +17,7 @@ test("installer puts runtime and skills from one release under a temporary home"
   const windowsShim = path.join(home, "bin", "taskloop.cmd"); assert.ok(fs.existsSync(windowsShim));
   assert.equal(fs.readFileSync(windowsShim, "utf8"), '@echo off\r\nnode "%~dp0taskloop.mjs" %*\r\n');
   const info = JSON.parse(run(shim, ["info"], { env: { ...process.env, HOME: home, USERPROFILE: home } }).stdout); assert.equal(info.runtime_contract, 4);
-  for (const runtime of [".claude", ".codex"]) for (const skill of ["loop-core", "workloop"]) assert.ok(fs.existsSync(path.join(home, runtime, "skills", skill, skill === "workloop" ? "SKILL.md" : "REFERENCE.md")));
+  for (const runtime of [".claude", ".codex"]) for (const skill of ["loop-core", "workloop", "judgmentloop", "meta-loop"]) assert.ok(fs.existsSync(path.join(home, runtime, "skills", skill, skill === "loop-core" ? "REFERENCE.md" : "SKILL.md")));
   const manifest = JSON.parse(fs.readFileSync(path.join(home, "bin", ".taskloop-active-release.json"), "utf8"));
   assert.equal(manifest.release_id, manifest.runtime_digest); assert.equal(manifest.runtime_contract, 4);
   assert.equal(fs.existsSync(path.join(home, "bin", ".taskloop-activation-journal.json")), false);
@@ -154,7 +154,7 @@ test("runtime-contract-4 installer refuses a contract-3 source rollback", (t) =>
 test("installed runtime exercises the assurance matrix", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-assurance-install-v2-")); const home = path.join(root, "home");
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  const env = { ...process.env, HOME: home, USERPROFILE: home, TASKLOOP_INSTALL_HOME: home, TASKLOOP_INSTALL_REPO: ROOT };
+  const env = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home, TASKLOOP_INSTALL_HOME: home, TASKLOOP_INSTALL_REPO: ROOT };
   assert.equal(run(path.join(ROOT, "install.mjs"), [], { env }).status, 0);
   const shim = path.join(home, "bin", "taskloop.mjs");
   const makeRepo = (name, satisfied = false, stateCriterion = false) => {
@@ -173,11 +173,11 @@ test("installed runtime exercises the assurance matrix", (t) => {
   const substantial = makeRepo("substantial"); assert.equal(open(substantial).status, 0); assert.equal(status(substantial).review_requirement.level, "fresh_context");
   const critical = makeRepo("critical"); assert.equal(open(critical, ["--risk", "critical", "--risk-reason", "contract", "--change-class", "public-contract"]).status, 0); assert.equal(status(critical).review_requirement.level, "second_model");
   assert.equal(run(shim, ["review", "--repo", critical, "--level", "fresh-context", "--reviewer", "peer", "--blocking-findings", "0", "--advisory-findings", "0"], { env }).status, 0); assert.equal(status(critical).review_requirement.accepted, false);
-  const floor = makeRepo("floor"); assert.equal(open(floor, ["--risk", "routine", "--risk-reason", "claimed small", "--destructive-allowed", "--reason", "irreversible"]).status, 0); assert.equal(status(floor).review_requirement.level, "second_model");
+  const floor = makeRepo("floor"); assert.equal(open(floor, ["--risk", "routine", "--risk-reason", "claimed small", "--destructive-allowed", "--reason", "irreversible"]).status, 0); assert.equal(status(floor).review_requirement.level, null);
   const waived = makeRepo("waived", true); assert.equal(open(waived, ["--review-policy", "waived", "--review-waiver-reason", "accepted"], true).status, 0); assert.equal(run(shim, ["achieve", "--repo", waived], { env }).status, 0);
   const stale = makeRepo("stale"); assert.equal(open(stale).status, 0); assert.equal(run(shim, ["review", "--repo", stale, "--level", "fresh-context", "--reviewer", "peer", "--blocking-findings", "0", "--advisory-findings", "0"], { env }).status, 0);
   const hook = JSON.stringify({ hook_event_name: "PreToolUse", cwd: stale, tool_name: "Write", tool_input: { file_path: path.join(stale, "work.txt") } }); assert.equal(run(shim, [], { cwd: stale, env, input: hook }).status, 0); assert.equal(status(stale).review_requirement.accepted, false);
-  const weak = makeRepo("weak", true, true); assert.equal(open(weak, ["--risk", "routine", "--risk-reason", "reversible"], true, true).status, 0); assert.equal(run(shim, ["accept-proof-gap", "--repo", weak, "--reason", "accepted", "--granted-by", "user"], { env }).status, 0); assert.equal(status(weak).review_requirement.level, "fresh_context");
+  const weak = makeRepo("weak", true, true); assert.equal(open(weak, ["--risk", "routine", "--risk-reason", "reversible"], true, true).status, 0); assert.equal(run(shim, ["accept-proof-gap", "--repo", weak, "--reason", "accepted", "--granted-by", "user"], { env }).status, 2); assert.equal(status(weak).proof_assurance.state, "adequate");
 });
 
 test("every installer activation interruption leaves a journal and rerun converges", (t) => {

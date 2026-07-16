@@ -557,10 +557,10 @@ function inspectCodexHookProfiles(home) {
       continue;
     }
     if (/\bhook\s+--profile\s+codex-cli-legacy\b/.test(joined)) {
-      plan("warning", `experimental Codex CLI legacy Stop hook found in ${config}; never use it in Codex App. Generate a safe recipe with taskloop hooks --profile codex-safe; configuration preserved`);
+      plan("warning", `experimental Codex CLI legacy Stop hook found in ${config}; never use it in Codex App. Generate a safe recipe with taskloop hooks --profile codex-safe --mode nudge; configuration preserved`);
       continue;
     }
-    plan("warning", `legacy Codex taskloop Stop hook found in ${config}; generate a safe recipe with taskloop hooks --profile codex-safe and merge it manually; configuration preserved`);
+    plan("warning", `legacy Codex taskloop Stop hook found in ${config}; generate a safe recipe with taskloop hooks --profile codex-safe --mode nudge and merge it manually; configuration preserved`);
   }
 }
 

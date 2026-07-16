@@ -4,7 +4,7 @@ import path from "node:path";
 import test from "node:test";
 
 const ROOT = path.resolve(".");
-const files = ["README.md", "skills/loop-core/REFERENCE.md", "skills/loop-core/ADAPTERS.md", "skills/loop-core/HOSTS.md", "skills/workloop/SKILL.md", "skills/judgmentloop/SKILL.md"];
+const files = ["README.md", "skills/loop-core/REFERENCE.md", "skills/loop-core/ADAPTERS.md", "skills/loop-core/HOSTS.md", "skills/workloop/SKILL.md", "skills/judgmentloop/SKILL.md", "skills/meta-loop/SKILL.md"];
 
 test("portable skill closure has no dangling relative markdown links", () => {
   for (const rel of files.filter((x) => x.startsWith("skills/"))) {
@@ -25,8 +25,17 @@ test("workloop remains task-facing and delegates shared semantics to loop-core",
   const skill = fs.readFileSync(path.join(ROOT, "skills/workloop/SKILL.md"), "utf8");
   assert.match(skill, /\.\.\/loop-core\/REFERENCE\.md/);
   assert.match(skill, /--criterion-policy/);
+  assert.match(skill, /--criterion-authored-by/);
   assert.match(skill, /achieve/);
   assert.doesNotMatch(skill, /source-project|session id|\/Users\//);
+});
+
+test("criterion authorship and grant provenance are separate public controls", () => {
+  const reference = fs.readFileSync(path.join(ROOT, "skills/loop-core/REFERENCE.md"), "utf8");
+  const help = fs.readFileSync(path.join(ROOT, "lib/application.mjs"), "utf8");
+  assert.match(reference, /Criterion authorship uses its own `--criterion-authored-by/);
+  assert.match(reference, /--granted-by.*reserved for grant, waiver, and risk/);
+  assert.match(help, /--criterion-authored-by self\|user/);
 });
 
 test("judgmentloop remains task-facing and delegates shared semantics to loop-core", () => {
@@ -38,9 +47,23 @@ test("judgmentloop remains task-facing and delegates shared semantics to loop-co
   assert.doesNotMatch(skill, /source-project|session id|\/Users\//);
 });
 
-test("adapter contract maps exit 0, 1, 2 to canonical observations", () => {
+test("adapter contract reserves dedicated tri-state exits and treats zero as silence", () => {
   const adapter = fs.readFileSync(path.join(ROOT, "skills/loop-core/ADAPTERS.md"), "utf8");
-  assert.match(adapter, /exit 0[^\n]+satisfied/i); assert.match(adapter, /exit 1[^\n]+unsatisfied/i); assert.match(adapter, /exit 2[^\n]+indeterminate/i);
+  assert.match(adapter, /exit 4[^\n]+satisfied/i); assert.match(adapter, /exit 3[^\n]+unsatisfied/i); assert.match(adapter, /exit 2[^\n]+indeterminate/i); assert.match(adapter, /exit 0[^\n]+(?:indeterminate|silent)/i);
+  assert.match(adapter, /one-time v3 cutover/); assert.match(adapter, /signature.*null/); assert.match(adapter, /seven-attempt guard/);
+});
+
+test("meta-loop ships a human-gated monthly incremental reminder binding", () => {
+  const skill = fs.readFileSync(path.join(ROOT, "skills/meta-loop/SKILL.md"), "utf8");
+  const reminder = fs.readFileSync(path.join(ROOT, "skills/meta-loop/REMINDER.md"), "utf8");
+  assert.match(skill, /monthly reminder/); assert.match(skill, /incremental terminal and abandoned/); assert.match(skill, /never unattended/);
+  assert.match(reminder, /taskloop ledger --json/); assert.match(reminder, /newTerminal/); assert.match(reminder, /newAbandoned/); assert.match(reminder, /msg \* \$message/);
+});
+
+test("every CLI verb named by a portable skill exists in runtime help", () => {
+  const help = fs.readFileSync(path.join(ROOT, "lib/application.mjs"), "utf8");
+  const joined = files.filter((file) => file.endsWith("SKILL.md")).map((file) => fs.readFileSync(path.join(ROOT, file), "utf8")).join("\n");
+  for (const verb of ["open", "status", "verify", "achieve", "review", "ledger", "sync-outcomes"]) if (new RegExp(`taskloop ${verb}\\b`).test(joined)) assert.match(help, new RegExp(`\\b${verb}\\b`));
 });
 
 test("release sources contain no removed public-domain vocabulary", () => {

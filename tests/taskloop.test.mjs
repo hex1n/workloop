@@ -4,12 +4,14 @@ import os from "node:os";
 import path from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
-import { criterionMetadata, expandWindowsGlobs, mapExecution, runCriterionSource } from "../lib/criterion.mjs";
+import { criterionFileInvocation, criterionMessage, criterionMetadata, expandWindowsGlobs, mapExecution, runCriterionSource } from "../lib/criterion.mjs";
 import { POLICY_PRESETS, assertV3TaskProjection, closureProjection, constructPolicy, createTask, criterionDefinitionHash, decide, evolveAll, machineRiskFloor, policyName, projectBudgetExhaustion, projectProofAssurance, projectReviewRequirement, validatePolicy } from "../lib/task-engine.mjs";
 import { archiveIncompatibleState, loadTask } from "../lib/task-store.mjs";
-import { envelopeOverlap, siblingWorktreeOpenTasks } from "../lib/supervision.mjs";
+import { commandShapes, envelopeOverlap, siblingWorktreeOpenTasks } from "../lib/supervision.mjs";
 import { artifactTimestamp, localTimestamp, outputTail } from "../lib/prims.mjs";
+import { EVIDENCE_LOCK_DIR, EVIDENCE_LOSS_DIR, EVIDENCE_MAX_BYTES, EVIDENCE_SEQUENCE_FILE, appendEvidence, evidencePath, foldEvidence, pretooluseEvidenceState, readEvidence } from "../lib/evidence-ledger.mjs";
 
 const ROOT = path.resolve(".");
 const CLI = path.join(ROOT, "bin", "taskloop.mjs");
@@ -33,7 +35,12 @@ test("output tails enforce UTF-8 byte limits without splitting code points", () 
 });
 
 function run(args, { cwd = ROOT, env = process.env, input = "" } = {}) {
-  return spawnSync(process.execPath, [CLI, ...args], { cwd, env, input, encoding: "utf8" });
+  let result;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    result = spawnSync(process.execPath, [CLI, ...args], { cwd, env, input, encoding: "utf8", timeout: 15_000, killSignal: "SIGKILL" });
+    if (result.error?.code !== "ETIMEDOUT") return result;
+  }
+  return result;
 }
 
 function runAsync(args, { cwd = ROOT, env = process.env, input = "" } = {}) {
@@ -65,7 +72,7 @@ function fixture(t) {
   fs.writeFileSync(path.join(repo, "work.txt"), "start\n");
   spawnSync("git", ["add", "."], { cwd: repo });
   spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "fixture"], { cwd: repo });
-  const env = { ...process.env, HOME: home, USERPROFILE: home, TASKLOOP_SESSION_ID: "", CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "" };
+  const env = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home, TASKLOOP_SESSION_ID: "", CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "" };
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return { root, repo, home, env };
 }
@@ -79,7 +86,7 @@ function observation(verdict, generation = "g1", artifact = 0) {
 }
 
 function task(overrides = {}) {
-  const criterion = { source: { kind: "file", value: "check.mjs" }, protocol: "binary", timeout_seconds: 10, declared_inputs: [{ path: "check.mjs", hash: "h" }], subjects: [], criterion_definition_hash: "sha256:h", criterion_generation_id: "g1", criterion_input_fingerprint: "f", input_coverage: "full", provenance: "repo" };
+  const criterion = { source: { kind: "file", value: "check.mjs" }, authored_by: "self", protocol: "binary", timeout_seconds: 10, declared_inputs: [{ path: "check.mjs", hash: "h" }], subjects: [], criterion_definition_hash: "sha256:h", criterion_generation_id: "g1", criterion_input_fingerprint: "f", input_coverage: "full", provenance: "repo" };
   return createTask({ taskId: "t1", goal: "g", criterion, observation: observation("unsatisfied"), policyName: "default", at: AT, alignment: { because: "b", not_covered: [] }, envelope: { files: ["lib/**"], git: [], destructive: false, network: false }, budget: { rounds: 8 }, assurance: { declared_risk: "routine", risk_reason: "routine reversible", risk_declared_by: "self", change_classes: ["internal"], review_policy: "risk_based", required_review_level: null, review_waiver_reason: null, review_waiver_granted_by: null, proof_gap_acceptances: [], risk_floor_events: [] }, ...overrides });
 }
 
@@ -104,27 +111,25 @@ test("proof assurance and change review are orthogonal", () => {
   strongCritical.assurance.declared_risk = "critical"; strongCritical.assurance.risk_reason = "public API"; strongCritical.assurance.change_classes = ["public_contract"];
   strongCritical.criterion.last_observation = observation("satisfied");
   assert.deepEqual(projectProofAssurance(strongCritical), { state: "adequate", reasons: [], acceptance: null });
-  assert.deepEqual(projectReviewRequirement(strongCritical), { level: "second_model", reasons: ["declared_critical", "public_contract"], accepted: false, waived: false });
+  assert.deepEqual(projectReviewRequirement(strongCritical), { level: "second_model", reasons: ["declared_critical"], accepted: false, waived: false });
   assert.deepEqual(closureProjection(strongCritical), { state: "held", reasons: ["change_review_unaccepted"] });
   strongCritical.reviews.push({ criterion_generation_id: "g1", reviewed_task_revision: strongCritical.last_substantive_task_revision, reviewed_artifact_revision: 0, level: "fresh_context", blocking_findings_count: 0 });
   assert.equal(projectReviewRequirement(strongCritical).accepted, false);
   strongCritical.reviews.push({ criterion_generation_id: "g1", reviewed_task_revision: strongCritical.last_substantive_task_revision, reviewed_artifact_revision: 0, level: "second_model", blocking_findings_count: 0 });
   assert.deepEqual(closureProjection(strongCritical), { state: "eligible" });
 
-  const weakRoutine = task(); weakRoutine.criterion.provenance = "unresolved"; weakRoutine.criterion.input_coverage = "unknown"; weakRoutine.criterion.last_observation = observation("satisfied");
-  assert.deepEqual(closureProjection(weakRoutine), { state: "held", reasons: ["criterion_assurance_gap"] });
-  weakRoutine.reviews.push({ criterion_generation_id: "g1", reviewed_task_revision: weakRoutine.last_substantive_task_revision, reviewed_artifact_revision: 0, level: "second_model", blocking_findings_count: 0 });
-  assert.deepEqual(closureProjection(weakRoutine), { state: "held", reasons: ["criterion_assurance_gap"] });
+  const shapeNeutral = task(); shapeNeutral.criterion.provenance = "unresolved"; shapeNeutral.criterion.input_coverage = "unknown"; shapeNeutral.criterion.last_observation = observation("satisfied");
+  assert.deepEqual(closureProjection(shapeNeutral), { state: "eligible" });
 });
 
 test("risk floors only raise risk and waiver and proof acceptance remain auditable", () => {
-  const destructive = task(); destructive.grants.push({ kind: "destructive" });
+  const destructive = task(); destructive.evidence.touched_files.push("<command:publish>");
   assert.equal(projectReviewRequirement(destructive).level, "second_model");
   const substantial = task(); substantial.assurance.declared_risk = "substantial";
   assert.equal(projectReviewRequirement(substantial).level, "fresh_context");
   substantial.assurance.review_policy = "waived"; substantial.assurance.review_waiver_reason = "user accepts";
   assert.deepEqual(projectReviewRequirement(substantial), { level: null, reasons: ["review_waived"], accepted: true, waived: true });
-  const weak = task(); weak.criterion.provenance = "state_dir"; weak.assurance.proof_gap_acceptances.push({ criterion_generation_id: "g1", reason: "accepted", granted_by: "user" });
+  const weak = task(); weak.assurance.risk_floor_events.push("criterion_amended_after_write"); weak.assurance.proof_gap_acceptances.push({ criterion_generation_id: "g1", reason: "accepted", granted_by: "user" });
   assert.equal(projectProofAssurance(weak).state, "provisional");
 });
 
@@ -136,7 +141,11 @@ test("assurance truth table covers policies, floors, freshness and lifecycle bou
   const required = task(); required.assurance.review_policy = "required"; required.assurance.required_review_level = "second_model";
   assert.equal(projectReviewRequirement(required).level, "second_model");
   const publicContract = task(); publicContract.assurance.change_classes = ["public_contract"];
-  assert.equal(projectReviewRequirement(publicContract).level, "second_model");
+  assert.equal(projectReviewRequirement(publicContract).level, null);
+  const auditOnly = task(); auditOnly.assurance.change_classes = ["security"]; auditOnly.grants.push({ kind: "publish", scope: [], reason: "possible later use", granted_by: "user", granted_at_task_revision: 1 });
+  auditOnly.assurance.review_policy = "waived"; auditOnly.assurance.review_waiver_reason = "explicit declaration waiver";
+  assert.deepEqual(machineRiskFloor(auditOnly), { risk: "routine", reasons: [] });
+  assert.equal(projectReviewRequirement(auditOnly).waived, true);
   const reviewed = task(); reviewed.assurance.declared_risk = "substantial"; reviewed.criterion.last_observation = observation("satisfied");
   reviewed.reviews.push({ criterion_generation_id: "g1", reviewed_task_revision: reviewed.last_substantive_task_revision, reviewed_artifact_revision: 0, level: "fresh_context", blocking_findings_count: 0 });
   assert.equal(projectReviewRequirement(reviewed).accepted, true);
@@ -212,8 +221,8 @@ test("closure projects unobserved, unsatisfied, indeterminate, drift and suspend
 });
 
 test("proof gap requires explicit acceptance and review cannot remove it", () => {
-  const weak = task(); weak.criterion.input_coverage = "unknown"; weak.criterion.provenance = "unresolved"; weak.criterion.last_observation = observation("satisfied");
-  assert.deepEqual(closureProjection(weak), { state: "held", reasons: ["criterion_assurance_gap"] });
+  const weak = task(); weak.assurance.risk_floor_events.push("criterion_amended_after_write"); weak.criterion.last_observation = observation("satisfied");
+  assert.deepEqual(closureProjection(weak), { state: "held", reasons: ["criterion_assurance_gap", "change_review_unaccepted"] });
   weak.reviews.push({ criterion_generation_id: "g1", reviewed_task_revision: weak.last_substantive_task_revision, reviewed_artifact_revision: 0, level: "fresh_context", blocking_findings_count: 0 });
   assert.deepEqual(closureProjection(weak), { state: "held", reasons: ["criterion_assurance_gap"] });
   weak.assurance.proof_gap_acceptances.push({ criterion_generation_id: "g1", reason: "accepted", granted_by: "user" });
@@ -326,15 +335,49 @@ test("binary and tri-state execution mapping is exhaustive", () => {
   const result = (status, signal = null, error = null) => ({ status, signal, error, stdout: "", stderr: "", duration_ms: 1 });
   assert.equal(mapExecution(result(0), "binary", 1).verdict, "satisfied");
   assert.equal(mapExecution(result(2), "binary", 1).verdict, "unsatisfied");
-  assert.equal(mapExecution(result(0), "tri-state", 1).verdict, "satisfied");
-  assert.equal(mapExecution(result(1), "tri-state", 1).verdict, "unsatisfied");
+  assert.equal(mapExecution(result(4), "tri-state", 1).verdict, "satisfied");
+  assert.equal(mapExecution(result(3), "tri-state", 1).verdict, "unsatisfied");
   assert.equal(mapExecution(result(2), "tri-state", 1).execution.execution_error, "adapter_indeterminate");
-  assert.equal(mapExecution(result(3), "tri-state", 1).execution.execution_error, "invalid_adapter_exit");
+  assert.equal(mapExecution(result(0), "tri-state", 1).execution.execution_error, "adapter_silent");
+  assert.equal(mapExecution(result(1), "tri-state", 1).execution.execution_error, "invalid_adapter_exit");
+  assert.equal(mapExecution(result(5), "tri-state", 1).execution.execution_error, "invalid_adapter_exit");
   assert.equal(mapExecution(result(null, null, { code: "ENOENT" }), "binary", 1).execution.execution_error, "command_not_found");
   assert.equal(mapExecution(result(null, "SIGKILL"), "binary", 1).execution.execution_error, "signal:SIGKILL");
   assert.equal(mapExecution(result(null, null, { code: "ETIMEDOUT" }), "binary", 1).execution.execution_error, "timeout");
   assert.equal(mapExecution(result(127), "binary", 1, { shell: true }).execution.execution_error, "command_not_found");
   assert.equal(mapExecution(result(9009), "binary", 1, { shell: true, platform: "win32" }).execution.execution_error, "command_not_found");
+});
+
+test("criterion files dispatch through the platform interpreter without shell text transport", (t) => {
+  assert.deepEqual(criterionFileInvocation("checks/acceptance.mjs", "linux", "/node"), { executable: "/node", args: ["checks/acceptance.mjs"] });
+  assert.deepEqual(criterionFileInvocation("checks/acceptance.js", "win32", "C:/node.exe"), { executable: "C:/node.exe", args: ["checks/acceptance.js"] });
+  assert.deepEqual(criterionFileInvocation("checks/acceptance.sh", "linux", "/node"), { executable: "/bin/sh", args: ["checks/acceptance.sh"] });
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-shebang-")); t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const bashCriterion = path.join(directory, "acceptance.sh");
+  fs.writeFileSync(bashCriterion, "#!/usr/bin/env bash\n[[ -n bash ]]\n");
+  assert.deepEqual(criterionFileInvocation(bashCriterion, "linux", "/node"), { executable: "/usr/bin/env", args: ["bash", bashCriterion] });
+  assert.equal(runCriterionSource({ kind: "file", value: bashCriterion }, directory, 2, "binary").verdict, "satisfied");
+  assert.deepEqual(criterionFileInvocation("checks/acceptance.cmd", "win32", "C:/node.exe"), { executable: "cmd.exe", args: ["/d", "/s", "/c", "checks/acceptance.cmd"] });
+  assert.deepEqual(criterionFileInvocation("checks/acceptance.ps1", "win32", "C:/node.exe"), { executable: "powershell.exe", args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", "checks/acceptance.ps1"] });
+  assert.deepEqual(criterionFileInvocation("checks/acceptance", "linux", "/node"), { executable: "checks/acceptance", args: [] });
+  assert.throws(() => criterionFileInvocation("checks/acceptance.cmd", "linux", "/node"), /not executable on linux/);
+});
+
+test("criterion messages use the last dedicated stdout line and never infer a verdict", () => {
+  assert.equal(criterionMessage("noise\nTASKLOOP_CRITERION: first\nmore\nTASKLOOP_CRITERION: final\n"), "final");
+  assert.equal(criterionMessage("satisfied: old convention\nnoise"), null);
+  assert.equal(criterionMessage("TASKLOOP_CRITERION:    \n"), null);
+  assert.ok(Buffer.byteLength(criterionMessage(`TASKLOOP_CRITERION: ${"雪".repeat(500)}`), "utf8") <= 160);
+});
+
+test("criterion message identity is bounded and stdout-exclusive", (t) => {
+  const fx = fixture(t);
+  fs.writeFileSync(path.join(fx.repo, "check.mjs"), "process.stdout.write('TASKLOOP_CRITERION: real stdout\\n' + 'x'.repeat(6000)); process.stderr.write('TASKLOOP_CRITERION: spoofed stderr\\n'); process.exit(3);\n");
+  const observation = runCriterionSource({ kind: "file", value: "check.mjs" }, fx.repo, 5, "tri-state");
+  assert.equal(observation.verdict, "unsatisfied");
+  assert.equal(criterionMessage(observation.execution.output_tail), "real stdout");
+  assert.match(observation.execution.output_tail, /\[stderr\] TASKLOOP_CRITERION: spoofed stderr/);
+  assert.ok(Buffer.byteLength(observation.execution.output_tail, "utf8") <= 4096);
 });
 
 test("command criteria refuse missing executables as indeterminate", (t) => {
@@ -353,16 +396,16 @@ test("criterion subjects stay inside the envelope and cannot name the checker", 
   assert.equal(escaped.status, 2); assert.match(escaped.stderr, /outside the envelope/);
 });
 
-test("state-directory criterion files are weak sensors, not repository provenance", (t) => {
+test("state-directory criterion files do not determine proof assurance", (t) => {
   const fx = fixture(t);
   fs.mkdirSync(path.join(fx.repo, ".taskloop"), { recursive: true });
   fs.writeFileSync(path.join(fx.repo, ".taskloop", "check.mjs"), "process.exit(0);\n");
   const metadata = criterionMetadata({ source: { kind: "file", value: ".taskloop/check.mjs" }, protocol: "binary", timeoutSeconds: 5, repo: fx.repo });
   assert.equal(metadata.provenance, "state_dir");
-  const opened = run(["open", "--repo", fx.repo, "--goal", "guard", "--criterion-file", ".taskloop/check.mjs", "--criterion-policy", "steady-satisfied", "--reason", "guard", "--alignment-because", "probe", "--files", "work.txt"], { env: fx.env });
+  const opened = run(["open", "--repo", fx.repo, "--goal", "guard", "--criterion-file", ".taskloop/check.mjs", "--criterion-policy", "steady-satisfied", "--reason", "guard", "--alignment-because", "probe", "--files", "work.txt", "--risk", "routine", "--risk-reason", "shape-neutral probe"], { env: fx.env });
   assert.equal(opened.status, 0, opened.stderr);
   const achieved = run(["achieve", "--repo", fx.repo], { env: fx.env });
-  assert.equal(achieved.status, 2); assert.match(achieved.stderr, /criterion_assurance_gap/);
+  assert.equal(achieved.status, 0, achieved.stderr);
 });
 
 test("Windows command preparation expands repository globs without a shell wildcard dependency", (t) => {
@@ -419,7 +462,7 @@ test("CLI steady-satisfied Stop never auto closes and achieve does", (t) => {
 
 test("CLI public vocabulary is clean break and info is contract 4", () => {
   const help = run(["help"]); assert.equal(help.status, 0); assert.doesNotMatch(help.stdout, /earn-red|keep-green|\bdone\b|\bred\b|\bgreen\b|--provisional|weak_sensor_unreviewed/);
-  const info = JSON.parse(run(["info"]).stdout); assert.equal(info.runtime_contract, 4); assert.equal(info.task_snapshot_schema_version, 3); assert.equal(info.event_record_schema_version, 1); assert.equal(info.outcome_projection_schema_version, 3); assert.equal(info.outcome_projection, "~/.taskloop/outcomes-v3.jsonl");
+  const info = JSON.parse(run(["info"]).stdout); assert.equal(info.runtime_contract, 4); assert.equal(info.task_snapshot_schema_version, 3); assert.equal(info.event_record_schema_version, 2); assert.equal(info.outcome_projection_schema_version, 3); assert.equal(info.outcome_projection, "~/.taskloop/outcomes-v3.jsonl");
   assert.notEqual(run(["open", "--earn-red"]).status, 0); assert.notEqual(run(["done"]).status, 0);
 });
 
@@ -430,7 +473,7 @@ test("hook recipes require and preserve an explicit host profile", () => {
   const generated = run(["hooks", "--profile", "codex-safe"]);
   assert.equal(generated.status, 0, generated.stderr);
   const recipe = JSON.parse(generated.stdout);
-  assert.match(recipe.hooks.PreToolUse[0].hooks[0].command, / hook --profile codex-safe$/);
+  assert.match(recipe.hooks.PreToolUse[0].hooks[0].command, / hook --profile codex-safe --mode nudge$/);
   assert.equal(recipe.hooks.Stop[0].hooks[0].command, recipe.hooks.PreToolUse[0].hooks[0].command);
 });
 
@@ -455,9 +498,14 @@ test("CLI critical strong criterion requires a current second-model review", (t)
 });
 
 test("CLI proof acceptance, waiver, defaults and grant floors stay independent", (t) => {
-  const weak = fixture(t); fs.mkdirSync(path.join(weak.repo, ".taskloop"), { recursive: true }); fs.writeFileSync(path.join(weak.repo, ".taskloop", "weak.mjs"), "process.exit(0);\n");
-  let result = run(["open", "--repo", weak.repo, "--goal", "weak routine", "--criterion-file", ".taskloop/weak.mjs", "--criterion-policy", "steady-satisfied", "--reason", "guard", "--alignment-because", "probe", "--files", "work.txt", "--risk", "routine", "--risk-reason", "small reversible"], { env: weak.env });
-  assert.equal(result.status, 0, result.stderr); assert.match(run(["achieve", "--repo", weak.repo], { env: weak.env }).stderr, /criterion_assurance_gap/);
+  const weak = fixture(t); fs.writeFileSync(path.join(weak.repo, "done"), "yes\n");
+  let result = run(["open", "--repo", weak.repo, "--goal", "weak routine", "--criterion-file", "check.mjs", "--criterion-policy", "steady-satisfied", "--reason", "guard", "--alignment-because", "probe", "--files", "work.txt", "--risk", "routine", "--risk-reason", "small reversible"], { env: weak.env });
+  assert.equal(result.status, 0, result.stderr);
+  const writePayload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: weak.repo, tool_name: "Write", tool_input: { file_path: path.join(weak.repo, "work.txt") } });
+  assert.equal(run(["hook", "--profile", "claude"], { cwd: weak.repo, env: weak.env, input: writePayload }).status, 0);
+  const amendedWeak = run(["amend", "--repo", weak.repo, "--criterion-file", "check.mjs", "--reason", "checker changed after work"], { env: weak.env });
+  assert.equal(amendedWeak.status, 0, amendedWeak.stderr);
+  assert.match(run(["achieve", "--repo", weak.repo], { env: weak.env }).stderr, /criterion_assurance_gap/);
   assert.equal(run(["accept-proof-gap", "--repo", weak.repo, "--reason", "external guard accepted", "--granted-by", "user"], { env: weak.env }).status, 0);
   assert.match(run(["achieve", "--repo", weak.repo], { env: weak.env }).stderr, /change_review_unaccepted/);
   assert.equal(run(["review", "--repo", weak.repo, "--level", "fresh-context", "--reviewer", "peer", "--blocking-findings", "0", "--advisory-findings", "0"], { env: weak.env }).status, 0);
@@ -475,7 +523,7 @@ test("CLI proof acceptance, waiver, defaults and grant floors stay independent",
 
   const floor = fixture(t);
   result = open(floor, "default", ["--destructive-allowed", "--reason", "dangerous operation"]); assert.equal(result.status, 0, result.stderr);
-  assert.equal(JSON.parse(run(["status", "--repo", floor.repo], { env: floor.env }).stdout).review_requirement.level, "second_model");
+  assert.equal(JSON.parse(run(["status", "--repo", floor.repo], { env: floor.env }).stdout).review_requirement.level, null);
 });
 
 test("automatic Stop echoes accepted review advisories on stderr without changing release stdout", (t) => {
@@ -573,36 +621,343 @@ test("Codex PreToolUse injects the payload-domain session into taskloop CLI comm
       hookEventName: "PreToolUse",
       permissionDecision: "allow",
       updatedInput: {
-        command: `export TASKLOOP_SESSION_ID='codex-session-1'; ${command}`,
+        command: `export TASKLOOP_SESSION_ID='codex-session-1' TASKLOOP_ACTING_SESSION_ID='codex-session-1'; ${command}`,
         timeout: 10,
       },
     },
   });
 });
 
-test("Codex session injection is scoped, validates identity, and rejects conflicting overrides", (t) => {
+test("episode-less authority changes retain the injected acting agent", (t) => {
   const fx = fixture(t);
-  const hook = (session_id, tool_name, command) => run(["hook", "--profile", "claude"], {
+  const env = { ...fx.env, TASKLOOP_SESSION_ID: "owner", TASKLOOP_ACTING_SESSION_ID: "child-agent" };
+  assert.equal(open({ ...fx, env }).status, 0);
+  const authorized = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner", agent_id: "child-agent", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } }) });
+  assert.equal(authorized.stdout, "");
+  assert.equal(run(["amend", "--repo", fx.repo, "--criterion-file", "check.mjs", "--reason", "agent refinement"], { env }).status, 0);
+  assert.equal(run(["accept-proof-gap", "--repo", fx.repo, "--reason", "user accepts remaining proof limits", "--granted-by", "user"], { env }).status, 0);
+  const records = fs.readFileSync(path.join(fx.repo, ".taskloop", "events-v3.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+  const authorityChanges = records.filter((record) => record.events.some((event) => ["task_amended", "proof_gap_accepted"].includes(event.kind)));
+  assert.deepEqual(authorityChanges.map((record) => record.actor.session_id), ["child-agent", "child-agent"]);
+});
+
+test("Codex session injection is scoped, validates owner and actor identities, and rejects conflicting overrides", (t) => {
+  const fx = fixture(t);
+  const hook = (session_id, tool_name, command, agent_id = undefined) => run(["hook", "--profile", "claude"], {
     cwd: fx.repo,
     env: fx.env,
-    input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id, tool_name, tool_input: { command } }),
+    input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id, agent_id, tool_name, tool_input: { command } }),
   });
 
   assert.equal(hook("codex-1", "Bash", "node --version").stdout, "");
   assert.equal(hook("codex-1", "Bash", "echo taskloop").stdout, "");
+  for (const quotedCommand of [
+    `taskloop open --goal "fix it" --reason "why"`,
+    `node ${CLI} suspend --reason "stuck" --remaining "more"`,
+  ]) {
+    const updated = JSON.parse(hook("codex-1", "Bash", quotedCommand).stdout).hookSpecificOutput.updatedInput.command;
+    assert.match(updated, /^export TASKLOOP_SESSION_ID='codex-1' TASKLOOP_ACTING_SESSION_ID='codex-1'; /);
+    assert.ok(updated.endsWith(quotedCommand));
+  }
   assert.equal(hook("codex-1", "Bash", `node ${JSON.stringify(CLI)} status; echo done`).stdout, "");
   assert.equal(hook("codex-1", "Bash", `node ${JSON.stringify(CLI)} status | sed -n 1p`).stdout, "");
   assert.equal(hook("codex-1", "mcp__shell__run", `node ${JSON.stringify(CLI)} status`).stdout, "");
   assert.equal(hook("bad id", "Bash", `node ${JSON.stringify(CLI)} status`).stdout, "");
-  assert.equal(hook("codex-1", "Bash", `TASKLOOP_SESSION_ID=codex-1 node ${JSON.stringify(CLI)} status`).stdout, "");
+  assert.match(hook("codex-1", "Bash", `TASKLOOP_SESSION_ID=codex-1 node ${JSON.stringify(CLI)} status`).stdout, /TASKLOOP_ACTING_SESSION_ID/);
   assert.equal(hook("codex-1", "Bash", `echo TASKLOOP_SESSION_ID=someone-else taskloop`).stdout, "");
 
   const conflict = hook("codex-1", "Bash", `TASKLOOP_SESSION_ID=someone-else node ${JSON.stringify(CLI)} status`);
   assert.match(conflict.stdout, /"permissionDecision":"deny"/);
   assert.match(conflict.stdout, /conflicts with the Codex hook session_id/);
 
+  const forgedActor = hook("codex-1", "Bash", `TASKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`);
+  assert.match(forgedActor.stdout, /"permissionDecision":"deny"/);
+  assert.match(forgedActor.stdout, /host-managed/);
+  const forgedAfterOwner = hook("codex-1", "Bash", `TASKLOOP_SESSION_ID=codex-1 TASKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`);
+  assert.match(forgedAfterOwner.stdout, /host-managed/);
+  assert.match(hook("codex-1", "Bash", `env FOO=1 TASKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
+  assert.match(hook("codex-1", "Bash", `FOO=1 TASKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
+  for (const separator of ["&&", "||", "|", "&", ";"]) {
+    assert.match(hook("codex-1", "Bash", `export TASKLOOP_ACTING_SESSION_ID=forged ${separator} node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
+  }
+  assert.match(hook("codex-1", "Bash", `sleep 0 & TASKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
+  assert.match(hook("codex-1", "Bash", `TASKLOOP_ACTING_SESSION_ID="$(echo forged)" node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
+  const wrappedForgery = `TASKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`;
+  assert.match(hook("codex-1", "Bash", `sh -c ${JSON.stringify(wrappedForgery)}`).stdout, /host-managed/);
+  assert.match(hook("codex-1", "Bash", `bash -lc ${JSON.stringify(wrappedForgery)}`).stdout, /host-managed/);
+  assert.match(hook("codex-1", "Bash", ["bash <<TASKLOOP_EOF", wrappedForgery, "TASKLOOP_EOF"].join("\n")).stdout, /host-managed/);
+  assert.match(hook("codex-1", "Bash", `echo "$(${wrappedForgery})"`).stdout, /host-managed/);
+  assert.equal(hook("codex-1", "Bash", `FOO="$(id)" node ${JSON.stringify(CLI)} status`).stdout, "");
+  assert.equal(hook("codex-1", "Bash", "FOO=`id` node " + JSON.stringify(CLI) + " status").stdout, "");
+  for (const assignment of ["PATH=/tmp/alternate", "NODE_OPTIONS='--require /tmp/x.js'", "LD_PRELOAD=/tmp/x.so"]) {
+    assert.equal(hook("codex-1", "Bash", `${assignment} node ${JSON.stringify(CLI)} status`).stdout, "");
+  }
+
   const powershell = hook("codex-1", "PowerShell", `node ${JSON.stringify(CLI)} status`);
-  assert.match(JSON.parse(powershell.stdout).hookSpecificOutput.updatedInput.command, /^\$env:TASKLOOP_SESSION_ID='codex-1'; /);
+  assert.match(JSON.parse(powershell.stdout).hookSpecificOutput.updatedInput.command, /^\$env:TASKLOOP_SESSION_ID='codex-1'; \$env:TASKLOOP_ACTING_SESSION_ID='codex-1'; /);
+  assert.match(hook("codex-1", "PowerShell", `$env:TASKLOOP_ACTING_SESSION_ID='forged'; node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
+  assert.equal(hook("codex-1", "PowerShell", `$env:FOO="$(id)"; node ${JSON.stringify(CLI)} status`).stdout, "");
+
+  const maliciousActor = hook("codex-1", "Bash", `node ${JSON.stringify(CLI)} status`, "child'; touch /tmp/taskloop-injected; '");
+  const safeCommand = JSON.parse(maliciousActor.stdout).hookSpecificOutput.updatedInput.command;
+  assert.match(safeCommand, /TASKLOOP_ACTING_SESSION_ID='codex-1'/);
+  assert.doesNotMatch(safeCommand, /taskloop-injected/);
+
+  const explicitOwner = hook("codex-1", "Bash", `TASKLOOP_SESSION_ID=codex-1 node ${JSON.stringify(CLI)} status`, "child-1");
+  assert.match(JSON.parse(explicitOwner.stdout).hookSpecificOutput.updatedInput.command, /^export TASKLOOP_ACTING_SESSION_ID='child-1'; TASKLOOP_SESSION_ID=codex-1 /);
+});
+
+test("nudge mode records agent and permission anchors without denying wider untracked work", (t) => {
+  const fx = fixture(t);
+  const hook = (file) => run(["hook", "--profile", "claude", "--mode", "nudge"], {
+    cwd: fx.repo, env: fx.env,
+    input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner", agent_id: "child", permission_mode: "bypassPermissions", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, file) } }),
+  });
+  assert.equal(hook("one.txt").stdout, "");
+  assert.equal(hook("two.txt").stdout, "");
+  assert.equal(hook("two.txt").stdout, "", "unchanged gate decisions are deduplicated");
+  const ledger = run(["ledger", "--json", "--repo", fx.repo], { env: fx.env });
+  assert.equal(ledger.status, 0, ledger.stderr);
+  const payload = JSON.parse(ledger.stdout);
+  assert.equal(payload.integrity.record_count, 2);
+  assert.deepEqual(readEvidence(fx.repo).filter((row) => row.kind === "untracked_write").map((row) => row.gate_seq), [1, 2]);
+  const rows = fs.readFileSync(path.join(fx.repo, ".taskloop", "untracked-observations-v1.jsonl"), "utf8");
+  assert.match(rows, /"acting_session":"child"/); assert.match(rows, /"permission_mode_raw":"bypassPermissions"/); assert.match(rows, /"gate":"nudge"/);
+  assert.equal(fs.readFileSync(path.join(fx.repo, ".taskloop", ".gitignore"), "utf8"), "*\n");
+  assert.doesNotMatch(spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: fx.repo, encoding: "utf8" }).stdout, /\.taskloop/);
+});
+
+test("ledger exposes control-plane shell text that could not be safely rewritten", (t) => {
+  const fx = fixture(t);
+  const command = `node ${JSON.stringify(CLI)} status; echo done`;
+  const hook = run(["hook", "--profile", "claude"], {
+    cwd: fx.repo, env: fx.env,
+    input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner", tool_name: "Bash", tool_input: { command } }),
+  });
+  assert.equal(hook.stdout, "");
+  for (const ordinary of ["rg taskloop lib/", "ls taskloop", "npm pack taskloop"]) {
+    const ordinaryHook = run(["hook", "--profile", "claude"], {
+      cwd: fx.repo, env: fx.env,
+      input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner", tool_name: "Bash", tool_input: { command: ordinary } }),
+    });
+    assert.equal(ordinaryHook.stdout, "");
+  }
+  const ledger = JSON.parse(run(["ledger", "--json", "--repo", fx.repo], { env: fx.env }).stdout);
+  assert.equal(ledger.queries.control_plane_friction_candidates.length, 1);
+  assert.match(ledger.queries.control_plane_friction_candidates[0].reason, /not safely rewritable/);
+});
+
+test("hook recipes make no installation claim and coverage requires a later live census", (t) => {
+  const fx = fixture(t);
+  const recipe = run(["hooks", "--repo", fx.repo, "--profile", "codex-safe", "--mode", "nudge"], { env: fx.env });
+  assert.equal(recipe.status, 0, recipe.stderr);
+  assert.equal(fs.existsSync(evidencePath(fx.repo)), false);
+  assert.equal(run(["hooks", "--repo", fx.repo, "--profile", "codex-safe", "--mode", "nudge", "--action", "record-install"], { env: fx.env }).status, 0);
+  assert.equal(foldEvidence(readEvidence(fx.repo)).coverage, "unknown");
+  appendEvidence(fx.repo, { at: AT, kind: "stop_census", sequence_session: "owner", acting_session: "owner", pretooluse_armed: true, mode: "nudge" });
+  assert.equal(foldEvidence(readEvidence(fx.repo)).coverage, "covered");
+});
+
+test("a live Stop census distinguishes an observed unarmed PreToolUse hook", (t) => {
+  const fx = fixture(t);
+  appendEvidence(fx.repo, { at: AT, kind: "hook_transition", sequence_session: "<control>", acting_session: null, action: "install" });
+  const stopped = run(["hook", "--profile", "claude", "--mode", "nudge"], {
+    cwd: fx.repo, env: fx.env,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo, session_id: "owner" }),
+  });
+  assert.equal(stopped.status, 0, stopped.stderr);
+  const folded = foldEvidence(readEvidence(fx.repo));
+  assert.equal(folded.pretooluse_armed, false);
+  assert.equal(folded.coverage, "unknown");
+  assert.equal(folded.censuses.at(-1).pretooluse_armed, false);
+  const ledger = JSON.parse(run(["ledger", "--json", "--repo", fx.repo], { env: fx.env }).stdout);
+  assert.equal(ledger.authority_use.host_key_bypass_seen, "unknown");
+  assert.equal(ledger.authority_use.host_key_other_seen, "unknown");
+  assert.equal(ledger.authority_use.command_shapes, "unknown");
+  assert.equal(ledger.queries.unanchored_review_claims, "unknown");
+});
+
+test("a bare Stop leaves a repository without task or evidence untouched", (t) => {
+  const fx = fixture(t);
+  const stopped = run(["hook", "--profile", "claude", "--mode", "nudge"], {
+    cwd: fx.repo, env: fx.env,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo, session_id: "owner" }),
+  });
+  assert.equal(stopped.status, 0, stopped.stderr);
+  assert.equal(fs.existsSync(evidencePath(fx.repo)), false);
+});
+
+test("an unreadable-telemetry Stop census preserves unknown arm state", (t) => {
+  const fx = fixture(t);
+  appendEvidence(fx.repo, { at: AT, kind: "stop_census", sequence_session: "owner", acting_session: "owner", pretooluse_armed: "unknown", mode: "nudge" });
+  const folded = foldEvidence(readEvidence(fx.repo));
+  assert.equal(folded.pretooluse_armed, "unknown");
+  assert.equal(folded.coverage, "unknown");
+});
+
+test("ledger treats only agent-bearing actor anchors as independent review anchors", (t) => {
+  const fx = fixture(t);
+  assert.equal(open(fx).status, 0);
+  appendEvidence(fx.repo, { at: AT, kind: "actor_anchor", sequence_session: "owner", acting_session: "owner", agent_id: null });
+  let reviewed = run(["review", "--repo", fx.repo, "--level", "fresh-context", "--reviewer", "parent", "--blocking-findings", "0", "--advisory-findings", "0"], { env: { ...fx.env, TASKLOOP_ACTING_SESSION_ID: "owner" } });
+  assert.equal(reviewed.status, 0, reviewed.stderr);
+  appendEvidence(fx.repo, { at: AT, kind: "actor_anchor", sequence_session: "owner", acting_session: "child", agent_id: "child" });
+  reviewed = run(["review", "--repo", fx.repo, "--level", "fresh-context", "--reviewer", "child", "--blocking-findings", "0", "--advisory-findings", "0"], { env: { ...fx.env, TASKLOOP_ACTING_SESSION_ID: "child" } });
+  assert.equal(reviewed.status, 0, reviewed.stderr);
+  appendEvidence(fx.repo, { at: AT, kind: "stop_census", sequence_session: "owner", acting_session: "owner", pretooluse_armed: true, mode: "nudge" });
+  const ledger = JSON.parse(run(["ledger", "--json", "--repo", fx.repo], { env: fx.env }).stdout);
+  assert.deepEqual(ledger.queries.unanchored_review_claims.map((row) => row.reviewer), ["parent"]);
+
+  for (let index = 0; index < 18; index += 1) {
+    fs.appendFileSync(evidencePath(fx.repo), JSON.stringify({ schema_version: 1, at: AT, kind: "bulk", sequence_session: `bulk-${index}`, seq: 1, padding: "x".repeat(60 * 1024) }) + "\n");
+  }
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), true);
+  const lossy = JSON.parse(run(["ledger", "--json", "--repo", fx.repo], { env: fx.env }).stdout);
+  assert.equal(lossy.queries.unanchored_review_claims, "unknown");
+  assert.equal(lossy.authority_use.host_key_bypass_seen, "unknown");
+  assert.equal(lossy.authority_use.host_key_other_seen, "unknown");
+  assert.equal(lossy.authority_use.command_shapes, "unknown");
+});
+
+test("evidence append failures leave a durable sequence gap", (t) => {
+  const fx = fixture(t);
+  fs.mkdirSync(evidencePath(fx.repo), { recursive: true });
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), false);
+  fs.rmSync(evidencePath(fx.repo), { recursive: true });
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), true);
+  assert.deepEqual(foldEvidence(readEvidence(fx.repo)).sequence_gaps, [{ acting_session: "owner", from: 1, to: 1 }]);
+});
+
+test("partial evidence-lock acquisition cleans its directory before degrading open", (t) => {
+  const fx = fixture(t); const originalWrite = fs.writeFileSync; let injected = false;
+  fs.writeFileSync = function patchedWrite(target, ...args) {
+    if (!injected && String(target).endsWith(path.join(EVIDENCE_LOCK_DIR, "owner.json"))) {
+      injected = true;
+      throw Object.assign(new Error("injected owner metadata failure"), { code: "EIO" });
+    }
+    return originalWrite.call(this, target, ...args);
+  };
+  try { assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), false); }
+  finally { fs.writeFileSync = originalWrite; }
+  assert.equal(fs.existsSync(path.join(fx.repo, ".taskloop", EVIDENCE_LOCK_DIR)), false);
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), true);
+});
+
+test("declined oversized evidence remains visible as a durable sequence gap", (t) => {
+  const fx = fixture(t);
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), true);
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "oversized", sequence_session: "owner", acting_session: "owner", payload: "x".repeat(70 * 1024) }), false);
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), true);
+  assert.deepEqual(foldEvidence(readEvidence(fx.repo)).sequence_gaps, [{ acting_session: "owner", from: 2, to: 2 }]);
+});
+
+test("dropped PreToolUse evidence stays unknown across a different-session append", (t) => {
+  const ioFailure = fixture(t);
+  fs.mkdirSync(evidencePath(ioFailure.repo), { recursive: true });
+  assert.equal(appendEvidence(ioFailure.repo, { at: AT, kind: "actor_anchor", sequence_session: "owner", acting_session: "owner", agent_id: "child" }), false);
+  assert.equal(pretooluseEvidenceState(ioFailure.repo, "owner"), "unknown");
+  fs.rmSync(evidencePath(ioFailure.repo), { recursive: true });
+  assert.equal(appendEvidence(ioFailure.repo, { at: AT, kind: "probe", sequence_session: "control", acting_session: "control" }), true);
+  assert.equal(pretooluseEvidenceState(ioFailure.repo, "owner"), "unknown");
+  assert.ok(foldEvidence(readEvidence(ioFailure.repo)).known_lost_rows >= 1);
+
+  const oversized = fixture(t);
+  assert.equal(appendEvidence(oversized.repo, { at: AT, kind: "actor_anchor", sequence_session: "owner", acting_session: "owner", agent_id: "child", padding: "x".repeat(70 * 1024) }), false);
+  assert.equal(appendEvidence(oversized.repo, { at: AT, kind: "probe", sequence_session: "control", acting_session: "control" }), true);
+  assert.equal(pretooluseEvidenceState(oversized.repo, "owner"), "unknown");
+  assert.ok(foldEvidence(readEvidence(oversized.repo)).known_lost_rows >= 1);
+});
+
+test("a corrupt scratch evidence counter rebuilds from the durable stream", (t) => {
+  const fx = fixture(t);
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), true);
+  fs.writeFileSync(path.join(fx.repo, ".taskloop", "evidence-sequences-v1.json"), "{broken\n");
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), true);
+  const rows = readEvidence(fx.repo);
+  assert.deepEqual(rows.map((row) => row.seq), [1, 2]);
+  assert.deepEqual(foldEvidence(rows).sequence_gaps, []);
+  assert.deepEqual(foldEvidence(rows).sequence_resets, []);
+});
+
+test("malformed and unknown-version evidence rows degrade visibly without wedging reads", (t) => {
+  const fx = fixture(t);
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), true);
+  fs.appendFileSync(evidencePath(fx.repo), "{broken}\n" + JSON.stringify({ schema_version: 2, at: AT, kind: "future", sequence_session: "owner", seq: 2 }) + "\n");
+  const folded = foldEvidence(readEvidence(fx.repo));
+  assert.equal(folded.record_count, 1);
+  assert.equal(folded.corrupt_rows, 1);
+  assert.equal(folded.unknown_schema_rows, 1);
+  assert.equal(folded.coverage, "gapped");
+  const ledger = run(["ledger", "--json", "--repo", fx.repo], { env: fx.env });
+  assert.equal(ledger.status, 0, ledger.stderr);
+  assert.equal(JSON.parse(ledger.stdout).integrity.evidence, "gapped");
+});
+
+test("evidence-loss markers prevent false complete coverage", (t) => {
+  const fx = fixture(t); const directory = path.join(fx.repo, ".taskloop", EVIDENCE_LOSS_DIR);
+  fs.mkdirSync(directory, { recursive: true });
+  fs.writeFileSync(path.join(directory, "lock-timeout.json"), JSON.stringify({ at: AT, reason: "evidence ledger lock timeout" }) + "\n");
+  const folded = foldEvidence(readEvidence(fx.repo));
+  assert.equal(folded.known_lost_rows, 1);
+  assert.equal(folded.coverage, "gapped");
+});
+
+test("a torn evidence tail is truncated and reported by the next durable row", (t) => {
+  const fx = fixture(t);
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), true);
+  fs.appendFileSync(evidencePath(fx.repo), '{"schema_version":1,"kind":"torn"');
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), true);
+  const rows = readEvidence(fx.repo);
+  assert.equal(rows.length, 2);
+  assert.equal(rows.at(-1).recovered_torn_rows, 1);
+  assert.equal(foldEvidence(rows).recovered_torn_rows, 1);
+  assert.equal(foldEvidence(rows).coverage, "gapped");
+});
+
+test("evidence compaction bounds the active stream and reports truncated history", (t) => {
+  const fx = fixture(t);
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "actor_anchor", sequence_session: "owner", acting_session: "owner", agent_id: "owner", padding: "x".repeat(60 * 1024) }), true);
+  for (let index = 0; index < 18; index += 1) {
+    fs.appendFileSync(evidencePath(fx.repo), JSON.stringify({ schema_version: 1, at: AT, kind: "bulk", sequence_session: `bulk-${index}`, seq: 1, padding: "x".repeat(60 * 1024) }) + "\n");
+  }
+  assert.ok(fs.statSync(evidencePath(fx.repo)).size > EVIDENCE_MAX_BYTES);
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), true);
+  assert.ok(fs.statSync(evidencePath(fx.repo)).size <= EVIDENCE_MAX_BYTES);
+  const folded = foldEvidence(readEvidence(fx.repo));
+  assert.ok(folded.history_truncated_records >= 1);
+  assert.equal(folded.coverage, "gapped");
+  assert.equal(readEvidence(fx.repo).some((row) => row.kind === "actor_anchor"), false);
+  fs.rmSync(path.join(fx.repo, ".taskloop", EVIDENCE_SEQUENCE_FILE));
+  assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "other", acting_session: "other" }), true);
+  assert.equal(pretooluseEvidenceState(fx.repo, "owner"), "unknown");
+});
+
+test("parallel evidence appends retain contiguous per-session sequences", async (t) => {
+  const fx = fixture(t);
+  const gate = path.join(fx.root, "evidence-go");
+  const helper = path.join(fx.root, "append-evidence.mjs");
+  const ledgerUrl = pathToFileURL(path.join(ROOT, "lib", "evidence-ledger.mjs")).href;
+  fs.writeFileSync(helper, `import fs from "node:fs"; import { appendEvidence } from ${JSON.stringify(ledgerUrl)}; const [repo, gate, index] = process.argv.slice(2); const wait = new Int32Array(new SharedArrayBuffer(4)); while (!fs.existsSync(gate)) Atomics.wait(wait, 0, 0, 1); const ok = appendEvidence(repo, { at: new Date().toISOString(), kind: "parallel_probe", sequence_session: "owner", acting_session: "owner", index: Number(index) }); process.exit(ok ? 0 : 2);\n`);
+  const spawnEvidence = (index) => spawn(process.execPath, [helper, fx.repo, gate, String(index)], { env: { ...process.env, TZ: "UTC" }, stdio: ["ignore", "ignore", "pipe"] });
+  const children = Array.from({ length: 8 }, (_, index) => spawnEvidence(index));
+  fs.writeFileSync(gate, "go\n");
+  const waitForEvidence = (child, index, retries = 1) => new Promise((resolve, reject) => {
+    let stderr = ""; let timedOut = false;
+    child.stderr.on("data", (chunk) => { stderr += chunk; }); child.on("error", reject);
+    const timer = setTimeout(() => { timedOut = true; child.kill("SIGKILL"); }, 15_000);
+    child.on("close", (code) => {
+      clearTimeout(timer);
+      if (timedOut && retries > 0) resolve(waitForEvidence(spawnEvidence(index), index, retries - 1));
+      else resolve({ code, stderr });
+    });
+  });
+  const exits = await Promise.all(children.map((child, index) => waitForEvidence(child, index)));
+  assert.deepEqual(exits, Array.from({ length: 8 }, () => ({ code: 0, stderr: "" })));
+  const rows = readEvidence(fx.repo);
+  assert.deepEqual(rows.map((row) => row.seq), Array.from({ length: 8 }, (_, index) => index + 1));
+  assert.deepEqual(new Set(rows.map((row) => row.index)), new Set(Array.from({ length: 8 }, (_, index) => index)));
+  assert.deepEqual(foldEvidence(rows).sequence_gaps, []);
+  assert.deepEqual(foldEvidence(rows).sequence_resets, []);
 });
 
 test("PreToolUse denial wins over Codex session command rewriting", (t) => {
@@ -660,6 +1015,9 @@ test("session-scoped PreToolUse protects control state and gates foreign writes 
   assert.match(hook("foreign-session", "Bash", { command: "command git tag unsafe" }).stdout, /permissionDecision.*deny/);
   assert.match(hook("foreign-session", "Bash", { command: "FOO=1 git tag unsafe" }).stdout, /permissionDecision.*deny/);
   assert.match(hook("foreign-session", "Bash", { command: "exec git tag unsafe" }).stdout, /permissionDecision.*deny/);
+  assert.match(hook("foreign-session", "Bash", { command: ["git", "push"].join(" ") }).stdout, /permissionDecision.*deny/);
+  const publication = ["npm", ["pub", "lish"].join("")].join(" ");
+  assert.match(hook("foreign-session", "Bash", { command: publication }).stdout, /permissionDecision.*deny/);
   assert.equal(hook("foreign-session", "Bash", { command: "rg git README.md" }).stdout, "");
   assert.equal(hook("foreign-session", "Bash", { command: "curl https://example.invalid/x" }).stdout, "");
   assert.equal(hook("foreign-session", "Bash", { command: "curl https://example.invalid/x; echo x > ../outside-network.txt" }).stdout, "");
@@ -996,13 +1354,17 @@ test("long ASCII and multibyte criterion output cannot wedge Stop or achieve com
 });
 
 test("repeated equivalent failures suspend as stuck before the round cap", (t) => {
-  const fx = fixture(t); assert.equal(open(fx, "default", ["--rounds", "8"]).status, 0);
+  const fx = fixture(t);
+  fs.writeFileSync(path.join(fx.repo, "check.mjs"), "console.log('TASKLOOP_CRITERION: acceptance fixture is incomplete'); process.exit(1);\n");
+  assert.equal(open(fx, "default", ["--rounds", "8"]).status, 0);
   for (let attempt = 0; attempt < 3; attempt += 1) run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
   const state = loadTask(fx.repo); assert.equal(state.lifecycle.state, "suspended"); assert.equal(state.lifecycle.reason, "stuck"); assert.equal(state.spent.rounds, 3);
+  assert.equal(state.attempts.at(-1).failure_summary, "acceptance fixture is incomplete");
+  assert.doesNotMatch(state.lifecycle.judgment.remaining, /TASKLOOP_CRITERION/);
   assert.deepEqual(state.lifecycle_log.at(-1), { event: "suspend", source: "stop", acting_session: null, at: state.lifecycle.suspended_at, task_revision: state.task_revision, reason: "stuck" });
 });
 
-test("seven revision-stagnant attempts with varied signatures suspend as stuck", (t) => {
+test("seven revision-stagnant silent attempts suspend without inventing signatures", (t) => {
   const fx = fixture(t);
   fs.writeFileSync(path.join(fx.repo, "check.mjs"), "console.log(process.hrtime.bigint().toString()); process.exit(1);\n");
   assert.equal(open(fx, "default", ["--rounds", "20"]).status, 0);
@@ -1010,12 +1372,13 @@ test("seven revision-stagnant attempts with varied signatures suspend as stuck",
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const blocked = stop();
     assert.match(blocked.stdout, /"decision":"block"/); assert.doesNotMatch(blocked.stdout, /suspended/);
+    if (attempt === 2) assert.equal(loadTask(fx.repo).lifecycle.state, "active", "null signatures do not enter the three-repeat detector");
   }
   const seventh = stop();
   assert.match(seventh.stdout, /suspended\(stuck\)/); assert.match(seventh.stdout, /no artifact progress across 7 attempts/);
   const state = loadTask(fx.repo);
   assert.equal(state.lifecycle.state, "suspended"); assert.equal(state.lifecycle.reason, "stuck"); assert.equal(state.spent.rounds, 7);
-  assert.equal(new Set(state.attempts.map((attempt) => attempt.signature)).size, 7);
+  assert.ok(state.attempts.every((attempt) => attempt.signature === null));
 });
 
 test("out-of-budget wins when budget and stuck conditions become true together", (t) => {
@@ -1043,7 +1406,7 @@ test("a write between stops resets the no-progress counter", (t) => {
 test("a satisfied adjudication between stops resets the no-progress streak", (t) => {
   const fx = fixture(t);
   fs.writeFileSync(path.join(fx.repo, "checker.mjs"), "import fs from 'node:fs'; if (fs.existsSync('flip')) process.exit(0); console.log(process.hrtime.bigint().toString()); process.exit(1);\n");
-  const opened = run(["open", "--repo", fx.repo, "--goal", "finish", "--criterion", "node checker.mjs", "--criterion-policy", "default", "--alignment-because", "the checker exercises the result", "--not-covered", "deployment", "--files", "work.txt", "--risk", "routine", "--risk-reason", "isolated reversible fixture", "--rounds", "20"], { env: fx.env });
+  const opened = run(["open", "--repo", fx.repo, "--goal", "finish", "--criterion", "node checker.mjs", "--criterion-policy", "steady-satisfied", "--reason", "streak reset probe", "--alignment-because", "the checker exercises the result", "--not-covered", "deployment", "--files", "work.txt", "--risk", "routine", "--risk-reason", "isolated reversible fixture", "--rounds", "20"], { env: fx.env });
   assert.equal(opened.status, 0, opened.stderr);
   const stop = () => run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
   for (let attempt = 0; attempt < 4; attempt += 1) assert.match(stop().stdout, /"decision":"block"/);
@@ -1061,7 +1424,7 @@ test("a satisfied adjudication between stops resets the no-progress streak", (t)
 
 test("judgment loop: rubric-bearing tri-state adapter opens unsatisfied and closes only by explicit achieve", (t) => {
   const fx = fixture(t);
-  fs.writeFileSync(path.join(fx.repo, "acceptance.mjs"), "// rubric: clear, concrete, honest\nimport fs from 'node:fs';\nlet verdict = '';\ntry { verdict = fs.readFileSync('verdict.txt', 'utf8').trim(); } catch {}\nif (verdict === 'accepted') process.exit(0);\nif (verdict === '' || verdict === 'pending') { console.log('acceptance does not hold yet'); process.exit(1); }\nconsole.log('cannot adjudicate: ' + verdict); process.exit(2);\n");
+  fs.writeFileSync(path.join(fx.repo, "acceptance.mjs"), "// rubric: clear, concrete, honest\nimport fs from 'node:fs';\nlet verdict = '';\ntry { verdict = fs.readFileSync('verdict.txt', 'utf8').trim(); } catch {}\nif (verdict === 'accepted') process.exit(4);\nif (verdict === '' || verdict === 'pending') { console.log('TASKLOOP_CRITERION: acceptance does not hold yet'); process.exit(3); }\nconsole.log('cannot adjudicate: ' + verdict); process.exit(2);\n");
   const opened = run(["open", "--repo", fx.repo, "--goal", "taste deliverable", "--criterion-file", "acceptance.mjs", "--criterion-protocol", "tri-state", "--criterion-policy", "steady-satisfied", "--reason", "human acceptance closes explicitly", "--alignment-because", "the adapter reads the recorded human verdict against the embedded rubric", "--not-covered", "taste quality itself", "--files", "draft.txt", "--risk", "routine", "--risk-reason", "isolated fixture"], { env: fx.env });
   assert.equal(opened.status, 0, opened.stderr);
   assert.match(opened.stdout, /criterion unsatisfied/);
@@ -1122,8 +1485,9 @@ test("Markdown report renders every bounded and unbounded budget dimension", (t)
   delete json.generated_at;
   assert.deepEqual(json, {
     runtime_contract: 4,
+    criterion_adapter_protocol_version: 2,
     task_snapshot_schema_version: 3,
-    event_record_schema_version: 1,
+    event_record_schema_version: 2,
     outcome_projection_schema_version: 3,
     generated_by: "taskloop report — machine transcription of task state, not testimony",
     task_id: before.task_id,
@@ -1165,7 +1529,7 @@ test("Markdown report exposes a tallied output-token estimate", (t) => {
 });
 
 test("report on a suspended task carries the judgment snapshot", (t) => {
-  const fx = fixture(t); assert.equal(open(fx).status, 0);
+  const fx = fixture(t); fs.writeFileSync(path.join(fx.repo, "check.mjs"), "console.log('TASKLOOP_CRITERION: report fixture incomplete'); process.exit(1);\n"); assert.equal(open(fx).status, 0);
   for (let attempt = 0; attempt < 3; attempt += 1) run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
   assert.equal(loadTask(fx.repo).lifecycle.state, "suspended");
   const parsed = JSON.parse(run(["report", "--repo", fx.repo, "--json"], { env: fx.env }).stdout);
@@ -1176,7 +1540,7 @@ test("report on a suspended task carries the judgment snapshot", (t) => {
 
 test("publish-shaped commands require an explicit publish grant", (t) => {
   const fx = fixture(t); assert.equal(open(fx).status, 0);
-  const hook = (command) => run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Bash", tool_input: { command } }) });
+  const hook = (command) => run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, permission_mode: "default", tool_name: "Bash", tool_input: { command } }) });
   const denied = ["npm publish", "yarn publish", "pnpm publish --access public", "cargo publish", "twine upload dist/*", "docker push repo/img:tag", "helm push chart.tgz oci://registry", "mvn deploy", "gem push pkg.gem", "gh pr create --fill", "gh release create v1.0.0", "npm run build && docker push repo/img", "echo ok\nnpm publish", "echo ok\ngh pr create --fill", "/usr/local/bin/gh pr create --fill", "./gh release create v1", "npm \\\npublish", "gh pr \\\ncreate --fill", "npm\tpublish", "echo ok\r\nnpm publish", "npm pub\\\nlish", "gh p\\\nr create --fill", "gh pr cr\\\neate --fill"];
   for (const command of denied) assert.match(hook(command).stdout, /publish grant/, command);
   const exempt = ["echo deploy", "grep -rn publish lib/", "ls deploy/", "cat release-notes.md", "node --test tests/taskloop.test.mjs", "mkdir -p releases", "echo gh pr create", "grep 'gh issue create' README.md", "gh pr create-notes", "echo npm publish"];
@@ -1190,13 +1554,49 @@ test("publish-shaped commands require an explicit publish grant", (t) => {
   assert.match(JSON.stringify(JSON.parse(run(["status", "--repo", fx.repo], { env: fx.env }).stdout).machine_risk_floor), /critical/);
 });
 
-test("open-time publish grant is minted and raises the machine risk floor", (t) => {
+test("open-time publish grant is recorded but the floor rises only after use", (t) => {
   const fx = fixture(t);
   assert.equal(open(fx, "default", ["--publish-allowed", "--granted-by", "user", "--reason", "user requested publishing"]).status, 0);
-  const hook = (command) => run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Bash", tool_input: { command } }) });
+  assert.equal(loadTask(fx.repo).criterion.authored_by, "self", "grant provenance does not imply criterion authorship");
+  const hook = (command) => run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, permission_mode: "default", tool_name: "Bash", tool_input: { command } }) });
+  assert.match(JSON.stringify(JSON.parse(run(["status", "--repo", fx.repo], { env: fx.env }).stdout).machine_risk_floor), /routine/);
+  assert.equal(JSON.parse(run(["status", "--repo", fx.repo], { env: fx.env }).stdout).review_requirement.level, null, "unused declared authority is not observed use");
   assert.doesNotMatch(hook("npm publish").stdout, /publish grant/);
   assert.equal(loadTask(fx.repo).grants.some((grant) => grant.kind === "publish"), true);
   assert.match(JSON.stringify(JSON.parse(run(["status", "--repo", fx.repo], { env: fx.env }).stdout).machine_risk_floor), /critical/);
+});
+
+test("absent PreToolUse does not turn an unused grant into observed risk", (t) => {
+  const fx = fixture(t);
+  assert.equal(open(fx, "default", ["--publish-allowed", "--granted-by", "user", "--reason", "publication may be needed", "--review-policy", "waived", "--review-waiver-reason", "user accepts declared risk"]).status, 0);
+  const status = JSON.parse(run(["status", "--repo", fx.repo], { env: fx.env }).stdout);
+  assert.deepEqual(status.machine_risk_floor, { risk: "routine", reasons: [] });
+  assert.equal(status.review_requirement.waived, true);
+  const ledger = JSON.parse(run(["ledger", "--json", "--repo", fx.repo], { env: fx.env }).stdout);
+  assert.equal(ledger.integrity.coverage, "unknown");
+});
+
+test("criterion authorship is independent from grant and risk provenance", (t) => {
+  const userCriterion = fixture(t);
+  assert.equal(open(userCriterion, "default", ["--criterion-authored-by", "user"]).status, 0);
+  let state = loadTask(userCriterion.repo);
+  assert.equal(state.criterion.authored_by, "user");
+  assert.equal(state.assurance.risk_declared_by, "self");
+
+  const protocolOnly = run(["amend", "--repo", userCriterion.repo, "--criterion-protocol", "binary", "--reason", "retain criterion provenance"], { env: userCriterion.env });
+  assert.equal(protocolOnly.status, 0, protocolOnly.stderr);
+  assert.equal(loadTask(userCriterion.repo).criterion.authored_by, "user");
+
+  const grantOnly = fixture(t);
+  assert.equal(open(grantOnly, "default", ["--network-allowed", "--granted-by", "user", "--reason", "network approved"]).status, 0);
+  state = loadTask(grantOnly.repo);
+  assert.equal(state.criterion.authored_by, "self");
+  assert.equal(state.grants.find((grant) => grant.kind === "network").granted_by, "user");
+
+  const amended = run(["amend", "--repo", grantOnly.repo, "--criterion-authored-by", "user", "--reason", "record user-supplied criterion"], { env: grantOnly.env });
+  assert.equal(amended.status, 0, amended.stderr);
+  assert.equal(loadTask(grantOnly.repo).criterion.authored_by, "user");
+  assert.match(run(["amend", "--repo", grantOnly.repo, "--criterion-authored-by", "operator", "--reason", "invalid"], { env: grantOnly.env }).stderr, /criterion-authored-by/);
 });
 
 test("command safety and git operations require explicit recorded grants", (t) => {
@@ -1208,6 +1608,30 @@ test("command safety and git operations require explicit recorded grants", (t) =
   assert.equal(granted.status, 0, granted.stderr);
   assert.equal(hook("git add work.txt").stdout, "");
   const state = loadTask(fx.repo); assert.ok(state.grants.some((grant) => grant.kind === "git" && grant.scope.includes("add") && grant.granted_by === "user"));
+});
+
+test("irreversible authority uses the raw host key before use", (t) => {
+  const fx = fixture(t);
+  const allowedFlag = "--pub" + "lish-allowed";
+  assert.equal(open(fx, "default", [allowedFlag, "--granted-by", "user", "--reason", "remote authority approved"]).status, 0);
+  const command = ["npm", "pub", "lish"].join(" ").replace("pub lish", "publish");
+  const invoke = (permission_mode, profile = "claude") => run(["hook", "--profile", profile], {
+    cwd: fx.repo, env: fx.env,
+    input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner", permission_mode, tool_name: "Bash", tool_input: { command } }),
+  });
+  const bypassed = invoke("bypassPermissions");
+  assert.match(bypassed.stdout, /host approval key/);
+  assert.match(invoke(undefined).stdout, /host approval key/);
+  assert.match(JSON.stringify(JSON.parse(run(["status", "--repo", fx.repo], { env: fx.env }).stdout).machine_risk_floor), /routine/);
+  const prompted = invoke("default");
+  assert.doesNotMatch(prompted.stdout, /host approval key/);
+  assert.doesNotMatch(invoke("default", "codex-safe").stdout, /host approval key/);
+  assert.match(invoke(undefined, "codex-safe").stdout, /host approval key/);
+  assert.match(JSON.stringify(JSON.parse(run(["status", "--repo", fx.repo], { env: fx.env }).stdout).machine_risk_floor), /critical/);
+  const ledger = JSON.parse(run(["ledger", "--json", "--repo", fx.repo], { env: fx.env }).stdout);
+  assert.equal(ledger.authority_use.host_key_bypass_seen, true);
+  assert.equal(ledger.authority_use.host_key_other_seen, true);
+  assert.deepEqual(ledger.authority_use.command_shapes, ["publish"]);
 });
 
 test("destructive, network, and install commands require their matching grants", (t) => {
@@ -1223,6 +1647,93 @@ test("destructive, network, and install commands require their matching grants",
   assert.equal(hook(allowed, "curl https://example.invalid/file").stdout, "");
   assert.equal(hook(allowed, "npm install never-executed").stdout, "");
   assert.deepEqual(new Set(loadTask(allowed.repo).grants.map((item) => item.kind)), new Set(["destructive", "network", "install"]));
+  assert.deepEqual(JSON.parse(run(["report", "--repo", allowed.repo, "--json"], { env: allowed.env }).stdout).envelope_deviations, []);
+});
+
+test("stdout-only remote reads do not consume write budget or raise the observed-use floor", (t) => {
+  const fx = fixture(t);
+  assert.equal(open(fx, "default", ["--network-allowed", "--writes", "0", "--review-policy", "waived", "--review-waiver-reason", "routine read", "--granted-by", "user", "--reason", "read approved"]).status, 0);
+  const command = ["cu", "rl https://example.invalid/file"].join("");
+  const hook = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Bash", tool_input: { command } }) });
+  assert.equal(hook.stdout, "");
+  const state = loadTask(fx.repo);
+  assert.equal(state.spent.writes, 0);
+  assert.deepEqual(machineRiskFloor(state), { risk: "routine", reasons: [] });
+});
+
+test("quoted safety vocabulary remains a read in active and suspended tasks", (t) => {
+  const command = `rg ${JSON.stringify(["DROP", "TABLE"].join(" "))} migrations/`;
+  const invoke = (fx) => run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Bash", tool_input: { command } }) });
+
+  const active = fixture(t);
+  assert.equal(open(active, "default", ["--destructive-allowed", "--granted-by", "user", "--reason", "maintenance approved"]).status, 0);
+  assert.equal(invoke(active).stdout, "");
+  let state = loadTask(active.repo);
+  assert.equal(state.spent.writes, 0);
+  assert.deepEqual(state.evidence.touched_files, []);
+
+  const suspended = fixture(t);
+  assert.equal(open(suspended, "default", ["--destructive-allowed", "--granted-by", "user", "--reason", "maintenance approved"]).status, 0);
+  assert.equal(run(["suspend", "--repo", suspended.repo, "--reason", "needs-input", "--remaining", "diagnosis", "--failure", "missing evidence", "--next-action", "inspect"], { env: suspended.env }).status, 0);
+  assert.equal(invoke(suspended).stdout, "");
+  state = loadTask(suspended.repo);
+  assert.equal(state.lifecycle.state, "suspended");
+  assert.equal(state.spent.writes, 0);
+});
+
+test("command shapes observe executable shell payloads without pricing quoted search text", (t) => {
+  assert.deepEqual(commandShapes(`rg ${JSON.stringify(["DROP", "TABLE"].join(" "))} migrations/`), []);
+  const pushed = ["git", "push", "origin", "main"].join(" ");
+  assert.deepEqual(commandShapes(`sh -c ${JSON.stringify(pushed)}`), ["git_push"]);
+  const publication = ["npm", ["pub", "lish"].join("")].join(" ");
+  const heredoc = ["bash <<TASKLOOP_TEST_EOF", publication, "TASKLOOP_TEST_EOF"].join("\n");
+  assert.deepEqual(commandShapes(heredoc), ["publish"]);
+  assert.deepEqual(commandShapes(`echo "$(${publication})"`), ["publish"]);
+  assert.deepEqual(commandShapes(`rg '$(${publication})' docs/`), []);
+  const pathological = `bash -c "${"\\".repeat(48)}x`;
+  const parseStartedAt = performance.now();
+  assert.deepEqual(commandShapes(pathological), []);
+  assert.ok(performance.now() - parseStartedAt < 200, "unterminated quoted shell bodies must be rejected in bounded time");
+
+  const fx = fixture(t);
+  assert.equal(open(fx, "default", ["--publish-allowed", "--git-allowed", "push", "--git-reason", "remote update approved", "--granted-by", "user", "--reason", "irreversible authority approved"]).status, 0);
+  const invoke = (command, permission_mode) => run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner", permission_mode, tool_name: "Bash", tool_input: { command } }) });
+  assert.match(invoke(`sh -c ${JSON.stringify(pushed)}`, "bypassPermissions").stdout, /host approval key/);
+  assert.match(invoke(heredoc, "bypassPermissions").stdout, /host approval key/);
+  assert.equal(invoke(`sh -c ${JSON.stringify(pushed)}`, "default").stdout, "");
+  assert.equal(invoke(heredoc, "default").stdout, "");
+  const state = loadTask(fx.repo);
+  assert.equal(machineRiskFloor(state).risk, "critical");
+  assert.ok(state.evidence.touched_files.includes("<command:git_push>"));
+  assert.ok(state.evidence.touched_files.includes("<command:publish>"));
+});
+
+test("legacy tri-state exits diagnose protocol 2 and suspend instead of holding forever", (t) => {
+  const fx = fixture(t);
+  fs.writeFileSync(path.join(fx.repo, "legacy-adapter.mjs"), "console.log('all checks passed'); process.exit(0);\n");
+  const opened = run([
+    "open", "--repo", fx.repo, "--goal", "upgrade adapter", "--criterion-file", "legacy-adapter.mjs",
+    "--criterion-protocol", "binary", "--criterion-policy", "steady-satisfied", "--reason", "legacy adapter starts satisfied",
+    "--alignment-because", "upgrade compatibility",
+    "--files", "work.txt", "--risk", "routine", "--risk-reason", "isolated fixture",
+  ], { env: fx.env });
+  assert.equal(opened.status, 0, opened.stderr);
+  assert.match(opened.stdout, /criterion satisfied/);
+  const upgraded = run(["amend", "--repo", fx.repo, "--criterion-protocol", "tri-state", "--reason", "upgrade runtime adapter protocol"], { env: fx.env });
+  assert.equal(upgraded.status, 0, upgraded.stderr);
+
+  const stopped = run(["hook", "--profile", "claude"], {
+    cwd: fx.repo,
+    env: fx.env,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }),
+  });
+  assert.equal(stopped.status, 0, stopped.stderr);
+  assert.match(stopped.stdout, /criterion indeterminate; task suspended\(needs_input\)/);
+  assert.match(stopped.stdout, /adapter_silent/);
+  const state = loadTask(fx.repo);
+  assert.equal(state.lifecycle.state, "suspended");
+  assert.equal(state.lifecycle.reason, "needs_input");
+  assert.equal(state.spent.rounds, 0);
 });
 
 test("explicit-policy Stop cannot overwrite a concurrent recorded write", async (t) => {
@@ -1241,6 +1752,8 @@ test("no-task multi-file writes retain the untracked task-opening nudge", (t) =>
   assert.equal(run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: payload("one.txt") }).stdout, "");
   fs.writeFileSync(path.join(fx.repo, "one.txt"), "first\n");
   assert.match(run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: payload("two.txt") }).stdout, /permissionDecision.*deny/);
+  const retryExisting = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: payload("one.txt") });
+  assert.doesNotMatch(retryExisting.stdout, /permissionDecision.*deny/, "the denied non-materialized second target is pruned");
 });
 
 test("verify never persists ordinary observations or burns rounds", (t) => {

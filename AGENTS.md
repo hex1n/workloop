@@ -2,7 +2,7 @@
 
 ## Start and verify
 
-This repository is a dependency-free Node.js CLI plus the portable loop kernel skills (`skills/loop-core`, `skills/workloop`, `skills/judgmentloop`). Run `npm test` for the behavioral, architecture, hook-protocol, installer, and skill-closure suites. Run `node bin/taskloop.mjs help` to exercise the source entry directly.
+This repository is a dependency-free Node.js CLI plus the portable loop kernel skills (`skills/loop-core`, `skills/workloop`, `skills/judgmentloop`, `skills/meta-loop`). Run `npm test` for the behavioral, architecture, hook-protocol, installer, and skill-closure suites. Run `node bin/taskloop.mjs help` to exercise the source entry directly.
 
 ## Conventions
 
@@ -19,7 +19,7 @@ This repository is a dependency-free Node.js CLI plus the portable loop kernel s
 
 The runtime is the stop gate: it constrains writes and adjudicates fresh criteria. The bundled skills select and structure loop behavior. Schedulers that trigger another round remain outside this repository.
 
-taskloop ships the loop kernel: the runtime plus `loop-core`, `workloop`, and `judgmentloop` (the machine-verifiable and human-adjudicated loop pair; charter amended 2026-07-13 by owner decision). Further loop skills and their skill-specific tools live in their own repositories and compose through the `loop-core` contract; keep the core skill texts free of references to any specific external skill or tool.
+The loop kernel contains the runtime and skills that co-author a core runtime contract: `loop-core`, `workloop`, `judgmentloop`, and `meta-loop`. Skills that only consume an established contract live in their own repositories and compose through `loop-core`; keep the core skill texts free of references to any specific external skill or tool.
 
 `node install.mjs` writes a versioned runtime, stable shim, and digest-proven managed skill copies under the current user's home; use a temporary `TASKLOOP_INSTALL_HOME` when testing installation behavior manually. It must preserve unowned, locally modified, or externally taken-over skill trees, including when Claude and Codex skill roots alias the same directory. Never hand-edit generated files below `~/bin/.taskloop-runtime/`; modifying a managed skill intentionally releases it from automatic replacement/pruning.
 
