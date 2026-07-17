@@ -50,11 +50,12 @@
   <!-- Skills -->
   <rect x="345" y="120" width="310" height="205" class="box green"/>
   <text x="370" y="158" class="ink h1">Portable Skills</text>
-  <text x="370" y="194" class="ink h2">skills/loop-core</text>
-  <text x="390" y="219" class="ink body">共享任务 / envelope / criterion 语义</text>
-  <text x="370" y="257" class="ink h2">skills/workloop</text>
-  <text x="390" y="282" class="ink body">选择并组织循环行为</text>
-  <text x="370" y="307" class="ink small">Markdown + 标准库；随 runtime 一起发布</text>
+  <text x="370" y="190" class="ink h2">skills/loop-core</text>
+  <text x="390" y="212" class="ink small">共享 task / envelope / criterion 语义</text>
+  <text x="370" y="239" class="ink h2">skills/workloop</text>
+  <text x="390" y="261" class="ink small">机器可验证工作闭环</text>
+  <text x="370" y="286" class="ink h2">judgmentloop + meta-loop</text>
+  <text x="390" y="308" class="ink small">人工判据闭环 + ledger 元反馈</text>
 
   <!-- Entry adapters -->
   <rect x="720" y="120" width="355" height="205" class="box blue"/>
@@ -71,7 +72,7 @@
   <text x="1165" y="198" class="ink h2">lib/application.mjs</text>
   <text x="1185" y="229" class="ink body">• 解析 open / verify / achieve ...</text>
   <text x="1185" y="258" class="ink body">• 编排叶子模块与 hook 输出</text>
-  <text x="1185" y="287" class="ink body">• 记录事件、预算和 assurance</text>
+  <text x="1185" y="287" class="ink body">• 提交事件，刷新 snapshot / projection</text>
 
   <path d="M285 215 C315 215 315 215 345 215" class="line"/>
   <path d="M655 215 C685 215 690 215 720 215" class="line"/>
@@ -85,7 +86,7 @@
   <rect x="280" y="450" width="280" height="125" class="box pink"/>
   <text x="302" y="485" class="ink h2">task-engine.mjs</text>
   <text x="302" y="514" class="ink body">生命周期状态机</text>
-  <text x="302" y="540" class="ink body">policy / closure / assurance</text>
+  <text x="302" y="540" class="ink body">policy / budget / proof / review</text>
 
   <rect x="590" y="450" width="280" height="125" class="box blue"/>
   <text x="612" y="485" class="ink h2">criterion.mjs</text>
@@ -95,17 +96,17 @@
   <rect x="900" y="450" width="280" height="125" class="box yellow"/>
   <text x="922" y="485" class="ink h2">supervision.mjs</text>
   <text x="922" y="514" class="ink body">envelope / session ownership</text>
-  <text x="922" y="540" class="ink body">命令安全，默认拒绝</text>
+  <text x="922" y="540" class="ink body">命令安全 + host approval key</text>
 
   <rect x="1210" y="450" width="280" height="125" class="box green"/>
   <text x="1232" y="485" class="ink h2">task-store.mjs</text>
-  <text x="1232" y="514" class="ink body">schema-v3 snapshot + lock</text>
-  <text x="1232" y="540" class="ink body">快照可删除并重建</text>
+  <text x="1232" y="514" class="ink body">digest snapshot + task lock</text>
+  <text x="1232" y="540" class="ink body">快照可删除并从事件重建</text>
 
   <rect x="280" y="610" width="280" height="105" class="box gray"/>
   <text x="302" y="645" class="ink h2">event-store.mjs</text>
   <text x="302" y="675" class="ink body">events-v3.jsonl 唯一权威</text>
-  <text x="302" y="698" class="ink small">append + fsync；失败即报错</text>
+  <text x="302" y="698" class="ink small">hash chain + torn-tail recovery</text>
 
   <rect x="590" y="610" width="280" height="105" class="box gray"/>
   <text x="612" y="645" class="ink h2">outcome-projector.mjs</text>
@@ -113,9 +114,9 @@
   <text x="612" y="698" class="ink small">HOME：degrade open</text>
 
   <rect x="900" y="610" width="280" height="105" class="box gray"/>
-  <text x="922" y="645" class="ink h2">untracked.mjs</text>
-  <text x="922" y="675" class="ink body">未跟踪工作提示</text>
-  <text x="922" y="698" class="ink small">遥测：degrade open</text>
+  <text x="922" y="645" class="ink h2">evidence-ledger.mjs</text>
+  <text x="922" y="675" class="ink body">PreToolUse / Stop 证据</text>
+  <text x="922" y="698" class="ink small">untracked nudges；coverage 三态</text>
 
   <rect x="1210" y="610" width="280" height="105" class="box gray"/>
   <text x="1232" y="645" class="ink h2">prims.mjs</text>
@@ -141,7 +142,7 @@
   <path d="M280 910 L400 910" class="line"/>
   <text x="310" y="893" class="ink small">suspend</text>
   <path d="M400 955 C350 995 270 985 215 945" class="line"/>
-  <text x="300" y="1003" class="ink small">resume / join</text>
+  <text x="300" y="1003" class="ink small">resume / join ownership</text>
   <path d="M280 910 C500 820 640 820 740 900" class="line"/>
   <text x="475" y="846" class="ink small">关闭资格满足后显式/自动终结</text>
   <text x="92" y="1030" class="ink body">criterion: unsatisfied / satisfied / indeterminate</text>
@@ -151,7 +152,7 @@
   <rect x="1080" y="795" width="455" height="265" class="box gray"/>
   <text x="1105" y="835" class="ink h1">发布与验证边界</text>
   <text x="1105" y="874" class="ink h2">install.mjs</text>
-  <text x="1125" y="901" class="ink body">runtime + shim + managed skill copies</text>
+  <text x="1125" y="901" class="ink body">runtime + shim + 4 managed skills</text>
   <text x="1125" y="927" class="ink body">digest 校验；保护本地接管内容</text>
   <text x="1105" y="969" class="ink h2">tests/</text>
   <text x="1125" y="996" class="ink body">行为 / 架构 / hook 协议 / 安装 / 技能闭包</text>
@@ -160,7 +161,7 @@
   <!-- Loop engineering positioning -->
   <rect x="55" y="1100" width="1480" height="250" class="box blue"/>
   <text x="80" y="1138" class="ink h1">当前仓库定义的 Loop Engineering 组合闭环</text>
-  <text x="80" y="1166" class="ink body">依据当前 AGENTS.md、README、loop-core 与 workloop：外部负责续轮，内核负责结构化工作、约束写入和裁决结果</text>
+  <text x="80" y="1166" class="ink body">依据当前 README、loop-core 与 HOSTS：外部负责续轮；四个 kernel skills 组织任务、判断与元反馈；runtime 约束写入并裁决结果</text>
 
   <rect x="90" y="1200" width="235" height="90" class="box gray"/>
   <text x="112" y="1234" class="ink h2">① External Driver</text>
@@ -173,9 +174,9 @@
   <text x="397" y="1281" class="ink small">承接 Stop / PreToolUse 反馈</text>
 
   <rect x="660" y="1200" width="235" height="90" class="box yellow"/>
-  <text x="682" y="1234" class="ink h2">③ Workloop Skill</text>
-  <text x="682" y="1260" class="ink small">source → open → work → close</text>
-  <text x="682" y="1281" class="ink small">选择并组织单个 durable task</text>
+  <text x="682" y="1234" class="ink h2">③ Kernel Skills</text>
+  <text x="682" y="1260" class="ink small">workloop / judgmentloop</text>
+  <text x="682" y="1281" class="ink small">meta-loop 读取 ledger 反馈</text>
 
   <rect x="945" y="1200" width="235" height="90" class="box green"/>
   <text x="967" y="1234" class="ink h2">④ Runtime Gate</text>
@@ -185,7 +186,7 @@
   <rect x="1230" y="1200" width="235" height="90" class="box blue"/>
   <text x="1252" y="1234" class="ink h2">⑤ Project Work</text>
   <text x="1252" y="1260" class="ink small">最小改动 · focused checks</text>
-  <text x="1252" y="1281" class="ink small">产出 evidence / status / outcome</text>
+  <text x="1252" y="1281" class="ink small">产出 evidence / ledger / outcome</text>
 
   <path d="M325 1245 L375 1245" class="line"/>
   <path d="M610 1245 L660 1245" class="line"/>
@@ -195,8 +196,8 @@
   <text x="520" y="1333" class="ink small">Stop/status 的判据、挂起、终态与下一步反馈 → 外部 Driver 决定结束或触发下一轮</text>
   <path d="M650 1187 H1195" fill="none" stroke="#cc3654" stroke-width="3" filter="url(#rough)"/>
   <path d="M650 1180 V1195 M1195 1180 V1195" fill="none" stroke="#cc3654" stroke-width="3"/>
-  <text x="750" y="1184" class="ink small">本仓库发布边界：loop-core + workloop + runtime</text>
-  <text x="1220" y="1184" class="ink small">其他 loop skills：外仓组合</text>
+  <text x="750" y="1184" class="ink small">本仓库发布边界：runtime + four kernel skills</text>
+  <text x="1220" y="1184" class="ink small">drivers / schedulers：仓库外组合</text>
 
   <!-- Sticky note -->
   <path d="M65 350 H215 L235 370 V445 H65 Z" class="note"/>

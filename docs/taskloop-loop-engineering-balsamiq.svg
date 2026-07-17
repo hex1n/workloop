@@ -19,7 +19,7 @@
 
   <!-- Outer loop -->
   <rect x="45" y="115" width="1510" height="1025" rx="28" fill="none" stroke="#bd3c57" stroke-width="3" stroke-dasharray="13 9" filter="url(#rough)"/>
-  <text x="75" y="153" class="ink h1">外环：Engineer the Loop（人或外部 loop skill 驱动）</text>
+  <text x="75" y="153" class="ink h1">外环：Engineer the Loop（人、meta-loop 或外部 driver 驱动）</text>
 
   <rect x="75" y="185" width="310" height="165" class="box yellow"/>
   <text x="98" y="222" class="ink h1">1. 设计可运行契约</text>
@@ -37,10 +37,10 @@
 
   <rect x="1190" y="865" width="320" height="185" class="box blue"/>
   <text x="1213" y="902" class="ink h1">3. 收集工程反馈</text>
-  <text x="1213" y="934" class="ink body">task.json：状态 / episode / attempt</text>
-  <text x="1213" y="960" class="ink body">evidence / review / touched files</text>
-  <text x="1213" y="986" class="ink body">outcomes-v2.jsonl + audit</text>
-  <text x="1213" y="1018" class="ink small">失败、挂起、预算耗尽也都是结果</text>
+  <text x="1213" y="934" class="ink body">ledger --json：coverage / authority use</text>
+  <text x="1213" y="960" class="ink body">events-v3 authority + outcomes-v3 projection</text>
+  <text x="1213" y="986" class="ink body">terminal / suspended / abandoned</text>
+  <text x="1213" y="1018" class="ink small">失败、挂起、预算耗尽都进入反馈样本</text>
 
   <path d="M385 270 C700 115 960 115 1190 260" class="feedback"/>
   <text x="665" y="153" class="ink small">新版本契约进入下一次任务</text>
@@ -61,7 +61,7 @@
   <!-- Runtime rail surrounding inner loop -->
   <rect x="375" y="380" width="755" height="605" rx="32" class="rail"/>
   <text x="405" y="418" class="ink h1">2. 内环：Run One Durable Task</text>
-  <text x="405" y="444" class="ink small">workloop 组织行为；runtime 作为四周护栏持续监督，而非流程中的单一步骤</text>
+  <text x="405" y="444" class="ink small">workloop / judgmentloop 组织行为；runtime 作为四周护栏持续监督，而非流程中的单一步骤</text>
 
   <rect x="425" y="475" width="250" height="105" class="box yellow"/>
   <text x="447" y="510" class="ink h2">SOURCE + OPEN</text>
@@ -81,7 +81,7 @@
   <rect x="425" y="650" width="250" height="110" class="box green"/>
   <text x="447" y="685" class="ink h2">STOP GATE</text>
   <text x="447" y="713" class="ink body">现场重跑 fresh criterion</text>
-  <text x="447" y="738" class="ink small">投影 closure：ready / held / eligible</text>
+  <text x="447" y="738" class="ink small">投影 closure：not_ready / held / eligible</text>
 
   <path d="M675 527 L805 527" class="line"/>
   <path d="M930 580 L930 650" class="line"/>
@@ -105,10 +105,11 @@
   <rect x="75" y="865" width="250" height="185" class="box gray"/>
   <text x="98" y="902" class="ink h1">仓库落点</text>
   <text x="98" y="934" class="ink mono">skills/workloop</text>
-  <text x="98" y="958" class="ink mono">skills/loop-core</text>
-  <text x="98" y="982" class="ink mono">lib/application.mjs</text>
-  <text x="98" y="1006" class="ink mono">lib/task-engine.mjs</text>
-  <text x="98" y="1030" class="ink mono">tests/*.test.mjs</text>
+  <text x="98" y="956" class="ink mono">skills/loop-core</text>
+  <text x="98" y="978" class="ink mono">skills/judgmentloop</text>
+  <text x="98" y="1000" class="ink mono">skills/meta-loop</text>
+  <text x="98" y="1022" class="ink mono">lib/application.mjs</text>
+  <text x="98" y="1044" class="ink mono">tests/*.test.mjs</text>
 
-  <text x="70" y="1170" class="ink body">边界：taskloop 交付 workloop kernel；Driver、OS sandbox、其他 loop skills 通过明确 seam 在仓库外组合。</text>
+  <text x="70" y="1170" class="ink body">边界：taskloop 交付 runtime 与四个 kernel skills；Driver、OS sandbox、其他 loop skills 在仓库外组合。</text>
 </svg>
