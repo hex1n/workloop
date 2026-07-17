@@ -1,6 +1,6 @@
 ---
 name: meta-loop
-description: Diagnose whether supervised loops converge, where they fail, and how adoption behaves from taskloop's machine ledger.
+description: Diagnose whether supervised loops converge, where they fail, and how adoption behaves from taskloop's machine ledger. Use for the periodic ledger review, when the monthly reminder reports new terminal or abandoned counts, or when asked why loops stall, suspend, or bypass supervision.
 argument-hint: "[review window or operating question]"
 ---
 

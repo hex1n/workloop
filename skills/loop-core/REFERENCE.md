@@ -120,16 +120,19 @@ command shapes, post-write criterion/policy amendments, and proof acceptance.
 Unused grants and `change_classes` remain declaration records rather than gate
 keys. Actual publish/shared-push shapes are critical. Raw host permission mode
 is recorded; the kernel consumes only its `bypassPermissions`/other projection.
+
 This observed-use floor is intentionally conditional on an active PreToolUse
 sensor. Unknown or gapped sensor coverage remains ledger integrity metadata; it
 does not invent an authority use or silently replace the task's declared risk.
 On a Stop-only or plain CLI host, choose the declared risk and explicit review
 policy accordingly because taskloop cannot observe or mediate tool calls. An
 explicit waiver may therefore waive declared risk when no authority use was
-observed; an unused grant does not raise the machine floor. Evidence append
-failures intentionally burn their reserved sequence number: the resulting gap
-means an observation was lost and must not be hidden by number reuse.
-Ledger consumers must treat evidence-derived negatives as tri-state. When the
+observed; an unused grant does not raise the machine floor.
+
+Evidence append failures intentionally burn their reserved sequence number:
+the resulting gap means an observation was lost and must not be hidden by
+number reuse. Ledger consumers must treat evidence-derived negatives as
+tri-state. When the
 bounded stream is corrupt, gapped, or truncated, unanchored-review claims and
 unseen authority-use history are `unknown`, never an empty list or `false`.
 

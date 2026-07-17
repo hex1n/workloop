@@ -1,6 +1,6 @@
 ---
 name: judgmentloop
-description: Run a taste-based deliverable through a pre-registered rubric, independent review, and explicit human acceptance as the terminal verb.
+description: Run a taste-based deliverable through a pre-registered rubric, independent review, and explicit human acceptance as the terminal verb. Use when the deliverable is judged by taste — prose, design, naming, teaching material — and the done-when cannot be a plain machine check.
 argument-hint: "[deliverable + rubric + envelope]"
 ---
 
@@ -9,10 +9,8 @@ argument-hint: "[deliverable + rubric + envelope]"
 Read `../loop-core/REFERENCE.md` for the shared task, observation, lifecycle,
 closure, policy, review, envelope, session-ownership, budget, and git
 vocabulary. Read `../loop-core/ADAPTERS.md` for the adapter contract this loop
-depends on. Use this loop when the deliverable is judged by taste — prose,
-design, naming, teaching material — and the done-when cannot be a plain
-machine check. If no rubric can be written at all, the work is exploratory:
-do not open a loop, just work.
+depends on, human adjudication included. If no rubric can be written at all,
+the work is exploratory: do not open a loop, just work.
 
 ## 1. Pre-register the rubric
 
@@ -36,10 +34,9 @@ files; the criterion file stays outside the envelope.
 ## 3. Draft against the rubric
 
 Draft, then self-check each rubric quality before asking anyone else. The
-adapter reads recorded adjudication evidence, not the draft itself: with no
-verdict recorded it reports unsatisfied, because the done-when — human
-acceptance — does not hold yet; indeterminate is reserved for a malformed or
-stale adjudication record. Do not fabricate acceptance evidence to move it.
+adapter reads recorded adjudication evidence, not the draft itself, so it
+stays unsatisfied until the human verdict lands. Do not fabricate acceptance
+evidence to move it.
 
 ## 4. Independent review before acceptance
 

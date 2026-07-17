@@ -1,6 +1,6 @@
 ---
 name: workloop
-description: Run approved, machine-verifiable work until its criterion is satisfied and the task can reach a terminal outcome.
+description: Run approved, machine-verifiable work until its criterion is satisfied and the task can reach a terminal outcome. Use when work arrives with an executable done-when check, when a taskloop nudge or deny routes untracked work here, or when a fix must first recover the failure as a failing check.
 argument-hint: "[approved work + done-when criterion + envelope]"
 ---
 
@@ -13,26 +13,18 @@ vocabulary. Read
 
 ## 1. Source the criterion
 
-Open the task before the first product write. Investigation and diagnosis work
-defaults to `deferred_witness`: write the read-only failing check first, observe
-the expected failure, then fix. Escape hatch: when no honest executable check
-exists, do not manufacture one—stay outside the loop and ask for the missing
-done-when or choose a judgment workflow.
+Open the task before the first product write. Make the goal, executable
+criterion, structured alignment, and envelope explicit. Provenance picks the
+policy: a check that arrives with the work opens `default`; investigation and
+diagnosis work writes the read-only failing check first, observes the expected
+failure, and opens `deferred-witness`; a guard task over an already-satisfied
+steady state opens `steady-satisfied`, where closure stays explicit.
 
-Make the goal, executable criterion, structured alignment and envelope
-explicit. Use `default` when the criterion is currently unsatisfied,
-`deferred_witness` when the failing check must be written first, and
-`steady_satisfied` only for an explicitly closed guard task.
-
-Elicit the criterion when none arrives with the work: interview the requester
-for the done-when, the write envelope, and the not-covered gaps — the
-interview's product is the open command. Never invent a check to make the
-gate pass; `open` structurally requires an executable check, so when no honest
-criterion exists yet, stay out of the loop and ask — the interview comes
-first. Provenance maps to policy: a given check opens `default`;
-recovering the failure first — writing the failing check before the fix —
-opens `deferred-witness`; an absent criterion guarding a steady state opens
-`steady-satisfied`.
+When no criterion arrives with the work, interview the requester for the
+done-when, the write envelope, and the not-covered gaps — the interview's
+product is the open command. Never manufacture a check to make the gate pass:
+`open` structurally requires an executable check, so when no honest one
+exists, stay outside the loop and ask, or choose a judgment workflow.
 
 At admission ask whether the criterion can run unattended tonight and whether
 the machine can reach the business truth. If either answer is no, do not treat
@@ -59,8 +51,8 @@ taskloop open --goal "<goal>" --criterion-file "acceptance.mjs" \
 Inline binary criteria remain available for simple local checks, but they are
 not the canonical portable recipe.
 
-The task must open with a determinate observation allowed by the policy.
-Indeterminate refuses creation. Do not hand-write task state. When the
+The task must open with a determinate observation allowed by the policy;
+indeterminate refuses creation. Do not hand-write task state. When the
 repository already holds an active task from another host session, take it
 over with `join --reason` or work in a separate worktree; continue a
 suspended task with `resume --reason`.
@@ -81,11 +73,11 @@ Read `status` after the last substantive write. A `criterion_assurance_gap`
 requires a stronger criterion or an explicit `accept-proof-gap`; reviewer prose
 cannot repair machine proof. When `review_requirement.level` is non-null and
 not accepted, ask a reviewer at least that independent (`fresh_context` or
-`second_model`), feed blocking findings back into the loop, then record the
-current generation/revisions and blocking/advisory counts with `review`.
-taskloop only emits the requirement; reviewer scheduling belongs to the host.
-Feed only blocking findings back; never widen the envelope to chase advisory
-findings.
+`second_model`), feed the blocking findings — only the blocking ones; never
+widen the envelope to chase advisory findings — back into the loop, then
+record the current generation/revisions and blocking/advisory counts with
+`review`. taskloop only emits the requirement; reviewer scheduling belongs to
+the host.
 
 ### Steering
 
