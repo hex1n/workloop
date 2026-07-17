@@ -15,12 +15,13 @@ Created: 2026-07-15
   - [taskloop vs. loop engineering 最佳实践](../../docs/research/2026-07-11-taskloop-vs-loop-engineering.md)
   - [第一性原理 taskloop 改进](../../docs/research/2026-07-14-first-principles-taskloop-improvements.md)
   - [Loop Supervisor 演进决策稿](../../docs/decisions/2026-07-15-taskloop-loop-engineering-evolution.md)（**Gate 0 已于 2026-07-16 裁决：拒绝 charter**，`decision: BUILD` 作废——见 [Gate 0 裁决记录](../../docs/decisions/2026-07-16-supervisor-charter-gate0-verdict.md)；[07-15 分析记录](../../docs/decisions/2026-07-15-supervisor-charter-gate0.md)已被取代，仅其事实读数仍有效）
-- **仓外现状（每个 session 读账本前必须知道，2026-07-16 由票 03 查证并部分处置）**：
-  - **`Stop` 闸门：2026-07-16 已装回并实测**（`~/.claude/settings.json`，指向装机 shim；无 open task 时零 stdout、exit 0 干净释放）。**08 的档 1 与 Gate 0 的主体重新有承重件。**
-  - **`PreToolUse` 闸门：仍未装，但装回口径已由票 13 重裁（2026-07-16）**：07-15 咬人的是 **deny 档**的病，不是传感器的病（untracked → nudge → **第 2 个仓内文件 deny**）；模式梯 `{observe, nudge, deny}` 落地后**即装回停 nudge 档，不等雾区**——「原样装回被再卸」的预言对降档 hook 不成立。**deny 档才等**雾区那条「无机器判据的仓内工作」。**代价照实记：观测源缺席状态持续到模式梯落地**（执行项在 #04）——今天的全有全无 hook 装回就是 deny 复活，仍不可装。
+- **仓外现状（每个 session 读账本前必须知道；2026-07-16 由票 03 查证，2026-07-17 随 M1 发布重测）**：
+  - **M1 已发布（2026-07-17）**：v3 已合并 `main`（`f3f3001`，契约 4，CI 8/8 绿），装机 runtime = `5010f711539d`，**带 `hook --profile` 与 `--mode` 档位**。`AGENTS.md:32` 现在描述的是 `main`，不再是在途分支；票 09/13 称 v3 为「当前契约」的口径**自此字面成立**。
+  - **`Stop` 闸门：2026-07-17 起真正带牙**（`~/.claude/settings.json` → `hook --profile claude --mode nudge`）。**07-16「已装回并实测」是真的，但那次实测对 gating 缺陷是盲的**：当时是无参数调用 → v3 判成 profile `unknown` → Stop hold 静默降级，而它的实测项「无 open task 时零 stdout、exit 0 干净释放」**恰恰是降级 hook 的同款表现**。缺陷是读代码发现的，不是测出来的。**教训：拿「不开火时的表现」验闸门，验不出闸门有没有牙。**
+  - **`PreToolUse` 闸门：2026-07-17 已装，停 nudge 档**（票 13 决议 4 兑现）。**观测源缺席状态到此结束。** **deny 档仍等**雾区那条「无机器判据的仓内工作」。附带：owner 同时移除了自己的 `dangerous-operation-check` PreToolUse hook——**这是一次真实的防护降级**，nudge 档不做通用危险命令拦截，只管控制面写入、foreign session 越界、以及 publish/git-push 缺 `permission_mode`。
+  - **Codex 侧同批接入**：`~/.codex/hooks.json` = `codex-safe` nudge 配方（单一来源，config.toml 无 `[hooks]` 段）；`sandbox_workspace_write.writable_roots` 已并入 `~/.taskloop`，agent 跑的 CLI 动词不再丢账本行。
   - **由此得一条更正**：**票 05 的「0 任务」不能全赖闸门没装。** 雾区自己写着这类活「05 决议 1 在它身上落不了地」，而 owner 这两天干的正是这一类——**闸门被卸是症状不是原因**：它在一类「没有合法形态」的活上开火，只能被卸。
-  - **账本自 07-14 11:23 断流**（`outcomes-v2.jsonl`），下一张单开出来才会续上。
-  - **v3 是未发布的在途分支**：`main` = 契约 3 / `outcomes-v2.jsonl`，装机 runtime 与 main 一致；`~` 下 `*-v3.jsonl` 零命中。**票 09/13 称 v3 为「当前契约」的口径应读作「未合并分支」**（不影响其决议——两票裁的是将来的 spec）。**装机 runtime 没有 `hook --profile`，只有 `taskloop hooks`**；`AGENTS.md:32` 描述的是 v3 分支。
+  - **账本仍未续流**：07-14 11:23 断点那张单（schema-2、已 terminal、目标「幂等重装」）已于 07-17 经 owner 授权归档进 `.taskloop/archive/`（收据带 sha256，可取回）。本仓现无任务、无 v3 事件流；**下一张单开出来才续上**。**A3 的 `control_plane_friction_candidate` 传感器随 PreToolUse 一同上线，但零数据——A3 立项须等它攒够**（Gate 0 残值表：「A1 用数据裁掉了，A3 没数据就不靠推理立项」）。
 - Skills：维度裁决用 /grilling + /domain-modeling（必要时 /first-principles-planner）；research ticket 用 /research 后台 agent 解决。
 - 收口纪律（分级）：[02 维度框架](issues/02-first-principles-dimension-framework.md) 与 [04 总路线图](issues/04-roadmap-assembly.md) 关单前必须过 /plan-review 独立证伪；其余维度决策 owner 确认即关。
 - 每个维度裁决落一份决策记录到 `docs/decisions/`；ticket 的 Answer 只记 gist + 指针。
