@@ -109,6 +109,9 @@ taskloop cannot mediate or price tool calls: `ledger --json` reports coverage
 `unknown`, and callers must rely on declared risk or an explicit required
 review policy. An explicit waiver still waives declared risk when no use was
 observed; granting authority alone is not evidence that it was exercised.
+`ledger --json` also exposes `unanchored_user_claims` for `granted_by=user`,
+`criterion.authored_by=user`, and related user-authored assertions that runtime
+can record but not verify.
 Irreversible commands are protected before use only when the host approval-key
 PreToolUse integration is active. This is a capability floor: an active-task
 host must expose raw `permission_mode` for publish/shared-push calls; hosts that

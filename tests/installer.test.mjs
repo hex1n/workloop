@@ -15,7 +15,9 @@ test("installer puts runtime and skills from one release under a temporary home"
   assert.equal(installed.status, 0, installed.stderr || installed.stdout);
   const shim = path.join(home, "bin", "taskloop.mjs"); assert.ok(fs.existsSync(shim));
   const windowsShim = path.join(home, "bin", "taskloop.cmd"); assert.ok(fs.existsSync(windowsShim));
+  const powershellShim = path.join(home, "bin", "taskloop.ps1"); assert.ok(fs.existsSync(powershellShim));
   assert.equal(fs.readFileSync(windowsShim, "utf8"), '@echo off\r\nnode "%~dp0taskloop.mjs" %*\r\n');
+  assert.equal(fs.readFileSync(powershellShim, "utf8"), "$script = Join-Path $PSScriptRoot 'taskloop.mjs'\r\n& node $script @args\r\nexit $LASTEXITCODE\r\n");
   const info = JSON.parse(run(shim, ["info"], { env: { ...process.env, HOME: home, USERPROFILE: home } }).stdout); assert.equal(info.runtime_contract, 4);
   for (const runtime of [".claude", ".codex"]) for (const skill of ["loop-core", "workloop", "judgmentloop", "meta-loop"]) assert.ok(fs.existsSync(path.join(home, runtime, "skills", skill, skill === "loop-core" ? "REFERENCE.md" : "SKILL.md")));
   const manifest = JSON.parse(fs.readFileSync(path.join(home, "bin", ".taskloop-active-release.json"), "utf8"));

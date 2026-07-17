@@ -8,6 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import process from "node:process";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { releaseOwnedDirectoryLock } from "./lib/prims.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const SOURCE = path.resolve(process.env.TASKLOOP_INSTALL_REPO ?? path.dirname(__filename));
@@ -573,10 +574,13 @@ function pruneRuntimes(runtimeRoot, activeHash, dry) {
       plan("remove", target);
       continue;
     }
+    const released = path.join(path.dirname(runtimeRoot), `.taskloop-runtime-pruned-${name}.${process.pid}.${randomUUID()}`);
     try {
-      fs.rmSync(target, { recursive: true, force: true });
+      fs.renameSync(target, released);
+      try { fs.rmSync(released, { recursive: true, force: true }); } catch { /* moved out of active runtime set; later cleanup can remove it */ }
       plan("remove", target);
     } catch (error) {
+      if (error?.code === "ENOENT") continue;
       if (!["EBUSY", "EPERM", "EACCES"].includes(error?.code)) throw error;
       plan("ok", `${target} (old runtime still in use; cleanup deferred)`);
     }
@@ -646,8 +650,7 @@ function reapDeadInstallLock(lock) {
 }
 
 function releaseOwnedInstallLock(lock, token) {
-  if (readLockOwner(lock)?.token !== token) return;
-  fs.rmSync(lock, { recursive: true, force: true });
+  releaseOwnedDirectoryLock(lock, token, { pathExists: exists, readOwner: readLockOwner, wait: waitBriefly });
 }
 
 function withInstallLock(home, action) {
@@ -693,8 +696,10 @@ function activateRuntimeShims(home, hash, dry) {
     "#!/usr/bin/env node\n\n" +
     `import "./.taskloop-runtime/${hash}/bin/taskloop.mjs";\n`;
   const windowsWrapper = '@echo off\r\nnode "%~dp0taskloop.mjs" %*\r\n';
+  const powershellWrapper = "$script = Join-Path $PSScriptRoot 'taskloop.mjs'\r\n& node $script @args\r\nexit $LASTEXITCODE\r\n";
   writeTextAtomicIfChanged(path.join(home, "bin", "taskloop.mjs"), nodeWrapper, dry);
   writeTextAtomicIfChanged(path.join(home, "bin", "taskloop.cmd"), windowsWrapper, dry);
+  writeTextAtomicIfChanged(path.join(home, "bin", "taskloop.ps1"), powershellWrapper, dry);
 }
 
 function installTaskloopRuntimeUnlocked(repo, home, dry, { activate = true } = {}) {
@@ -899,6 +904,12 @@ export function installTaskloop(repo, home, dry = false) {
 
 function registerCommitDistribution(repo, dry) {
   if (!exists(path.join(repo, ".git")) || !exists(path.join(repo, "hooks", "post-commit"))) return;
+  const expectedHooksPath = path.resolve(repo, "hooks");
+  const samePath = (a, b) => {
+    const left = path.normalize(a);
+    const right = path.normalize(b);
+    return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+  };
   let current = "";
   try {
     current = execFileSync("git", ["-C", repo, "config", "--get", "core.hooksPath"], {
@@ -908,8 +919,9 @@ function registerCommitDistribution(repo, dry) {
   } catch {
     current = "";
   }
-  if (current === "hooks") {
-    plan("ok", "core.hooksPath=hooks");
+  const currentHooksPath = current ? path.resolve(repo, current) : "";
+  if (current === "hooks" || (currentHooksPath && samePath(currentHooksPath, expectedHooksPath))) {
+    plan("ok", current === "hooks" ? "core.hooksPath=hooks" : `core.hooksPath=${current}`);
     return;
   }
   if (current) {

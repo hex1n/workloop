@@ -21,7 +21,7 @@ test("roadmap E2E: dedicated criterion, host anchors, actual-use floor, and ledg
   fs.writeFileSync(path.join(repo, "work.txt"), "start\n");
   spawnSync("git", ["add", "."], { cwd: repo });
   spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "fixture"], { cwd: repo });
-  const env = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home, TASKLOOP_SESSION_ID: "", TASKLOOP_ACTING_SESSION_ID: "" };
+  const env = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home, TASKLOOP_SESSION_ID: "", TASKLOOP_ACTING_SESSION_ID: "", CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "" };
 
   const opened = run(["open", "--repo", repo, "--goal", "roadmap e2e", "--criterion-file", "check.mjs", "--criterion-protocol", "tri-state", "--criterion-policy", "default", "--alignment-because", "live roadmap chain", "--files", "work.txt", "--risk", "routine", "--risk-reason", "fixture"], { env });
   assert.equal(opened.status, 0, opened.stderr); assert.match(opened.stdout, /criterion unsatisfied/);

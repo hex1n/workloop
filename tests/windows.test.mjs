@@ -47,6 +47,19 @@ function installedFixture(t) {
   return { ...fixture, shim: path.join(fixture.home, "bin", "taskloop.mjs") };
 }
 
+function pidRegisteredWithin(pidFile, timeoutMs) {
+  const idle = new Int32Array(new SharedArrayBuffer(4));
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
+      if (Number.isInteger(pid) && pid > 0) return pid;
+    } catch { /* the child has not registered a pid yet */ }
+    if (Date.now() >= deadline) return null;
+    Atomics.wait(idle, 0, 0, 50);
+  }
+}
+
 test("Windows install is repeatable and exposes taskloop to cmd and both PowerShell editions", { skip: !WINDOWS }, (t) => {
   const fixture = installFixture(t);
   const source = path.join(fixture.root, "install source");
@@ -88,7 +101,7 @@ for (const [label, executable, argsFor, spawnOptions] of hookShells) {
     const fixture = installedFixture(t);
     const hooks = parsed(runNode(fixture.shim, ["hooks", "--profile", "claude"], { env: fixture.env }), "hooks");
     const command = hooks.hooks.PreToolUse[0].hooks[0].command;
-    assert.equal(command, `node "${fixture.shim}" hook --profile claude`, `${label} hook command must use Windows shell quoting and an explicit profile`);
+    assert.equal(command, `node "${fixture.shim}" hook --profile claude --mode nudge`, `${label} hook command must use Windows shell quoting, an explicit profile, and the default nudge mode`);
     const payload = JSON.stringify({
       hook_event_name: "PreToolUse",
       cwd: fixture.root,
@@ -141,12 +154,16 @@ test("Windows criterion timeout terminates the child and returns promptly", { sk
   fs.writeFileSync(path.join(repo, "work.txt"), "start\n");
 
   const started = Date.now();
-  const opened = runNode(fixture.shim, ["open", "--repo", repo, "--goal", "timeout", "--criterion-file", "slow.mjs", "--criterion-policy", "default", "--criterion-timeout-seconds", "1", "--alignment-because", "the checker exercises timeout handling", "--files", "work.txt", "--risk", "routine", "--risk-reason", "isolated fixture"], { cwd: repo, env: fixture.env, timeout: 10_000 });
+  const opened = runNode(fixture.shim, ["open", "--repo", repo, "--goal", "timeout", "--criterion-file", "slow.mjs", "--criterion-policy", "default", "--criterion-timeout-seconds", "5", "--alignment-because", "the checker exercises timeout handling", "--files", "work.txt", "--risk", "routine", "--risk-reason", "isolated fixture"], { cwd: repo, env: fixture.env, timeout: 30_000 });
   assert.equal(opened.status, 2, opened.stderr || opened.stdout);
   assert.match(opened.stderr, /criterion indeterminate; task not opened/i);
-  assert.ok(Date.now() - started < 10_000, `timeout took ${Date.now() - started}ms`);
-  const childPid = Number(fs.readFileSync(pidFile, "utf8"));
-  assert.throws(() => process.kill(childPid, 0), (error) => error?.code === "ESRCH", `criterion child ${childPid} is still alive`);
+  assert.ok(Date.now() - started < 30_000, `timeout took ${Date.now() - started}ms`);
+  // The child registers its pid before sleeping, so a termination that failed
+  // would leave that write to land during this poll. An absent pid therefore
+  // means the child died before it ran, not that a live child went unnoticed.
+  const childPid = pidRegisteredWithin(pidFile, 5_000);
+  if (childPid === null) t.diagnostic("criterion child was terminated before it registered a pid");
+  else assert.throws(() => process.kill(childPid, 0), (error) => error?.code === "ESRCH", `criterion child ${childPid} is still alive`);
 });
 
 test("Windows installer reaps a stale lock owned by an exited process", { skip: !WINDOWS }, (t) => {

@@ -356,7 +356,7 @@ test("criterion files dispatch through the platform interpreter without shell te
   const bashCriterion = path.join(directory, "acceptance.sh");
   fs.writeFileSync(bashCriterion, "#!/usr/bin/env bash\n[[ -n bash ]]\n");
   assert.deepEqual(criterionFileInvocation(bashCriterion, "linux", "/node"), { executable: "/usr/bin/env", args: ["bash", bashCriterion] });
-  assert.equal(runCriterionSource({ kind: "file", value: bashCriterion }, directory, 2, "binary").verdict, "satisfied");
+  assert.equal(runCriterionSource({ kind: "file", value: bashCriterion }, directory, 2, "binary").verdict, process.platform === "win32" ? "indeterminate" : "satisfied");
   assert.deepEqual(criterionFileInvocation("checks/acceptance.cmd", "win32", "C:/node.exe"), { executable: "cmd.exe", args: ["/d", "/s", "/c", "checks/acceptance.cmd"] });
   assert.deepEqual(criterionFileInvocation("checks/acceptance.ps1", "win32", "C:/node.exe"), { executable: "powershell.exe", args: ["-NoLogo", "-NoProfile", "-NonInteractive", "-File", "checks/acceptance.ps1"] });
   assert.deepEqual(criterionFileInvocation("checks/acceptance", "linux", "/node"), { executable: "checks/acceptance", args: [] });
@@ -819,6 +819,51 @@ test("ledger treats only agent-bearing actor anchors as independent review ancho
   assert.equal(lossy.authority_use.command_shapes, "unknown");
 });
 
+test("ledger exposes user authority claims as unanchored", (t) => {
+  const fx = fixture(t);
+  const agentEnv = { ...fx.env, TASKLOOP_ACTING_SESSION_ID: "agent-session" };
+  const opened = run([
+    "open", "--repo", fx.repo, "--goal", "authority claims", "--criterion-file", "check.mjs", "--criterion-policy", "default",
+    "--alignment-because", "the checker exercises the result", "--files", "work.txt",
+    "--risk", "critical", "--risk-reason", "user declared public impact",
+    "--review-policy", "waived", "--review-waiver-reason", "user accepts review residual",
+    "--criterion-authored-by", "user", "--network-allowed", "--granted-by", "user", "--reason", "user approved network authority",
+  ], { env: agentEnv });
+  assert.equal(opened.status, 0, opened.stderr);
+  const writePayload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
+  assert.equal(run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: writePayload }).status, 0);
+  const amended = run(["amend", "--repo", fx.repo, "--criterion-file", "check.mjs", "--reason", "checker amended after write"], { env: agentEnv });
+  assert.equal(amended.status, 0, amended.stderr);
+  const userRiskReason = run(["amend", "--repo", fx.repo, "--risk", "critical", "--risk-reason", "user clarified same critical risk", "--granted-by", "user", "--reason", "record user risk clarification"], { env: agentEnv });
+  assert.equal(userRiskReason.status, 0, userRiskReason.stderr);
+  const accepted = run(["accept-proof-gap", "--repo", fx.repo, "--reason", "user accepts proof gap", "--granted-by", "user"], { env: agentEnv });
+  assert.equal(accepted.status, 0, accepted.stderr);
+  const selfReason = run(["amend", "--repo", fx.repo, "--risk-reason", "agent reworded inherited risk", "--reason", "agent reworded risk"], { env: fx.env });
+  assert.equal(selfReason.status, 0, selfReason.stderr);
+  const selfPolicy = run(["amend", "--repo", fx.repo, "--review-policy", "risk-based", "--reason", "agent removed waiver"], { env: fx.env });
+  assert.equal(selfPolicy.status, 0, selfPolicy.stderr);
+
+  const ledger = JSON.parse(run(["ledger", "--json", "--repo", fx.repo], { env: fx.env }).stdout);
+  assert.deepEqual(ledger.queries.unanchored_user_claims.map((row) => row.claim), ["criterion_authorship", "grant", "risk_declaration", "review_waiver", "criterion_authorship", "risk_declaration", "proof_gap_acceptance"]);
+  assert.deepEqual(ledger.queries.unanchored_user_claims.map((row) => row.actor_session), ["agent-session", "agent-session", "agent-session", "agent-session", "agent-session", "agent-session", "agent-session"]);
+  assert.equal(ledger.queries.unanchored_user_claims[0].source, "check.mjs");
+  assert.equal(ledger.queries.unanchored_user_claims[1].grant_kind, "network");
+  assert.equal(ledger.queries.unanchored_user_claims[5].reason, "user clarified same critical risk");
+});
+
+test("ledger reports authority-backed user claims as unknown when authority is invalid", (t) => {
+  const fx = fixture(t);
+  const opened = open(fx, "default", ["--network-allowed", "--granted-by", "user", "--reason", "user approved network authority"]);
+  assert.equal(opened.status, 0, opened.stderr);
+  fs.appendFileSync(path.join(fx.repo, ".taskloop", "events-v3.jsonl"), "{broken\n");
+
+  const ledger = run(["ledger", "--json", "--repo", fx.repo], { env: fx.env });
+  assert.equal(ledger.status, 2);
+  const payload = JSON.parse(ledger.stdout);
+  assert.equal(payload.integrity.authority, "invalid");
+  assert.equal(payload.queries.unanchored_user_claims, "unknown");
+});
+
 test("evidence append failures leave a durable sequence gap", (t) => {
   const fx = fixture(t);
   fs.mkdirSync(evidencePath(fx.repo), { recursive: true });
@@ -1003,9 +1048,22 @@ test("session-scoped PreToolUse protects control state and gates foreign writes 
   assert.match(mixed.stdout, /permissionDecision.*deny/); assert.match(mixed.stdout, /not provable/);
   const changedDirectory = hook("foreign-session", "Bash", { command: "cd nested && echo x > relative.txt" });
   assert.match(changedDirectory.stdout, /permissionDecision.*deny/); assert.match(changedDirectory.stdout, /directory change/);
-  const alias = path.join(fx.repo, "alias.txt"); fs.symlinkSync(path.join(fx.repo, "work.txt"), alias);
-  const aliasedInside = hook("foreign-session", "Write", { file_path: alias });
-  assert.match(aliasedInside.stdout, /permissionDecision.*deny/); assert.match(aliasedInside.stdout, /task envelope/);
+  const alias = path.join(fx.repo, "alias.txt");
+  let hasSymlink = true;
+  try {
+    fs.symlinkSync(path.join(fx.repo, "work.txt"), alias);
+  } catch (error) {
+    if (process.platform === "win32" && ["EPERM", "EACCES"].includes(error?.code)) {
+      hasSymlink = false;
+      t.diagnostic("symlink privilege unavailable; skipping aliased path assertion");
+    } else {
+      throw error;
+    }
+  }
+  if (hasSymlink) {
+    const aliasedInside = hook("foreign-session", "Write", { file_path: alias });
+    assert.match(aliasedInside.stdout, /permissionDecision.*deny/); assert.match(aliasedInside.stdout, /task envelope/);
+  }
   assert.equal(hook("foreign-session", "Bash", { command: "git status" }).stdout, "");
   assert.equal(hook("foreign-session", "Bash", { command: "git config --list" }).stdout, "");
   assert.match(hook("foreign-session", "Bash", { command: "git clone https://example.invalid/x" }).stdout, /permissionDecision.*deny/);
