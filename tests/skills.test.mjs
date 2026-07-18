@@ -17,8 +17,8 @@ test("public docs and skills use the canonical observation/lifecycle/policy voca
   const joined = files.map((rel) => fs.readFileSync(path.join(ROOT, rel), "utf8")).join("\n");
   for (const token of ["unsatisfied", "satisfied", "indeterminate", "active", "suspended", "terminal", "deferred_witness", "steady_satisfied", "criterion_generation_id"]) assert.match(joined, new RegExp(token));
   assert.doesNotMatch(joined, /--earn-red|--keep-green|\bearn_red\b|\bred_witnessed\b|\bkeep_green\b|\bstate: done\b/);
-  assert.match(joined, /~\/\.taskloop\/outcomes-v3\.jsonl/);
-  assert.doesNotMatch(joined, /~\/\.taskloop\/outcomes(?:-v1|-v2)?\.jsonl/);
+  assert.match(joined, /~\/\.taskloop\/outcomes\.jsonl/);
+  assert.doesNotMatch(joined, /~\/\.taskloop\/outcomes-v\d+\.jsonl/);
 });
 
 test("workloop remains task-facing and delegates shared semantics to loop-core", () => {

@@ -18,10 +18,10 @@ test("installer puts runtime and skills from one release under a temporary home"
   const powershellShim = path.join(home, "bin", "taskloop.ps1"); assert.ok(fs.existsSync(powershellShim));
   assert.equal(fs.readFileSync(windowsShim, "utf8"), '@echo off\r\nnode "%~dp0taskloop.mjs" %*\r\n');
   assert.equal(fs.readFileSync(powershellShim, "utf8"), "$script = Join-Path $PSScriptRoot 'taskloop.mjs'\r\n& node $script @args\r\nexit $LASTEXITCODE\r\n");
-  const info = JSON.parse(run(shim, ["info"], { env: { ...process.env, HOME: home, USERPROFILE: home } }).stdout); assert.equal(info.runtime_contract, 4);
+  const info = JSON.parse(run(shim, ["info"], { env: { ...process.env, HOME: home, USERPROFILE: home } }).stdout); assert.equal(info.runtime_contract, 5);
   for (const runtime of [".claude", ".codex"]) for (const skill of ["loop-core", "workloop", "judgmentloop", "meta-loop"]) assert.ok(fs.existsSync(path.join(home, runtime, "skills", skill, skill === "loop-core" ? "REFERENCE.md" : "SKILL.md")));
   const manifest = JSON.parse(fs.readFileSync(path.join(home, "bin", ".taskloop-active-release.json"), "utf8"));
-  assert.equal(manifest.release_id, manifest.runtime_digest); assert.equal(manifest.runtime_contract, 4);
+  assert.equal(manifest.release_id, manifest.runtime_digest); assert.equal(manifest.runtime_contract, 5);
   assert.equal(fs.existsSync(path.join(home, "bin", ".taskloop-activation-journal.json")), false);
 });
 
@@ -142,12 +142,12 @@ test("installer warns about a multiline dotted taskloop Stop value", (t) => {
   assert.deepEqual(fs.readFileSync(config), original);
 });
 
-test("runtime-contract-4 installer refuses a contract-3 source rollback", (t) => {
+test("runtime-contract-5 installer refuses a contract-3 source rollback", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-install-no-v3-rollback-")); const home = path.join(root, "home"); const source = path.join(root, "source");
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   for (const directory of ["bin", "lib", "skills"]) fs.cpSync(path.join(ROOT, directory), path.join(source, directory), { recursive: true });
   const prims = path.join(source, "lib", "prims.mjs");
-  fs.writeFileSync(prims, fs.readFileSync(prims, "utf8").replace("const RUNTIME_CONTRACT = 4;", "const RUNTIME_CONTRACT = 3;"));
+  fs.writeFileSync(prims, fs.readFileSync(prims, "utf8").replace("const RUNTIME_CONTRACT = 5;", "const RUNTIME_CONTRACT = 3;"));
   const result = run(path.join(ROOT, "install.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, TASKLOOP_INSTALL_HOME: home, TASKLOOP_INSTALL_REPO: source } });
   assert.notEqual(result.status, 0); assert.match(result.stderr, /refusing contract 3/);
   assert.equal(fs.existsSync(path.join(home, "bin", "taskloop.mjs")), false);
@@ -171,7 +171,7 @@ test("installed runtime exercises the assurance matrix", (t) => {
   const joined = run(shim, ["join", "--repo", routine, "--reason", "installed handoff"], { env: { ...env, TASKLOOP_SESSION_ID: "installed-session" } }); assert.equal(joined.status, 0, joined.stderr); assert.equal(JSON.parse(run(shim, ["status", "--repo", routine], { env: { ...env, TASKLOOP_SESSION_ID: "installed-session" } }).stdout).session_binding.cli_identity_matches_owner, true);
   const routineState = JSON.parse(fs.readFileSync(path.join(routine, ".taskloop", "task.json"), "utf8")).projection; assert.match(routineState.created_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
   assert.equal(run(shim, ["abandon", "--repo", routine, "--reason", "archive probe"], { env }).status, 0); assert.equal(open(routine, ["--risk", "routine", "--risk-reason", "reversible"]).status, 0);
-  assert.equal(fs.readFileSync(path.join(routine, ".taskloop", "events-v3.jsonl"), "utf8").trim().split("\n").flatMap((line) => JSON.parse(line).events).filter((event) => event.kind === "task_opened").length, 2);
+  assert.equal(fs.readFileSync(path.join(routine, ".taskloop", "events.jsonl"), "utf8").trim().split("\n").flatMap((line) => JSON.parse(line).events).filter((event) => event.kind === "task_opened").length, 2);
   const substantial = makeRepo("substantial"); assert.equal(open(substantial).status, 0); assert.equal(status(substantial).review_requirement.level, "fresh_context");
   const critical = makeRepo("critical"); assert.equal(open(critical, ["--risk", "critical", "--risk-reason", "contract", "--change-class", "public-contract"]).status, 0); assert.equal(status(critical).review_requirement.level, "second_model");
   assert.equal(run(shim, ["review", "--repo", critical, "--level", "fresh-context", "--reviewer", "peer", "--blocking-findings", "0", "--advisory-findings", "0"], { env }).status, 0); assert.equal(status(critical).review_requirement.accepted, false);
@@ -190,7 +190,7 @@ test("every installer activation interruption leaves a journal and rerun converg
     assert.notEqual(interrupted.status, 0, failpoint);
     if (failpoint !== "journal-cleaned") assert.ok(fs.existsSync(path.join(home, "bin", ".taskloop-activation-journal.json")), failpoint);
     const resumed = run(path.join(ROOT, "install.mjs"), [], { env: base }); assert.equal(resumed.status, 0, `${failpoint}: ${resumed.stderr}`);
-    const info = JSON.parse(run(path.join(home, "bin", "taskloop.mjs"), ["info"], { env: base }).stdout); assert.equal(info.runtime_contract, 4);
+    const info = JSON.parse(run(path.join(home, "bin", "taskloop.mjs"), ["info"], { env: base }).stdout); assert.equal(info.runtime_contract, 5);
     assert.equal(fs.existsSync(path.join(home, "bin", ".taskloop-activation-journal.json")), false);
   }
 });

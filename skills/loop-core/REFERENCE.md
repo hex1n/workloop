@@ -185,25 +185,30 @@ the host hook payload's domain. Per-host binding mechanics are in
 
 ## State, projection, and hard cutover
 
-Runtime contract 4 treats `.taskloop/events-v3.jsonl` as the only repository
+Runtime contract 5 treats `.taskloop/events.jsonl` as the only repository
 authority. `task.json` is a disposable schema-v3 snapshot; missing or damaged
 snapshots rebuild from the event genesis, while internal event corruption fails
 closed. Schema-2 and orphan/mixed snapshots are never interpreted or migrated.
+
+Contract 5 removes schema versions from active artifact names, not from their
+content. If the runtime reports legacy versioned names, preserve both names and
+run `migrate-artifact-names --repo <repo> --reason <reason> --granted-by user`;
+it refuses ambiguous dual-name authority.
 Preserve an incompatible snapshot byte-for-byte with explicit authorization:
 
 ```text
 taskloop archive-incompatible-state --repo <repo> \
-  --reason "runtime-contract-4 hard cutover" --granted-by user
+  --reason "runtime-contract-5 hard cutover" --granted-by user
 ```
 
-The runtime projects repository events to `~/.taskloop/outcomes-v3.jsonl` on a
+The runtime projects repository events to `~/.taskloop/outcomes.jsonl` on a
 best-effort basis. Task adjudication never reads that projection. Rebuild it
 with `sync-outcomes --repo`; audit repository authority with `audit --repo` and
 the HOME projection with `audit-outcomes`. A HOME failure never rolls back a
 committed repository event. Runtime contract 3 is not a rollback target.
 
 Old `outcomes-v2.jsonl`, `transcript-cursors.json`, and `history/` artifacts are
-non-authoritative diagnostics: runtime 4 ignores them and never auto-deletes
+non-authoritative diagnostics: runtime 5 ignores them and never auto-deletes
 them.
 
 Git mutations still require explicit user intent and an envelope grant.

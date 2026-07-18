@@ -5,7 +5,7 @@ const originalReadFileSync = fs.readFileSync;
 let eventStoreReads = 0;
 
 fs.readFileSync = function countedReadFileSync(file, ...args) {
-  if (path.basename(String(file)) === "events-v3.jsonl") eventStoreReads += 1;
+  if (path.basename(String(file)) === "events.jsonl") eventStoreReads += 1;
   return originalReadFileSync.call(this, file, ...args);
 };
 

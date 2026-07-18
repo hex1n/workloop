@@ -1,17 +1,17 @@
-// Frozen public-contract probes for the future atomic runtime-contract-4
-// activation. Keep this fixture independent of lib/ so tests cannot pass by
+// Frozen public-contract probes for runtime contract 5. Keep this fixture
+// independent of lib/ so tests cannot pass by
 // importing the implementation values they are intended to verify.
 
-const RUNTIME4_INFO = Object.freeze({
-  runtime_contract: 4,
+const RUNTIME5_INFO = Object.freeze({
+  runtime_contract: 5,
   task_snapshot_schema_version: 3,
   event_record_schema_version: 2,
   outcome_projection_schema_version: 3,
-  event_store: ".taskloop/events-v3.jsonl",
-  outcome_projection: "~/.taskloop/outcomes-v3.jsonl",
+  event_store: ".taskloop/events.jsonl",
+  outcome_projection: "~/.taskloop/outcomes.jsonl",
 });
 
-const RUNTIME4_EVENT_KINDS = Object.freeze([
+const RUNTIME5_EVENT_KINDS = Object.freeze([
   "task_opened",
   "task_suspended",
   "task_resumed",
@@ -26,7 +26,7 @@ const RUNTIME4_EVENT_KINDS = Object.freeze([
   "proof_gap_accepted",
 ]);
 
-const RUNTIME4_EVENT_PAYLOAD_FIELDS = Object.freeze({
+const RUNTIME5_EVENT_PAYLOAD_FIELDS = Object.freeze({
   task_opened: Object.freeze(["goal", "criterion", "observation", "policy_name", "policy_rationale", "alignment", "envelope", "grants", "assurance", "budget", "episodes"]),
   task_suspended: Object.freeze(["reason", "judgment", "close_episode", "source", "acting_session"]),
   task_resumed: Object.freeze(["reason", "episode", "acting_session"]),
@@ -141,7 +141,7 @@ const PERSISTED_FIELD_CONTRACTS = Object.freeze({
     snapshot_digest: "sha256-digest",
   }),
   snapshot_source_cursor: Object.freeze({
-    event_store_file: "literal:events-v3.jsonl",
+    event_store_file: "literal:events.jsonl",
     repo_sequence: "positive-safe-integer",
     task_event_sequence: "positive-safe-integer",
     record_digest: "sha256-digest",
@@ -458,9 +458,9 @@ export {
   PERSISTED_NESTED_OBJECTS,
   PERSISTED_VALUE_CONSTRAINTS,
   RECORD_FIELDS,
-  RUNTIME4_EVENT_PAYLOAD_FIELDS,
-  RUNTIME4_EVENT_KINDS,
-  RUNTIME4_INFO,
+  RUNTIME5_EVENT_PAYLOAD_FIELDS,
+  RUNTIME5_EVENT_KINDS,
+  RUNTIME5_INFO,
   SNAPSHOT_FIELDS,
   SNAPSHOT_SOURCE_CURSOR_FIELDS,
   TASK_PROJECTION_FIELDS,

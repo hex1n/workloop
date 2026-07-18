@@ -48,13 +48,13 @@
       "id": "A07",
       "phase": "authority",
       "precondition": "a legacy process writes schema-2 task.json beside a valid v3 event store",
-      "injection_point": "next runtime-contract-4 entry",
+      "injection_point": "next runtime-contract-5 entry",
       "expected": "classify as mixed authority, preserve the event-store digest, and perform no mutation"
     },
     {
       "id": "A08",
       "phase": "authority",
-      "precondition": "installer is activating runtime contract 4",
+      "precondition": "installer is activating runtime contract 5",
       "injection_point": "runtime-staged, skills-activated, shim-activated, or manifest-committed failpoint",
       "expected": "stable shim resolves to one complete old or runtime-4 release and never a partial release"
     },

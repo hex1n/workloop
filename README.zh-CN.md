@@ -23,11 +23,11 @@ taskloop 是一个零依赖 Node.js CLI，也是面向 coding agent 的可移植
 - `lib/application.mjs` 是唯一装配层，负责 CLI verb、hook dispatch、事件提交、snapshot、projection 和 report。
 - `lib/` 下叶子模块只能导入 `lib/prims.mjs`，架构测试会强制这个边界。
 - `lib/task-engine.mjs` 拥有生命周期转移、策略决策、closure、assurance、budget、stuck 检测和 review requirement。
-- `lib/event-store.mjs` 拥有 hash-chained `.taskloop/events-v3.jsonl` 权威日志。
+- `lib/event-store.mjs` 拥有 hash-chained `.taskloop/events.jsonl` 权威日志。
 - `lib/task-store.mjs` 拥有 digest 校验的 schema-v3 snapshot wrapper 和跨进程 task lock。
 - `lib/supervision.mjs`、`lib/host-hooks.mjs`、`lib/evidence-ledger.mjs`、`lib/untracked.mjs` 分别承载 hook 写入仲裁、宿主协议编码、有界证据遥测和无任务写入提示。
 - `install.mjs` 在当前用户 home 下安装版本化 runtime、稳定 shim 和四个 managed skills。
-- `tests/` 覆盖行为、架构、hook 协议、runtime contract 4、事件存储、snapshot、installer、skill closure 和 Windows gates。
+- `tests/` 覆盖行为、架构、hook 协议、runtime contract 5、事件存储、snapshot、installer、skill closure 和 Windows gates。
 
 ## 核心模型
 
@@ -82,9 +82,9 @@ taskloop abandon --repo . --reason "superseded"
 
 ## 运行时权威
 
-Runtime contract 4 把 `.taskloop/events-v3.jsonl` 作为仓库内唯一权威。`.taskloop/task.json` 是 schema-v3 snapshot wrapper，可以删除并从事件重建，永远不会被提升为权威。每个公开 mutation 都先提交一条 hash-chained transaction，再刷新 snapshot。
+Runtime contract 5 把 `.taskloop/events.jsonl` 作为仓库内唯一权威。`.taskloop/task.json` 是 schema-v3 snapshot wrapper，可以删除并从事件重建，永远不会被提升为权威。每个公开 mutation 都先提交一条 hash-chained transaction，再刷新 snapshot。
 
-`~/.taskloop/outcomes-v3.jsonl` 是 home 下的 best-effort projection，不是 task authority。可以幂等重建和审计：
+`~/.taskloop/outcomes.jsonl` 是 home 下的 best-effort projection，不是 task authority。可以幂等重建和审计：
 
 ```sh
 taskloop sync-outcomes --repo .
@@ -92,16 +92,25 @@ taskloop audit --repo .
 taskloop audit-outcomes
 ```
 
+Runtime contract 5 只移除活动产物文件名中的 schema 版本，JSON/JSONL 内容里的版本字段保持不变。如果仓库仍使用旧的带版本文件名，普通命令会 fail closed，直到用户显式授权一次性改名：
+
+```sh
+taskloop migrate-artifact-names --repo . \
+  --reason "adopt stable artifact names" --granted-by user
+```
+
+如果旧格式投影已经占用了 `outcomes.jsonl`，迁移会先把原始字节保存在 `~/.taskloop/archive/`，再提升当前投影；如果两边都是当前 schema，则仍按冲突处理，不会自动覆盖。
+
 Schema-2 task 和 orphan/mixed snapshot 都 fail closed。只有带显式 user provenance 时才保留 incompatible state 的原始字节：
 
 ```sh
 taskloop archive-incompatible-state --repo . \
-  --reason "runtime-contract-4 hard cutover" --granted-by user
+  --reason "runtime-contract-5 hard cutover" --granted-by user
 ```
 
 `taskloop info` 暴露当前版本：
 
-- `runtime_contract: 4`
+- `runtime_contract: 5`
 - `criterion_adapter_protocol_version: 2`
 - `task_snapshot_schema_version: 3`
 - `event_record_schema_version: 2`

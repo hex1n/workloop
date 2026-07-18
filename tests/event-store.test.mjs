@@ -40,14 +40,14 @@ import {
   PERSISTED_NESTED_OBJECTS,
   PERSISTED_VALUE_CONSTRAINTS,
   RECORD_FIELDS,
-  RUNTIME4_EVENT_PAYLOAD_FIELDS,
-  RUNTIME4_EVENT_KINDS,
-  RUNTIME4_INFO,
+  RUNTIME5_EVENT_PAYLOAD_FIELDS,
+  RUNTIME5_EVENT_KINDS,
+  RUNTIME5_INFO,
   SNAPSHOT_FIELDS,
   SNAPSHOT_SOURCE_CURSOR_FIELDS,
   TASK_PROJECTION_FIELDS,
   V3_ERROR_MESSAGES,
-} from "./fixtures/runtime-contract-4.mjs";
+} from "./fixtures/runtime-contract-5.mjs";
 import { decide, evolve, evolveAll } from "../lib/task-engine.mjs";
 import {
   auditEventStore,
@@ -161,7 +161,7 @@ function terminateCrashChildAtSeam(args) {
   });
 }
 
-test("runtime contract 4 keeps snapshot, record, and outcome versions independent", () => {
+test("runtime contract 5 keeps snapshot, record, and outcome versions independent", () => {
   assert.deepEqual(
     {
       activeRuntime: RUNTIME_CONTRACT,
@@ -174,14 +174,14 @@ test("runtime contract 4 keeps snapshot, record, and outcome versions independen
       outcomeCursors: OUTCOME_CURSOR_DIR,
     },
     {
-      activeRuntime: 4,
+      activeRuntime: 5,
       task: 3,
       runtime: 4,
       record: 2,
       outcome: 3,
-      eventStore: "events-v3.jsonl",
-      outcomeProjection: "outcomes-v3.jsonl",
-      outcomeCursors: "outcomes-v3-cursors",
+      eventStore: "events.jsonl",
+      outcomeProjection: "outcomes.jsonl",
+      outcomeCursors: "outcomes-cursors",
     },
   );
 });
@@ -258,16 +258,16 @@ test("event-store case manifest freezes every acceptance ID with one result", ()
   }
 });
 
-test("runtime-contract-4 fixture freezes the external handshake and authority hook failures", () => {
-  assert.deepEqual(RUNTIME4_INFO, {
-    runtime_contract: 4,
+test("runtime-contract-5 fixture freezes the external handshake and authority hook failures", () => {
+  assert.deepEqual(RUNTIME5_INFO, {
+    runtime_contract: 5,
     task_snapshot_schema_version: 3,
     event_record_schema_version: 2,
     outcome_projection_schema_version: 3,
-    event_store: ".taskloop/events-v3.jsonl",
-    outcome_projection: "~/.taskloop/outcomes-v3.jsonl",
+    event_store: ".taskloop/events.jsonl",
+    outcome_projection: "~/.taskloop/outcomes.jsonl",
   });
-  assert.deepEqual(RUNTIME4_EVENT_KINDS, V3_EVENT_KINDS);
+  assert.deepEqual(RUNTIME5_EVENT_KINDS, V3_EVENT_KINDS);
   assert.deepEqual(AUTHORITY_FAILURE_HOOKS, {
     pretooluse_write: { exit: 0, frame: "deny" },
     pretooluse_read: { exit: 0, frame: "silent" },
@@ -275,7 +275,7 @@ test("runtime-contract-4 fixture freezes the external handshake and authority ho
   });
 });
 
-test("runtime-contract-4 fixture freezes every persisted envelope and benchmark receipt", () => {
+test("runtime-contract-5 fixture freezes every persisted envelope and benchmark receipt", () => {
   assert.deepEqual(RECORD_FIELDS, [
     "record_schema_version", "transaction_id", "command_id", "repo_sequence",
     "occurred_at_epoch_ms", "occurred_at", "actor", "previous_record_digest",
@@ -306,9 +306,9 @@ test("runtime-contract-4 fixture freezes every persisted envelope and benchmark 
   });
 });
 
-test("runtime-contract-4 fixture freezes nested payload, projection, and value constraints", () => {
-  assert.deepEqual(RUNTIME4_EVENT_PAYLOAD_FIELDS, V3_EVENT_PAYLOAD_FIELDS);
-  assert.deepEqual(Object.keys(RUNTIME4_EVENT_PAYLOAD_FIELDS), RUNTIME4_EVENT_KINDS);
+test("runtime-contract-5 fixture freezes nested payload, projection, and value constraints", () => {
+  assert.deepEqual(RUNTIME5_EVENT_PAYLOAD_FIELDS, V3_EVENT_PAYLOAD_FIELDS);
+  assert.deepEqual(Object.keys(RUNTIME5_EVENT_PAYLOAD_FIELDS), RUNTIME5_EVENT_KINDS);
   assert.deepEqual(TASK_PROJECTION_FIELDS, [
     "schema_version", "task_id", "task_revision", "last_substantive_task_revision", "artifact_revision",
     "created_at", "updated_at", "lifecycle", "goal", "criterion", "policy", "policy_rationale",
@@ -333,7 +333,7 @@ test("runtime-contract-4 fixture freezes nested payload, projection, and value c
   });
 });
 
-test("runtime-contract-4 fixture freezes a closed persisted type graph and digest preimages", () => {
+test("runtime-contract-5 fixture freezes a closed persisted type graph and digest preimages", () => {
   assert.deepEqual(Object.keys(PERSISTED_FIELD_CONTRACTS.record), RECORD_FIELDS);
   assert.deepEqual(Object.keys(PERSISTED_FIELD_CONTRACTS.event), EVENT_ENVELOPE_FIELDS);
   assert.deepEqual(Object.keys(PERSISTED_FIELD_CONTRACTS.snapshot), SNAPSHOT_FIELDS);
@@ -395,9 +395,9 @@ test("runtime-contract-4 fixture freezes a closed persisted type graph and diges
     output_tokens_delta: "non-negative-safe-integer",
     mode: "enum:baseline|increment",
   });
-  assert.deepEqual(Object.keys(PERSISTED_NESTED_OBJECTS).filter((name) => name.startsWith("payload.")), RUNTIME4_EVENT_KINDS.map((kind) => `payload.${kind}`));
-  for (const kind of RUNTIME4_EVENT_KINDS) {
-    assert.deepEqual(Object.keys(PERSISTED_NESTED_OBJECTS[`payload.${kind}`]), RUNTIME4_EVENT_PAYLOAD_FIELDS[kind], kind);
+  assert.deepEqual(Object.keys(PERSISTED_NESTED_OBJECTS).filter((name) => name.startsWith("payload.")), RUNTIME5_EVENT_KINDS.map((kind) => `payload.${kind}`));
+  for (const kind of RUNTIME5_EVENT_KINDS) {
+    assert.deepEqual(Object.keys(PERSISTED_NESTED_OBJECTS[`payload.${kind}`]), RUNTIME5_EVENT_PAYLOAD_FIELDS[kind], kind);
   }
 
   const referenced = [];
@@ -413,7 +413,7 @@ test("runtime-contract-4 fixture freezes a closed persisted type graph and diges
   }
   assert.equal(
     createHash("sha256").update(JSON.stringify({ fields: PERSISTED_FIELD_CONTRACTS, nested: PERSISTED_NESTED_OBJECTS })).digest("hex"),
-    "2152756b56001cb64dacabb7ef50deb48e9d6f96b52cb0331831c6ed3ac9ce6e",
+    "6e0e987eb5421fbc4f97a84bb721425239f6c6cb7e72679bab5c13841d37a02a",
   );
 
   assert.deepEqual(PERSISTED_CANONICAL_PREIMAGES, {
@@ -449,7 +449,7 @@ test("runtime-contract-4 fixture freezes a closed persisted type graph and diges
   assert.throws(() => assertPersistedDescriptor("C:\\outside", "repo-relative-path", "Windows backslash absolute path"));
 });
 
-test("runtime-contract-4 fixture freezes authority and corruption errors exactly", () => {
+test("runtime-contract-5 fixture freezes authority and corruption errors exactly", () => {
   assert.deepEqual(V3_ERROR_MESSAGES, {
     LEGACY_STATE_UNSUPPORTED: "legacy task state is unsupported; archive it explicitly before opening a schema-v3 task",
     ORPHAN_V3_SNAPSHOT: "orphan schema-v3 snapshot has no event authority; archive it explicitly",
@@ -1043,7 +1043,7 @@ test("[W08] production event store probes directory fsync while committing a can
   });
   if (process.platform === "win32") assert.match(receipt.directory_fsync, /^(?:supported|unsupported:(?:EISDIR|EPERM|EINVAL))$/);
   else assert.equal(receipt.directory_fsync, "supported");
-  assert.equal(eventStorePath(repo), path.join(repo, ".taskloop", "events-v3.jsonl"));
+  assert.equal(eventStorePath(repo), path.join(repo, ".taskloop", "events.jsonl"));
   const replay = readEventStore(repo);
   assert.equal(replay.records.length, 1);
   assert.deepEqual(replay.records[0], record);
@@ -1051,7 +1051,7 @@ test("[W08] production event store probes directory fsync while committing a can
   assert.equal(replay.last_record_digest, record.record_digest);
   assert.deepEqual(replay.task_sequences, { [command.taskId]: 1 });
   assert.deepEqual(replay.source_cursor, {
-    event_store_file: "events-v3.jsonl",
+    event_store_file: "events.jsonl",
     repo_sequence: 1,
     task_event_sequence: 1,
     record_digest: record.record_digest,

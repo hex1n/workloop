@@ -15,9 +15,9 @@ profile because Codex App and Codex CLI cannot be treated as one wire surface.
   not burn budget on a suspended task), so every extra push is pure driver
   waste.
 - Judge success from the rebuildable outcome projection
-  (`~/.taskloop/outcomes-v3.jsonl`), not from the transcript: the terminal event
+  (`~/.taskloop/outcomes.jsonl`), not from the transcript: the terminal event
   is the machine's verdict, while repository authority remains
-  `.taskloop/events-v3.jsonl`.
+  `.taskloop/events.jsonl`.
 - Give the driver itself an outer wall-clock budget: a wedged host session
   (observed live: one `codex exec` hung for twenty minutes) must die by
   timeout, not by a human noticing.

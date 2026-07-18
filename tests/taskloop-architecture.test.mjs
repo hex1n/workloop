@@ -23,12 +23,12 @@ test("assembly remains the only cross-leaf seam", () => {
   for (const name of MODULES.filter((x) => !new Set(["application.mjs", "prims.mjs"]).has(x))) assert.ok(imports(path.join(ROOT, "lib", name)).every((x) => x === "./prims.mjs"), name);
 });
 
-test("integration handshake exposes runtime-contract-4 independent schemas", () => {
+test("integration handshake exposes runtime-contract-5 independent schemas", () => {
   const info = JSON.parse(run(CLI, ["info"]).stdout);
-  assert.deepEqual({ runtime: info.runtime_contract, task: info.task_snapshot_schema_version, record: info.event_record_schema_version, outcome: info.outcome_projection_schema_version }, { runtime: 4, task: 3, record: 2, outcome: 3 });
+  assert.deepEqual({ runtime: info.runtime_contract, task: info.task_snapshot_schema_version, record: info.event_record_schema_version, outcome: info.outcome_projection_schema_version }, { runtime: 5, task: 3, record: 2, outcome: 3 });
   assert.equal(info.criterion_adapter_protocol_version, 2);
-  assert.equal(info.event_store, ".taskloop/events-v3.jsonl");
-  assert.equal(info.outcome_projection, "~/.taskloop/outcomes-v3.jsonl");
+  assert.equal(info.event_store, ".taskloop/events.jsonl");
+  assert.equal(info.outcome_projection, "~/.taskloop/outcomes.jsonl");
 });
 
 test("authority timestamps are UTC while human artifact names remain local", () => {
@@ -98,7 +98,7 @@ test("Windows W01-W08 selection is non-vacuous in every listed source", () => {
     "windows.test.mjs",
     "event-store.test.mjs",
     "task-snapshot-v3.test.mjs",
-    "runtime-v4.test.mjs",
+    "runtime-v5.test.mjs",
     "taskloop-architecture.test.mjs",
   ]) {
     assert.match(fs.readFileSync(path.join(ROOT, "tests", file), "utf8"), /\[W0[1-8]\]/, file);

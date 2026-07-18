@@ -16,7 +16,7 @@ const HOME = path.resolve(process.env.TASKLOOP_INSTALL_HOME ?? os.homedir());
 const RUNTIME_CONTRACT = (() => {
   const source = fs.readFileSync(path.join(SOURCE, "lib", "prims.mjs"), "utf8");
   const value = Number(source.match(/const RUNTIME_CONTRACT = (\d+);/)?.[1]);
-  if (value !== 4) throw new Error(`taskloop installer requires runtime contract 4 source; refusing contract ${Number.isFinite(value) ? value : "unknown"}`);
+  if (value !== 5) throw new Error(`taskloop installer requires runtime contract 5 source; refusing contract ${Number.isFinite(value) ? value : "unknown"}`);
   return value;
 })();
 const ACTIONS = [];

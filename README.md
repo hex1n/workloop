@@ -34,7 +34,7 @@ This repository ships four kernel skills with the runtime:
   suite enforces that boundary.
 - `lib/task-engine.mjs` owns lifecycle transitions, policy decisions, closure,
   assurance, budgets, stuck detection, and review requirements.
-- `lib/event-store.mjs` owns hash-chained `.taskloop/events-v3.jsonl`
+- `lib/event-store.mjs` owns hash-chained `.taskloop/events.jsonl`
   authority.
 - `lib/task-store.mjs` owns the digest-checked schema-v3 snapshot wrapper and
   cross-process task lock.
@@ -43,7 +43,7 @@ This repository ships four kernel skills with the runtime:
   bounded telemetry, and no-task nudges explicit.
 - `install.mjs` installs a versioned runtime, stable shims, and managed copies
   of the four skills under the current user's home.
-- `tests/` covers behavior, architecture, hook protocol, runtime contract 4,
+- `tests/` covers behavior, architecture, hook protocol, runtime contract 5,
   event storage, snapshots, installer behavior, skill closure, and Windows
   gates.
 
@@ -111,13 +111,13 @@ taskloop abandon --repo . --reason "superseded"
 
 ## Runtime Authority
 
-Runtime contract 4 uses `.taskloop/events-v3.jsonl` as the only repository
+Runtime contract 5 uses `.taskloop/events.jsonl` as the only repository
 authority. `.taskloop/task.json` is a schema-v3 snapshot wrapper that may be
 deleted and rebuilt from events; it is never promoted to authority. Every
 public mutation commits one hash-chained transaction before refreshing the
 snapshot.
 
-`~/.taskloop/outcomes-v3.jsonl` is a best-effort HOME projection, not task
+`~/.taskloop/outcomes.jsonl` is a best-effort HOME projection, not task
 authority. Rebuild it idempotently with:
 
 ```sh
@@ -126,17 +126,31 @@ taskloop audit --repo .
 taskloop audit-outcomes
 ```
 
+Runtime contract 5 removes schema versions from active artifact names while
+leaving the versions inside their JSON/JSONL content unchanged. If a repository
+still has legacy versioned artifact names, normal commands fail closed until the
+user authorizes the one-time rename:
+
+```sh
+taskloop migrate-artifact-names --repo . \
+  --reason "adopt stable artifact names" --granted-by user
+```
+
+If an older projection already occupies `outcomes.jsonl`, migration preserves
+its exact bytes under `~/.taskloop/archive/` before promoting the current
+projection. Two current-schema projections remain an explicit conflict.
+
 Schema-2 tasks and orphan/mixed snapshots fail closed. Preserve incompatible
 state byte-for-byte only with explicit user provenance:
 
 ```sh
 taskloop archive-incompatible-state --repo . \
-  --reason "runtime-contract-4 hard cutover" --granted-by user
+  --reason "runtime-contract-5 hard cutover" --granted-by user
 ```
 
 `taskloop info` exposes the active versions:
 
-- `runtime_contract: 4`
+- `runtime_contract: 5`
 - `criterion_adapter_protocol_version: 2`
 - `task_snapshot_schema_version: 3`
 - `event_record_schema_version: 2`

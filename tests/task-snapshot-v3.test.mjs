@@ -75,7 +75,7 @@ test("schema-v3 task snapshots are disposable digest-checked projection wrappers
   assert.deepEqual(snapshot.source_cursor, replay.source_cursor);
   assert.deepEqual(snapshot.projection, projection);
   assert.match(snapshot.snapshot_digest, /^sha256:[0-9a-f]{64}$/);
-  assert.equal(snapshot.snapshot_digest, "sha256:7b11875e800051cf3fdbbfde823af4e63370eede6c579af22d88bbfb90d042e5");
+  assert.equal(snapshot.snapshot_digest, "sha256:a29f9abb3dd7a81b5237eb235c62a3986f973a5f4ec05f3139747fee1bf183d3");
 
   saveSnapshot(repo, snapshot);
   assert.deepEqual(inspectSnapshot(repo), { status: "valid", snapshot });
@@ -243,7 +243,7 @@ test("snapshot write and rename failures never roll back committed events", asyn
   for (const failure of ["writeSync", "renameSync"]) {
     await t.test(failure, (t) => {
       const { repo, record, projection } = openV3Repo(t, `snapshot-failure-${failure}`);
-      const eventBytes = fs.readFileSync(path.join(repo, ".taskloop", "events-v3.jsonl"));
+      const eventBytes = fs.readFileSync(path.join(repo, ".taskloop", "events.jsonl"));
       const snapshotFsOps = new Proxy(fs, {
         get(target, property) {
           if (property !== failure) return target[property];
@@ -255,7 +255,7 @@ test("snapshot write and rename failures never roll back committed events", asyn
       assert.deepEqual(recovered.projection, projection);
       assert.equal(recovered.snapshot_saved, false);
       assert.match(recovered.warning, new RegExp(`committed.*${failure} failure`));
-      assert.deepEqual(fs.readFileSync(path.join(repo, ".taskloop", "events-v3.jsonl")), eventBytes);
+      assert.deepEqual(fs.readFileSync(path.join(repo, ".taskloop", "events.jsonl")), eventBytes);
       assert.deepEqual(readEventStore(repo).records, [record]);
 
       const retry = recoverV3TaskSnapshot(repo);
@@ -270,7 +270,7 @@ test("[W02] process termination after event commit and during snapshot replaceme
   const snapshot = buildSnapshot({ sourceCursor: replay.source_cursor, projection });
   const commandFile = path.join(repo, "snapshot-command.json");
   fs.writeFileSync(commandFile, canonicalJson(snapshot));
-  const authorityBefore = fs.readFileSync(path.join(repo, ".taskloop", "events-v3.jsonl"));
+  const authorityBefore = fs.readFileSync(path.join(repo, ".taskloop", "events.jsonl"));
   for (const [seam, targetExists] of [["during-snapshot-write", false], ["after-snapshot-rename", true]]) {
     fs.rmSync(taskPath(repo), { force: true });
     const crashed = await terminateCrashChildAtSeam([
@@ -279,7 +279,7 @@ test("[W02] process termination after event commit and during snapshot replaceme
     assert.equal(crashed.signal, "SIGKILL");
     assert.equal(crashed.frame.seam, seam);
     assert.equal(fs.existsSync(taskPath(repo)), targetExists);
-    assert.deepEqual(fs.readFileSync(path.join(repo, ".taskloop", "events-v3.jsonl")), authorityBefore);
+    assert.deepEqual(fs.readFileSync(path.join(repo, ".taskloop", "events.jsonl")), authorityBefore);
     const recovered = recoverV3TaskSnapshot(repo);
     assert.deepEqual(recovered.projection, projection);
     assert.ok(new Set(["rebuilt", "current"]).has(recovered.status));
@@ -288,7 +288,7 @@ test("[W02] process termination after event commit and during snapshot replaceme
 
 test("ahead or mismatched snapshots fail closed without changing event authority", async (t) => {
   const { repo, replay, projection } = openV3Repo(t, "snapshot-invalid-authority");
-  const authorityBefore = fs.readFileSync(path.join(repo, ".taskloop", "events-v3.jsonl"));
+  const authorityBefore = fs.readFileSync(path.join(repo, ".taskloop", "events.jsonl"));
   const valid = buildSnapshot({ sourceCursor: replay.source_cursor, projection });
   const cases = [
     ["cursor ahead", buildSnapshot({
@@ -316,7 +316,7 @@ test("ahead or mismatched snapshots fail closed without changing event authority
         () => recoverV3TaskSnapshot(repo),
         (error) => error.code === "MIXED_OR_INVALID_AUTHORITY" && /conflicts with schema-v3 event authority/.test(error.message),
       );
-      assert.deepEqual(fs.readFileSync(path.join(repo, ".taskloop", "events-v3.jsonl")), authorityBefore);
+      assert.deepEqual(fs.readFileSync(path.join(repo, ".taskloop", "events.jsonl")), authorityBefore);
       assert.deepEqual(fs.readFileSync(taskPath(repo)), snapshotBefore);
     });
   }
@@ -324,7 +324,7 @@ test("ahead or mismatched snapshots fail closed without changing event authority
     await t.test(name, () => {
       fs.writeFileSync(taskPath(repo), `${canonicalJson(raw)}\n`);
       assert.throws(() => recoverV3TaskSnapshot(repo), (error) => error.code === "MIXED_OR_INVALID_AUTHORITY");
-      assert.deepEqual(fs.readFileSync(path.join(repo, ".taskloop", "events-v3.jsonl")), authorityBefore);
+      assert.deepEqual(fs.readFileSync(path.join(repo, ".taskloop", "events.jsonl")), authorityBefore);
     });
   }
   saveSnapshot(repo, valid);
@@ -362,7 +362,7 @@ test("a corrupt event authority never falls back to a valid snapshot", (t) => {
   const { repo, replay, projection } = openV3Repo(t, "snapshot-corrupt-authority");
   saveSnapshot(repo, buildSnapshot({ sourceCursor: replay.source_cursor, projection }));
   const snapshotBefore = fs.readFileSync(taskPath(repo));
-  const authorityPath = path.join(repo, ".taskloop", "events-v3.jsonl");
+  const authorityPath = path.join(repo, ".taskloop", "events.jsonl");
   const record = JSON.parse(fs.readFileSync(authorityPath, "utf8"));
   record.record_digest = `sha256:${"0".repeat(64)}`;
   fs.writeFileSync(authorityPath, `${canonicalJson(record)}\n`);

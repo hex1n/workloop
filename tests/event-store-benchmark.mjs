@@ -11,7 +11,7 @@ import { evolveAll } from "../lib/task-engine.mjs";
 import {
   BENCHMARK_RECEIPT_FIELDS,
   BENCHMARK_THRESHOLDS,
-} from "./fixtures/runtime-contract-4.mjs";
+} from "./fixtures/runtime-contract-5.mjs";
 import { generateRecordFacts } from "./helpers/event-v3-fixture.mjs";
 
 const args = process.argv.slice(2);

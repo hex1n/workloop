@@ -90,7 +90,7 @@ function task(overrides = {}) {
   return createTask({ taskId: "t1", goal: "g", criterion, observation: observation("unsatisfied"), policyName: "default", at: AT, alignment: { because: "b", not_covered: [] }, envelope: { files: ["lib/**"], git: [], destructive: false, network: false }, budget: { rounds: 8 }, assurance: { declared_risk: "routine", risk_reason: "routine reversible", risk_declared_by: "self", change_classes: ["internal"], review_policy: "risk_based", required_review_level: null, review_waiver_reason: null, review_waiver_granted_by: null, proof_gap_acceptances: [], risk_floor_events: [] }, ...overrides });
 }
 
-// Pure domain checks below use the same runtime-contract-4 command/event path
+// Pure domain checks below use the same runtime-contract-5 command/event path
 // as production. This adapter only supplies deterministic test facts that the
 // CLI normally creates (attempt and session metadata).
 function applyDomainCommandForTest(state, input) {
@@ -460,9 +460,9 @@ test("CLI steady-satisfied Stop never auto closes and achieve does", (t) => {
   assert.equal(run(["achieve", "--repo", fx.repo], { env: fx.env }).status, 0);
 });
 
-test("CLI public vocabulary is clean break and info is contract 4", () => {
+test("CLI public vocabulary is clean break and info is contract 5", () => {
   const help = run(["help"]); assert.equal(help.status, 0); assert.doesNotMatch(help.stdout, /earn-red|keep-green|\bdone\b|\bred\b|\bgreen\b|--provisional|weak_sensor_unreviewed/);
-  const info = JSON.parse(run(["info"]).stdout); assert.equal(info.runtime_contract, 4); assert.equal(info.task_snapshot_schema_version, 3); assert.equal(info.event_record_schema_version, 2); assert.equal(info.outcome_projection_schema_version, 3); assert.equal(info.outcome_projection, "~/.taskloop/outcomes-v3.jsonl");
+  const info = JSON.parse(run(["info"]).stdout); assert.equal(info.runtime_contract, 5); assert.equal(info.task_snapshot_schema_version, 3); assert.equal(info.event_record_schema_version, 2); assert.equal(info.outcome_projection_schema_version, 3); assert.equal(info.outcome_projection, "~/.taskloop/outcomes.jsonl");
   assert.notEqual(run(["open", "--earn-red"]).status, 0); assert.notEqual(run(["done"]).status, 0);
 });
 
@@ -517,7 +517,7 @@ test("CLI proof acceptance, waiver, defaults and grant floors stay independent",
   const waived = fixture(t); fs.writeFileSync(path.join(waived.repo, "done"), "yes\n");
   result = run(["open", "--repo", waived.repo, "--goal", "waived", "--criterion-file", "check.mjs", "--criterion-policy", "steady-satisfied", "--reason", "guard", "--alignment-because", "probe", "--files", "work.txt", "--review-policy", "waived", "--review-waiver-reason", "user accepts review cost"], { env: waived.env });
   assert.equal(result.status, 0, result.stderr); const waivedClose = run(["achieve", "--repo", waived.repo], { env: waived.env }); assert.equal(waivedClose.status, 0); assert.match(waivedClose.stdout, /review waived: user accepts review cost \(self\)/);
-  const waiverEvents = fs.readFileSync(path.join(waived.home, ".taskloop", "outcomes-v3.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+  const waiverEvents = fs.readFileSync(path.join(waived.home, ".taskloop", "outcomes.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
   const waiverAssurance = waiverEvents.find((row) => row.kind === "task_opened").payload.assurance;
   assert.equal(waiverAssurance.review_waiver_reason, "user accepts review cost"); assert.equal(waiverAssurance.review_waiver_granted_by, "self");
 
@@ -573,7 +573,7 @@ test("host profiles change Stop encoding without changing adjudication", (t) => 
     const stopped = run(["hook", "--profile", profile], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
     assert.equal(stopped.status, 0);
     const state = loadTask(fx.repo);
-    const records = fs.readFileSync(path.join(fx.repo, ".taskloop", "events-v3.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+    const records = fs.readFileSync(path.join(fx.repo, ".taskloop", "events.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
     return withoutVolatileRuntimeFields({ projection: state, records });
   });
   assert.deepEqual(summaries[1], summaries[0]);
@@ -636,7 +636,7 @@ test("episode-less authority changes retain the injected acting agent", (t) => {
   assert.equal(authorized.stdout, "");
   assert.equal(run(["amend", "--repo", fx.repo, "--criterion-file", "check.mjs", "--reason", "agent refinement"], { env }).status, 0);
   assert.equal(run(["accept-proof-gap", "--repo", fx.repo, "--reason", "user accepts remaining proof limits", "--granted-by", "user"], { env }).status, 0);
-  const records = fs.readFileSync(path.join(fx.repo, ".taskloop", "events-v3.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+  const records = fs.readFileSync(path.join(fx.repo, ".taskloop", "events.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
   const authorityChanges = records.filter((record) => record.events.some((event) => ["task_amended", "proof_gap_accepted"].includes(event.kind)));
   assert.deepEqual(authorityChanges.map((record) => record.actor.session_id), ["child-agent", "child-agent"]);
 });
@@ -855,7 +855,7 @@ test("ledger reports authority-backed user claims as unknown when authority is i
   const fx = fixture(t);
   const opened = open(fx, "default", ["--network-allowed", "--granted-by", "user", "--reason", "user approved network authority"]);
   assert.equal(opened.status, 0, opened.stderr);
-  fs.appendFileSync(path.join(fx.repo, ".taskloop", "events-v3.jsonl"), "{broken\n");
+  fs.appendFileSync(path.join(fx.repo, ".taskloop", "events.jsonl"), "{broken\n");
 
   const ledger = run(["ledger", "--json", "--repo", fx.repo], { env: fx.env });
   assert.equal(ledger.status, 2);
@@ -1036,9 +1036,9 @@ test("session-scoped PreToolUse protects control state and gates foreign writes 
   assert.equal(hook("owner-session", "Read", { file_path: path.join(fx.repo, ".taskloop", "task.json") }).stdout, "");
   const foreignControl = hook("foreign-session", "Bash", { command: `echo bad > ${path.join(fx.repo, ".git", "config")}` });
   assert.match(foreignControl.stdout, /permissionDecision.*deny/);
-  const homeControl = hook("owner-session", "Write", { file_path: path.join(fx.home, ".taskloop", "outcomes-v3.jsonl") });
+  const homeControl = hook("owner-session", "Write", { file_path: path.join(fx.home, ".taskloop", "outcomes.jsonl") });
   assert.match(homeControl.stdout, /permissionDecision.*deny/);
-  const tildeControl = hook("owner-session", "Write", { file_path: "~/.taskloop/outcomes-v3.jsonl" });
+  const tildeControl = hook("owner-session", "Write", { file_path: "~/.taskloop/outcomes.jsonl" });
   assert.match(tildeControl.stdout, /permissionDecision.*deny/); assert.match(tildeControl.stdout, /control state/);
   const inside = hook("foreign-session", "Write", { file_path: path.join(fx.repo, "work.txt") });
   assert.match(inside.stdout, /permissionDecision.*deny/); assert.match(inside.stdout, /taskloop join/);
@@ -1280,7 +1280,7 @@ test("episode cursors fast-forward across A to B to A without charging foreign t
   assert.equal(cursors.length, 1); assert.equal(cursors[0].episode_id, loadTask(fx.repo).episodes.at(-1).episode_id);
 });
 
-test("legacy transcript cursor sidecars are ignored by runtime contract 4", (t) => {
+test("legacy transcript cursor sidecars are ignored by runtime contract 5", (t) => {
   const fx = fixture(t); const env = { ...fx.env, TASKLOOP_SESSION_ID: "owner" }; assert.equal(open({ ...fx, env }).status, 0);
   const sidecar = path.join(fx.repo, ".taskloop", "transcript-cursors.json"); fs.writeFileSync(sidecar, '{"legacy":true}\n');
   const transcript = path.join(fx.root, "legacy.jsonl"); fs.writeFileSync(transcript, JSON.stringify({ output_tokens: 9 }) + "\n");
@@ -1345,7 +1345,7 @@ test("join transfers an active episode without changing substantive or ledger re
   const oldOwnerStop = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo, session_id: "session-a" }) });
   assert.equal(oldOwnerStop.stdout, ""); assert.equal(fs.readFileSync(statePath, "utf8"), joinedBytes);
   const audit = run(["audit", "--repo", fx.repo], { env: firstEnv }); assert.equal(audit.status, 0, audit.stdout + audit.stderr);
-  const projectionRows = fs.readFileSync(path.join(fx.home, ".taskloop", "outcomes-v3.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+  const projectionRows = fs.readFileSync(path.join(fx.home, ".taskloop", "outcomes.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
   assert.ok(projectionRows.some((row) => row.kind === "task_joined"));
   assert.doesNotThrow(() => assertV3TaskProjection(after));
 });
@@ -1542,7 +1542,7 @@ test("Markdown report renders every bounded and unbounded budget dimension", (t)
   const json = JSON.parse(run(["report", "--repo", unbounded.repo, "--json"], { env: unbounded.env }).stdout);
   delete json.generated_at;
   assert.deepEqual(json, {
-    runtime_contract: 4,
+    runtime_contract: 5,
     criterion_adapter_protocol_version: 2,
     task_snapshot_schema_version: 3,
     event_record_schema_version: 2,
