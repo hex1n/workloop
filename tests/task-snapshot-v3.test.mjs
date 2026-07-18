@@ -79,7 +79,9 @@ test("schema-v3 task snapshots are disposable digest-checked projection wrappers
 
   saveSnapshot(repo, snapshot);
   assert.deepEqual(inspectSnapshot(repo), { status: "valid", snapshot });
-  assert.equal(fs.readFileSync(taskPath(repo), "utf8"), `${canonicalJson(snapshot)}\n`);
+  const snapshotBytes = fs.readFileSync(taskPath(repo), "utf8");
+  assert.deepEqual(JSON.parse(snapshotBytes), snapshot);
+  assert.equal(snapshotBytes, `${JSON.stringify(JSON.parse(canonicalJson(snapshot)), null, 2)}\n`);
   assert.equal(fs.readFileSync(path.join(repo, ".taskloop", ".gitignore"), "utf8"), "*\n");
 
   const tampered = structuredClone(snapshot);
@@ -112,6 +114,9 @@ test("missing or damaged schema-v3 snapshots rebuild from authoritative events",
   assert.equal(invalidJson.diagnostic.reason, "invalid_json");
   assert.equal(invalidJson.diagnostic.raw_sha256, sha256Hex(brokenBytes));
   assert.deepEqual(fs.readFileSync(invalidJson.diagnostic.quarantine_path), brokenBytes);
+  const quarantineReceiptBytes = fs.readFileSync(invalidJson.diagnostic.receipt_path, "utf8");
+  assert.deepEqual(JSON.parse(quarantineReceiptBytes), invalidJson.diagnostic);
+  assert.equal(quarantineReceiptBytes, `${JSON.stringify(JSON.parse(canonicalJson(invalidJson.diagnostic)), null, 2)}\n`);
 
   const valid = inspectSnapshot(repo).snapshot;
   valid.snapshot_digest = `sha256:${"0".repeat(64)}`;

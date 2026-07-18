@@ -7,7 +7,7 @@ import test from "node:test";
 
 import { buildRecord, readEventStore } from "../lib/event-store.mjs";
 import { syncOutcomeRecords } from "../lib/outcome-projector.mjs";
-import { sha256Hex } from "../lib/prims.mjs";
+import { canonicalJson, sha256Hex } from "../lib/prims.mjs";
 
 const ROOT = path.resolve(".");
 const CLI = path.join(ROOT, "bin", "taskloop.mjs");
@@ -243,7 +243,10 @@ test("outcomes-v3 is best-effort, idempotent, and rebuildable from repository au
   const rescanned = run(["sync-outcomes", "--repo", fx.repo], { env: fx.env });
   assert.equal(rescanned.status, 0, rescanned.stderr);
   assert.equal(JSON.parse(rescanned.stdout).added, 0);
-  assert.equal(JSON.parse(fs.readFileSync(cursorFile, "utf8")).last_repo_sequence, 1);
+  const cursorBytes = fs.readFileSync(cursorFile, "utf8");
+  const cursor = JSON.parse(cursorBytes);
+  assert.equal(cursor.last_repo_sequence, 1);
+  assert.equal(cursorBytes, `${JSON.stringify(JSON.parse(canonicalJson(cursor)), null, 2)}\n`);
 
   const completeWithoutNewline = fs.readFileSync(projectionFile).subarray(0, fs.statSync(projectionFile).size - 1);
   fs.writeFileSync(projectionFile, completeWithoutNewline);

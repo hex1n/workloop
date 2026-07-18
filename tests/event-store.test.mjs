@@ -1227,8 +1227,10 @@ test("production replay durably quarantines a torn tail and recovery is reentran
   assert.equal(replay.recovered_tail.tail_sha256, sha256Hex(tail));
   assert.equal(replay.recovered_tail.recovered_at, utcTimestamp(recoveryEpochMs));
   assert.deepEqual(fs.readFileSync(replay.recovered_tail.quarantine_path), tail);
-  const receipt = JSON.parse(fs.readFileSync(replay.recovered_tail.receipt_path, "utf8"));
+  const receiptBytes = fs.readFileSync(replay.recovered_tail.receipt_path, "utf8");
+  const receipt = JSON.parse(receiptBytes);
   assert.deepEqual(receipt, replay.recovered_tail);
+  assert.equal(receiptBytes, `${JSON.stringify(JSON.parse(canonicalJson(replay.recovered_tail)), null, 2)}\n`);
   const quarantineFiles = fs.readdirSync(path.join(repo, ".taskloop", "quarantine"));
   assert.equal(quarantineFiles.filter((name) => name.endsWith(".bin")).length, 1);
   assert.equal(quarantineFiles.filter((name) => name.endsWith(".json")).length, 1);
