@@ -130,6 +130,10 @@ taskloop amend --repo . --git-allowed add \
 
 Network、destructive、install-script 和 publish-shaped command 都需要对应 grant。远程下载后直接 pipe 到 shell 需要同时具备 network 和 destructive grant。Secret dump 始终默认拒绝。
 
+这道闸门读的是命令形状而非意图，覆盖面比上述类名听起来要窄。Network 指 `curl`、`wget`、`Invoke-WebRequest`；secret dump 指常见读取工具读取已知凭据路径。其他出口（`git clone`、`ssh`、`scp`）、读取同一批文件的其他工具，以及任何通过 shell 变量拼装工具名的命令，都会放行。请把它当作对付显而易见的危险写法的摩擦力：真正的安全边界仍然是宿主权限系统与操作系统沙箱。
+
+结构化命令解析会为每个可执行视图只生成一次带宿主方言的中间结构：chain separator、invocation、嵌套命令体与 ambiguity 都在这里确定，git 授权、owner 安全检查、风险形状和 foreign-session 检查再从同一结构投影效果。已知选项按精确语法解析；已知工具或 wrapper 上的未知选项会同时按 boolean 和 value-taking 两种合法情况解析，结果标为 ambiguous，并保留所有可能的危险效果。嵌套的 `cmd`、PowerShell 与 POSIX shell 命令体会切换到各自方言；闭合 heredoc 会成为嵌套输入结构。无法静态还原、且不是已识别远程来源的解释器 stdin，以及 CMD `FOR /F` substitution，统一归类为 `dynamic_exec` 并拒绝；已识别的远程 pipe 仍使用可单独授权的 `remote_exec`。完全未识别的 wrapper，以及通过 shell 变量拼装的工具名，仍不在这个结构模型内。
+
 ## Hooks 与宿主
 
 Hook recipe 必须显式指定 profile：

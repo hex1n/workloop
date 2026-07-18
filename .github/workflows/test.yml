@@ -109,7 +109,7 @@ jobs:
         run: node --test --test-name-pattern="Windows installer reaps a stale lock" tests/windows.test.mjs
       - name: W01-W08 event authority, recovery, transcript, and concurrency
         timeout-minutes: 5
-        run: node --test --test-reporter=spec --test-name-pattern="\[W0[1-8]\]" tests/windows.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v4.test.mjs tests/taskloop-architecture.test.mjs
+        run: node --test --test-reporter=spec --test-name-pattern="\[W0[1-8]\]" tests/windows.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/taskloop-architecture.test.mjs
       - name: Architecture
         timeout-minutes: 3
         run: |
@@ -123,10 +123,10 @@ jobs:
       - name: Installer
         timeout-minutes: 5
         run: npm run test:installer
-      - name: Behavioral and hook protocol
+      - name: Command safety, behavioral and hook protocol
         timeout-minutes: 5
         run: |
-          $output = & node --test --test-reporter=spec tests/taskloop.test.mjs 2>&1 | Out-String
+          $output = & node --test --test-reporter=spec tests/command-safety-adversarial.test.mjs tests/taskloop.test.mjs 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0) {
             $failureIndex = $output.IndexOf("failing tests:")
             $details = if ($failureIndex -ge 0) { $output.Substring($failureIndex) } else { $output }

@@ -7,8 +7,8 @@
     "taskloop": "bin/taskloop.mjs"
   },
   "scripts": {
-    "test": "node --test tests/taskloop.test.mjs && node --test tests/host-hooks.test.mjs tests/roadmap-e2e.test.mjs tests/taskloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
-    "test:matrix": "node --test tests/host-hooks.test.mjs tests/roadmap-e2e.test.mjs tests/taskloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
+    "test": "node --test tests/taskloop.test.mjs && node --test tests/command-safety-adversarial.test.mjs tests/host-hooks.test.mjs tests/roadmap-e2e.test.mjs tests/taskloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
+    "test:matrix": "node --test tests/command-safety-adversarial.test.mjs tests/host-hooks.test.mjs tests/roadmap-e2e.test.mjs tests/taskloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
     "test:host-hooks": "node --test tests/host-hooks.test.mjs",
     "test:behavioral": "node --test tests/taskloop.test.mjs",
     "test:architecture": "node --test tests/taskloop-architecture.test.mjs",

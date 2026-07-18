@@ -177,6 +177,30 @@ Network, destructive, install-script, and publish-shaped commands require
 their matching grants. Remote download-to-shell execution requires both
 network and destructive grants. Secret dumps remain denied.
 
+The gate reads command shape, not intent, and its reach is narrower than
+those class names suggest. Network means `curl`, `wget`, and
+`Invoke-WebRequest`; secret dumps mean the common readers over well-known
+credential paths. Other egress such as `git clone`, `ssh`, and `scp`, other
+readers of those same files, and any command whose tool is assembled through
+a shell variable all pass. Treat the gate as friction against the obvious
+dangerous form: the host permission system and an OS sandbox remain the
+security boundary.
+
+Structural command parsing builds one host-dialect-aware intermediate form for
+each executable view: chain separators, invocations, nested command bodies, and
+ambiguity are computed once, then git authorization, owner safety checks, risk
+shapes, and foreign-session checks project effects from that same form. Known
+options parse exactly. An unknown option on a known tool or wrapper is treated
+as both a boolean and a value-taking option; the result is marked ambiguous and
+every plausible dangerous effect is retained. Nested `cmd`, PowerShell, and
+POSIX-shell bodies switch to their own dialect. Closed heredocs become nested
+input structures; unclassified non-remote interpreter stdin and CMD `FOR /F`
+substitution are classified once as `dynamic_exec` and fail closed instead
+of being guessed. A recognized remote-source pipe remains the separately
+grantable `remote_exec` shape.
+An entirely unrecognized wrapper or a tool name assembled through shell
+variables remains outside this structural model.
+
 ## Hooks and Hosts
 
 Hook recipes require an explicit profile:
