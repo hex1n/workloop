@@ -13,11 +13,43 @@
 
 import assert from "node:assert/strict";
 import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
 import { analyzeCommand, analyzeToolCall, commandSafetyFailure, commandShapes, controlPlaneWriteFailure, foreignWriteDecision, gitOps, writeFileTargets } from "../lib/supervision.mjs";
 
 const UNGRANTED = { envelope: { files: ["**"], git: [], destructive: false, network: false }, grants: [] };
+const SCOPED = { envelope: { files: ["**"], git: [], destructive: false, network: false }, grants: [{ kind: "destructive", scope: [".scratch"] }] };
+
+test("a path-scoped destructive grant fails closed on every unprovable form", () => {
+  const repo = process.cwd();
+  const scopedFailure = (command) => commandSafetyFailure(SCOPED, command, { repo });
+  assert.equal(scopedFailure("rm -rf .scratch/leftover"), null);
+  assert.equal(scopedFailure("rm -rf .scratch"), null);
+  assert.equal(scopedFailure("cd .scratch && rm -rf leftover"), null);
+  assert.match(scopedFailure("rm -rf lib"), /outside the granted destructive scope/);
+  assert.match(scopedFailure("rm -rf .scratch/../lib"), /outside the granted destructive scope/);
+  assert.match(scopedFailure("cd .scratch && rm -rf ../lib"), /outside the granted destructive scope/);
+  assert.match(scopedFailure("rm -rf .scratch/kept lib/reached"), /outside the granted destructive scope/);
+  assert.match(scopedFailure("rm -rf $HOME/.scratch"), /cannot safely resolve destructive target/);
+  assert.match(scopedFailure("rm -rf ~/.scratch"), /cannot safely resolve destructive target/);
+  assert.match(scopedFailure("rm -rf .scratch/*"), /cannot safely resolve destructive target/);
+  assert.match(scopedFailure("find .scratch -delete"), /not coverable by the path-scoped/);
+  assert.match(scopedFailure("git clean -fdx"), /not coverable by the path-scoped/);
+  assert.match(commandSafetyFailure(SCOPED, "rm -rf .scratch/leftover"), /destructive/);
+
+  // The observed friction case cleans a host scratch area outside the
+  // repository: an absolute root must work, and the symlinked tmpdir spelling
+  // (/var vs /private/var) must converge through canonicalization.
+  if (process.platform !== "win32") {
+    const absoluteRoot = path.join(os.tmpdir(), "taskloop-scope-root");
+    const absolute = { envelope: { files: ["**"], git: [], destructive: false, network: false }, grants: [{ kind: "destructive", scope: [absoluteRoot] }] };
+    assert.equal(commandSafetyFailure(absolute, `rm -rf ${absoluteRoot}/run-1`, { repo }), null);
+    assert.match(commandSafetyFailure(absolute, `rm -rf ${path.join(os.tmpdir(), "other-session")}`, { repo }), /outside the granted destructive scope/);
+    assert.match(commandSafetyFailure(absolute, "rm -rf lib", { repo }), /outside the granted destructive scope/);
+  }
+});
 
 function denies(command) {
   return commandSafetyFailure(UNGRANTED, command) !== null;

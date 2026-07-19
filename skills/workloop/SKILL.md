@@ -51,6 +51,14 @@ taskloop open --goal "<goal>" --criterion-file "acceptance.mjs" \
 Inline binary criteria remain available for simple local checks, but they are
 not the canonical portable recipe.
 
+Declare foreseeable authority at open. Work that will delete files it creates
+— scratch fixtures, generated trees — should request a path-scoped destructive
+grant up front (`--destructive-scope <root> --reason`): in-scope cleanup
+prices as ordinary work, and an unused grant stays a declaration record either
+way. Reserve `--destructive-allowed` for deletions that cannot be confined to
+declared roots. Fixtures placed under the host's transient scratch area need
+no cleanup at all: leave them for the host to reap.
+
 The task must open with a determinate observation allowed by the policy;
 indeterminate refuses creation. Do not hand-write task state. When the
 repository already holds an active task from another host session, take it
@@ -63,6 +71,11 @@ Make the narrowest aligned change, run focused checks, and inspect `status`
 after each meaningful write. Criterion unsatisfied guides the next round;
 criterion indeterminate means repair evidence or environment, not product work.
 Never weaken or mutate the criterion to obtain satisfied.
+
+A command-safety deny mid-loop is an authority gap: the message names the
+`amend` flag that lifts it. Either drop the effect — prefer leaving transient
+files in place over deleting them — or record the narrowest grant that covers
+the work (a scoped root over full destructive authority) and continue.
 
 After roughly three consecutive unsatisfied rounds on the same cause, suspend
 as stuck with the dead-end list and resume in a fresh session: task state

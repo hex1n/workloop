@@ -129,6 +129,15 @@ policy accordingly because taskloop cannot observe or mediate tool calls. An
 explicit waiver may therefore waive declared risk when no authority use was
 observed; an unused grant does not raise the machine floor.
 
+A destructive grant is either full (`--destructive-allowed`) or path-scoped
+(`--destructive-scope <root>`, repeatable, literal paths only). A scoped grant
+covers only rm commands whose every target canonicalizes — symlinks resolved,
+no variables, globs, or `~` — inside a granted root; every other destructive
+shape and every unprovable target fails closed to a deny. In-scope use is
+attributed cleanup: the ledger records the resolved targets and the machine
+floor does not rise, while full-grant destructive use still prices as
+substantial.
+
 Evidence append failures intentionally burn their reserved sequence number:
 the resulting gap means an observation was lost and must not be hidden by
 number reuse. Ledger consumers must treat evidence-derived negatives as

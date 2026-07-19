@@ -1809,9 +1809,9 @@ test("irreversible authority uses the raw host key before use", (t) => {
 test("destructive, network, and install commands require their matching grants", (t) => {
   const denied = fixture(t); assert.equal(open(denied).status, 0);
   const hook = (fx, command) => run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Bash", tool_input: { command } }) });
-  assert.match(hook(denied, "rm -rf ./never-executed").stdout, /destructive grant/);
-  assert.match(hook(denied, "curl https://example.invalid/file").stdout, /network grant/);
-  assert.match(hook(denied, "npm install never-executed").stdout, /install grant/);
+  assert.match(hook(denied, "rm -rf ./never-executed").stdout, /destructive grant; run taskloop amend --destructive-scope/);
+  assert.match(hook(denied, "curl https://example.invalid/file").stdout, /network grant; run taskloop amend --network-allowed/);
+  assert.match(hook(denied, "npm install never-executed").stdout, /install grant; run taskloop amend --install-scripts-allowed/);
 
   const allowed = fixture(t);
   const opened = open(allowed, "default", ["--destructive-allowed", "--network-allowed", "--install-scripts-allowed", "--granted-by", "user", "--reason", "explicit test authority"]); assert.equal(opened.status, 0, opened.stderr);
@@ -1820,6 +1820,47 @@ test("destructive, network, and install commands require their matching grants",
   assert.equal(hook(allowed, "npm install never-executed").stdout, "");
   assert.deepEqual(new Set(loadTask(allowed.repo).grants.map((item) => item.kind)), new Set(["destructive", "network", "install"]));
   assert.deepEqual(JSON.parse(run(["report", "--repo", allowed.repo, "--json"], { env: allowed.env }).stdout).envelope_deviations, []);
+});
+
+test("a path-scoped destructive grant covers literal rm inside its roots and fails closed everywhere else", (t) => {
+  const scoped = fixture(t);
+  assert.equal(open(scoped, "default", ["--destructive-scope", ".scratch", "--reason", "fixture cleanup"]).status, 0);
+  const hook = (fx, command) => run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Bash", tool_input: { command } }) });
+  fs.mkdirSync(path.join(scoped.repo, ".scratch", "run"), { recursive: true });
+  fs.writeFileSync(path.join(scoped.repo, ".scratch", "run", "fixture.json"), "{}");
+  fs.mkdirSync(path.join(scoped.repo, "src"), { recursive: true });
+
+  assert.equal(hook(scoped, "rm -rf .scratch/run").stdout, "");
+  assert.match(hook(scoped, "rm -rf src").stdout, /outside the granted destructive scope/);
+  assert.match(hook(scoped, "rm -rf .scratch/../src").stdout, /outside the granted destructive scope/);
+  assert.match(hook(scoped, 'rm -rf "$SCRATCH/run"').stdout, /cannot safely resolve destructive target/);
+  assert.match(hook(scoped, "rm -rf .scratch/run/*.json").stdout, /cannot safely resolve destructive target/);
+  assert.match(hook(scoped, "find .scratch -delete").stdout, /not coverable by the path-scoped destructive grant/);
+  if (process.platform !== "win32") {
+    fs.symlinkSync(path.join(scoped.repo, "src"), path.join(scoped.repo, ".scratch", "escape"));
+    assert.match(hook(scoped, "rm -rf .scratch/escape").stdout, /outside the granted destructive scope/);
+  }
+
+  const touched = loadTask(scoped.repo).evidence.touched_files;
+  assert.ok(touched.includes("<command:destructive_scoped>"), JSON.stringify(touched));
+  assert.ok(touched.some((item) => item.startsWith("<destructive-scoped:")), JSON.stringify(touched));
+  assert.ok(!touched.includes("<command:destructive>"), JSON.stringify(touched));
+  assert.ok(!touched.includes("<command>"), JSON.stringify(touched));
+  const floor = JSON.parse(run(["status", "--repo", scoped.repo], { env: scoped.env }).stdout).machine_risk_floor;
+  assert.equal(floor.risk, "routine", JSON.stringify(floor));
+  assert.deepEqual(JSON.parse(run(["report", "--repo", scoped.repo, "--json"], { env: scoped.env }).stdout).envelope_deviations, []);
+
+  const amended = fixture(t);
+  assert.equal(open(amended).status, 0);
+  fs.mkdirSync(path.join(amended.repo, ".scratch"), { recursive: true });
+  assert.match(hook(amended, "rm -rf .scratch").stdout, /destructive grant; run taskloop amend --destructive-scope/);
+  assert.equal(run(["amend", "--repo", amended.repo, "--destructive-scope", ".scratch", "--reason", "cleanup authority"], { env: amended.env }).status, 0);
+  assert.equal(hook(amended, "rm -rf .scratch").stdout, "");
+
+  const conflicted = fixture(t);
+  const both = open(conflicted, "default", ["--destructive-allowed", "--destructive-scope", ".scratch", "--reason", "conflict"]);
+  assert.notEqual(both.status, 0);
+  assert.match(both.stderr, /not both/);
 });
 
 test("stdout-only remote reads do not consume write budget or raise the observed-use floor", (t) => {
