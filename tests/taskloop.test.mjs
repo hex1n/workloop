@@ -1856,6 +1856,14 @@ test("a path-scoped destructive grant covers literal rm inside its roots and fai
   assert.match(hook(amended, "rm -rf .scratch").stdout, /destructive grant; run taskloop amend --destructive-scope/);
   assert.equal(run(["amend", "--repo", amended.repo, "--destructive-scope", ".scratch", "--reason", "cleanup authority"], { env: amended.env }).status, 0);
   assert.equal(hook(amended, "rm -rf .scratch").stdout, "");
+  const friction = JSON.parse(run(["ledger", "--json", "--repo", amended.repo], { env: amended.env }).stdout).queries.authority_friction;
+  const frictionRow = Array.isArray(friction) ? friction.find((item) => /destructive grant/.test(item.reason)) : null;
+  assert.ok(frictionRow, JSON.stringify(friction));
+  assert.deepEqual(frictionRow.followed_by_grant?.kinds, ["destructive"]);
+  fs.appendFileSync(path.join(amended.repo, ".taskloop", "events.jsonl"), "garbage\n");
+  const corrupted = JSON.parse(run(["ledger", "--json", "--repo", amended.repo], { env: amended.env }).stdout);
+  assert.equal(corrupted.integrity.authority, "invalid");
+  assert.equal(corrupted.queries.authority_friction, "unknown");
 
   const conflicted = fixture(t);
   const both = open(conflicted, "default", ["--destructive-allowed", "--destructive-scope", ".scratch", "--reason", "conflict"]);

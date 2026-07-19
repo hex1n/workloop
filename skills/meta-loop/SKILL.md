@@ -46,6 +46,29 @@ useful shapes are repeated suspension at the same reason, abandoned work after
 large write sets, or review claims without a host anchor. A count without a
 mechanism is not a candidate.
 
+## Mine authority friction
+
+`queries.authority_friction` lists each deny the supervisor persisted on the
+owner path — control-plane and foreign-session denies live outside it — with
+its reason and whether the same task recorded a grant afterwards
+(`followed_by_grant` carries the grant kinds and the delay in minutes). The
+usual coverage discipline applies: the string `unknown` means absence cannot
+be established.
+
+Cluster the denies by the reason's leading clause. Two shapes are candidates:
+
+- one clause recurring across tasks — the authority vocabulary lacks a
+  narrower grant for that work, and the candidate is that missing word (the
+  path-scoped destructive grant began as exactly this cluster);
+- heterogeneous denies each answered by an immediate broad grant — reflexive
+  escalation, which argues for a narrower general form rather than more broad
+  grants.
+
+A deny with no following grant on a task that still reached achieved is the
+gate working as designed, not a candidate — but draw that reading only from
+covered evidence and valid authority, never from a gapped window. Vocabulary
+candidates go through the same single-candidate handoff below.
+
 ## Protect evidence pointers
 
 Remove repository, session, agent, and personal identifiers from shared prose.
