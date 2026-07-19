@@ -1,6 +1,6 @@
 ---
 name: meta-loop
-description: Diagnose whether supervised loops converge, where they fail, and how adoption behaves from taskloop's machine ledger. Use for the periodic ledger review, when the monthly reminder reports new terminal or abandoned counts, or when asked why loops stall, suspend, or bypass supervision.
+description: Diagnose whether supervised loops converge, where they fail, how adoption behaves, and whether landed work survives after close, from taskloop's machine ledger joined to repository history. Use for the periodic ledger review, when the monthly reminder reports new terminal or abandoned counts, when asked why loops stall, suspend, or bypass supervision, or whether achieved work was later reverted or superseded.
 argument-hint: "[review window or operating question]"
 ---
 
@@ -32,6 +32,39 @@ bounded evidence window is gapped or truncated, this query is the string
 `unknown` rather than an accusation based on missing history. Authority-use
 booleans and command shapes likewise become `unknown` when absence cannot be
 established from the surviving window.
+
+## Join terminal write sets to repository history
+
+The ledger stops observing at the terminal event; whether landed work
+survived afterwards lives only in repository history, an independent sensor
+the runtime does not produce. `queries.terminal_write_sets` lists each
+terminal task's outcome, close time, and non-synthetic write set. Before
+reading terminal counts as convergence, join each achieved task's write set
+against version-control history after its close time, in this attended
+session. The product is one verdict per achieved task — survived, superseded,
+or unknown — each carrying the commit and file evidence behind it.
+
+Discipline for the join:
+
+- exclude the task's own landing commit or commits, identified by subject and
+  close-adjacent timing — landing happens after close, and one commit may land
+  several tasks. A later sweeping refactor touches as much of the write set as
+  the landing does, so a "most of the write set overlaps" rule swallows the
+  very supersede you are hunting; attribute each excluded commit by its content
+  and role, never by how large its overlap is;
+- plain modifications inside the write set are background noise in an active
+  repository; candidate signals are deletions or renames of write-set files,
+  replacement of the task's criterion anchors such as tests and fixtures,
+  and explicit revert language. Match a rename against the write set by the
+  file's pre-rename path: version control lists a rename under its new name,
+  so the write-set entry is the rename source, and a supersede that renames a
+  criterion anchor stays invisible to a match on the new name;
+- no commits after close reads as `unknown`, not as survival — the usual
+  coverage discipline applies.
+
+A superseded achievement — its contract replaced, its artifacts renamed — is
+a candidate observation for the handoff below, not a failure by itself. Turn
+it into a mechanism hypothesis like any other symptom.
 
 ## Form one symptom hypothesis
 

@@ -965,6 +965,25 @@ test("ledger exposes user authority claims as unanchored", (t) => {
   assert.equal(ledger.queries.unanchored_user_claims[5].reason, "user clarified same critical risk");
 });
 
+test("ledger exposes per-task terminal write sets for the post-close join", (t) => {
+  const fx = fixture(t);
+  assert.equal(open(fx).status, 0);
+  const write = run(["hook", "--profile", "claude"], {
+    cwd: fx.repo, env: fx.env,
+    input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } }),
+  });
+  assert.equal(write.status, 0, write.stderr);
+  const abandoned = run(["abandon", "--repo", fx.repo, "--reason", "join fixture complete"], { env: fx.env });
+  assert.equal(abandoned.status, 0, abandoned.stderr);
+  const ledger = JSON.parse(run(["ledger", "--json", "--repo", fx.repo], { env: fx.env }).stdout);
+  const rows = ledger.queries.terminal_write_sets;
+  assert.equal(rows.length, 1);
+  assert.equal(typeof rows[0].task_id, "string");
+  assert.equal(rows[0].outcome, "abandoned");
+  assert.match(rows[0].closed_at, /^\d{4}-\d{2}-\d{2}T/);
+  assert.deepEqual(rows[0].files, ["work.txt"]);
+});
+
 test("ledger reports authority-backed user claims as unknown when authority is invalid", (t) => {
   const fx = fixture(t);
   const opened = open(fx, "default", ["--network-allowed", "--granted-by", "user", "--reason", "user approved network authority"]);
@@ -976,6 +995,7 @@ test("ledger reports authority-backed user claims as unknown when authority is i
   const payload = JSON.parse(ledger.stdout);
   assert.equal(payload.integrity.authority, "invalid");
   assert.equal(payload.queries.unanchored_user_claims, "unknown");
+  assert.equal(payload.queries.terminal_write_sets, "unknown");
 });
 
 test("evidence append failures leave a durable sequence gap", (t) => {
