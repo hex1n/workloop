@@ -23,7 +23,10 @@ const read = (file) => {
 };
 const agents = read("AGENTS.md");
 const suite = read("tests/taskloop.test.mjs");
-if ([agents, suite].some((text) => text === null)) {
+const skill = read("skills/meta-loop/SKILL.md");
+const core = read("skills/loop-core/REFERENCE.md");
+const events = read(".taskloop/events.jsonl");
+if ([agents, suite, skill, core, events].some((text) => text === null)) {
   say("sources unreadable");
   process.exit(INDETERMINATE);
 }
@@ -75,6 +78,20 @@ const probes = {
   "agents-convention": () => agents.includes("queries.reviews"),
   // The suite prices the projection alongside the other ledger queries.
   "suite-covers-query": () => suite.includes("queries.reviews"),
+  // The mining section states the honest data boundary: counts locate,
+  // receipts name the kind.
+  "skill-kinds-need-receipts": () => skill.includes("queries.reviews") && skill.includes("receipts") && skill.includes("review_id"),
+  // loop-core names the receipts' version-controlled home.
+  "core-receipt-home": () => core.includes("docs/reviews") && core.includes("review_id"),
+  // Receipts exist and cross-check against recorded review ids: every file
+  // under docs/reviews names a review_id the event stream actually holds.
+  "receipts-match-ledger": () => {
+    let files;
+    try { files = fs.readdirSync("docs/reviews").filter((name) => name.endsWith(".md")); } catch { return false; }
+    if (files.length === 0) return false;
+    const recorded = new Set([...events.matchAll(/"review_id":"([0-9a-f]{8})/g)].map((match) => match[1]));
+    return files.every((name) => [...recorded].some((id) => name.includes(id)));
+  },
 };
 
 const failing = Object.entries(probes).filter(([, probe]) => {

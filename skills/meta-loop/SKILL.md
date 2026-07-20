@@ -106,19 +106,23 @@ candidates go through the same single-candidate handoff below.
 
 `queries.reviews` lists each recorded review — level, reviewer, and its
 blocking and advisory finding counts. Blocking findings gate acceptance and
-are resolved by the time a task reaches a terminal outcome; advisory findings
-never gate, so they are the ones that accumulate unread. The usual coverage
-discipline applies: the string `unknown` means absence cannot be established.
+are resolved before a task reaches achieved; advisory findings never gate, so
+they are the ones that accumulate unread. The usual coverage discipline
+applies: the string `unknown` means absence cannot be established.
 
-Cluster the advisory findings and read them as a standards axis the criterion
-never encoded — the criterion says the work is done, a review advisory says the
-code still drifts from a convention no check enforces. A kind of advisory
-finding recurring across tasks is a candidate: it names a standard worth
-turning into a check or a documented rule, so the loop stops shipping it
-review after review. A one-off advisory on an otherwise clean task is not a
-candidate. The finding count is an observation; which standard a cluster names
-is attended interpretation. Candidates go through the same single-candidate
-handoff below.
+The rows carry counts; the findings themselves live in the review receipts
+under `docs/reviews/`, one file per review named by its `review_id`. Mine from
+both: counts locate where advisory findings accumulate — which tasks,
+reviewers, levels — and the receipts name what kind keeps recurring. Read a
+recurring kind as a standards axis the criterion never encoded — the criterion
+says the work is done, the advisory says the work still drifts from a
+convention no check enforces. A kind recurring across tasks is a candidate: it
+names a standard worth turning into a check or a documented rule, so the loop
+stops shipping it review after review. A one-off advisory on an otherwise
+clean task is not a candidate, and a recorded review whose receipt is missing
+is a coverage gap to report, not a silence to skip. Counts and receipts are
+observations; which standard a cluster names is attended interpretation.
+Candidates go through the same single-candidate handoff below.
 
 ## Protect evidence pointers
 

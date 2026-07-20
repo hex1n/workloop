@@ -183,7 +183,9 @@ Feed the blocking findings back; leave advisory findings in the ledger, where
 the aggregate review mines them as the standards axis the criterion could not
 see. Anchor the recorded counts with a review receipt: the findings, the
 reviewed generation and revisions, and a reviewer identity a later audit can
-trace.
+trace. Receipts live in version control under `docs/reviews/`, one file per
+review named by its `review_id` — the record's counts say how much was found,
+only the receipt says what.
 
 ```text
 taskloop review --level second-model --reviewer <id> \
