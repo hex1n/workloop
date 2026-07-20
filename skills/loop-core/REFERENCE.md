@@ -185,7 +185,12 @@ see. Anchor the recorded counts with a review receipt: the findings, the
 reviewed generation and revisions, and a reviewer identity a later audit can
 trace. Receipts live in version control under `docs/reviews/`, one file per
 review named by its `review_id` — the record's counts say how much was found,
-only the receipt says what.
+only the receipt says what. Write the receipt's prose in the language the
+owner session works in: a receipt exists to be read by people, and one written
+in a language its readers do not work in is a receipt nobody audits. Its
+machine anchors stay verbatim regardless — `review_id`, task id, level,
+reviewer identity, counts — as does every quoted criterion clause, convention,
+and hunk, because a translated quotation is no longer evidence.
 
 ```text
 taskloop review --level second-model --reviewer <id> \
