@@ -194,3 +194,54 @@ test("every installer activation interruption leaves a journal and rerun converg
     assert.equal(fs.existsSync(path.join(home, "bin", ".workloop-activation-journal.json")), false);
   }
 });
+
+test("uninstall removes what it installed and preserves what it cannot prove is its own", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-uninstall-")); const home = path.join(root, "home");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const env = { ...process.env, HOME: home, USERPROFILE: home, WORKLOOP_INSTALL_HOME: home, WORKLOOP_INSTALL_REPO: ROOT };
+  assert.equal(run(path.join(ROOT, "install.mjs"), [], { env }).status, 0);
+
+  // Three things uninstall must not take: a managed tree the owner edited, a
+  // tree it never installed, and a shim someone replaced by hand.
+  const edited = path.join(home, ".claude", "skills", "meta-loop", "SKILL.md");
+  fs.appendFileSync(edited, "\nlocally edited\n");
+  const foreign = path.join(home, ".claude", "skills", "someone-elses");
+  fs.mkdirSync(foreign, { recursive: true }); fs.writeFileSync(path.join(foreign, "SKILL.md"), "not ours\n");
+  const handShim = path.join(home, "bin", "workloop.ps1");
+  fs.writeFileSync(handShim, "#!/bin/sh\necho hand written\n");
+  const ledger = path.join(home, ".workloop");
+  fs.mkdirSync(ledger, { recursive: true }); fs.writeFileSync(path.join(ledger, "outcomes.jsonl"), '{"row":1}\n');
+
+  const dry = run(path.join(ROOT, "uninstall.mjs"), ["--dry-run"], { env });
+  assert.equal(dry.status, 0, dry.stderr);
+  assert.ok(fs.existsSync(path.join(home, "bin", ".workloop-runtime")), "dry run must not delete");
+
+  const removed = run(path.join(ROOT, "uninstall.mjs"), [], { env });
+  assert.equal(removed.status, 0, removed.stderr);
+  for (const gone of [".workloop-runtime", ".workloop-managed-skills.json", ".workloop-active-release.json", "workloop.mjs", "workloop.cmd"]) {
+    assert.equal(fs.existsSync(path.join(home, "bin", gone)), false, `${gone} should be removed`);
+  }
+  assert.equal(fs.existsSync(path.join(home, ".codex", "skills", "loop-core")), false);
+  assert.match(fs.readFileSync(edited, "utf8"), /locally edited/);
+  assert.ok(fs.existsSync(path.join(foreign, "SKILL.md")));
+  assert.match(fs.readFileSync(handShim, "utf8"), /hand written/);
+  assert.ok(fs.existsSync(path.join(ledger, "outcomes.jsonl")), "the outcome ledger is not an install artifact");
+  assert.match(removed.stdout, /is not a workloop-generated shim; preserved/);
+  assert.match(removed.stdout, /--purge-ledger/);
+
+  // Rerunning is a no-op, and --purge-ledger is the explicit opt-in.
+  const again = run(path.join(ROOT, "uninstall.mjs"), [], { env });
+  assert.equal(again.status, 0); assert.match(again.stdout, /0 remove/);
+  assert.equal(run(path.join(ROOT, "uninstall.mjs"), ["--purge-ledger"], { env }).status, 0);
+  assert.equal(fs.existsSync(ledger), false);
+});
+
+test("uninstall on a home that never installed workloop changes nothing", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-uninstall-fresh-")); const home = path.join(root, "home");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(home, { recursive: true });
+  const result = run(path.join(ROOT, "uninstall.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, WORKLOOP_INSTALL_HOME: home } });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /0 remove/);
+  assert.equal(run(path.join(ROOT, "uninstall.mjs"), ["--bogus"], { env: { ...process.env, WORKLOOP_INSTALL_HOME: home } }).status, 2);
+});

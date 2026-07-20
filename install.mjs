@@ -763,6 +763,121 @@ function installWorkloopAssetsUnlocked(repo, home, dry) {
   writeTextAtomicIfChanged(manifest, JSON.stringify({ version: 2, runtimes: next }, null, 2) + "\n", dry);
 }
 
+// Removal is the manifest read backwards. Install proves a tree is workloop's
+// before replacing it; uninstall proves the same before deleting it, so a tree
+// the owner edited, or one another distribution took over, survives. Anything
+// unprovable is preserved, never guessed at: a leftover directory costs the
+// owner one manual `rm`, a wrong delete costs them work they cannot recover.
+function skillRootGroups(home) {
+  const groups = new Map();
+  for (const runtime of [".claude", ".codex"]) {
+    const root = path.join(home, runtime, "skills");
+    let key;
+    try {
+      key = fs.realpathSync(root);
+    } catch {
+      key = path.resolve(root);
+    }
+    if (!groups.has(key)) groups.set(key, { root, runtimes: [] });
+    groups.get(key).runtimes.push(runtime);
+  }
+  return groups;
+}
+
+// Our generated shims and nothing else. The runtime hash is whatever the shim
+// points at, so a shim left by an older release is still recognizably ours,
+// while a hand-written wrapper at the same path is not and is preserved.
+const SHIM_SHAPES = {
+  "workloop.mjs": /^#!\/usr\/bin\/env node\n\nimport "\.\/\.workloop-runtime\/[0-9a-f]+\/bin\/workloop\.mjs";\n$/,
+  "workloop.cmd": /^@echo off\r\nnode "%~dp0workloop\.mjs" %\*\r\n$/,
+  "workloop.ps1": /^\$script = Join-Path \$PSScriptRoot 'workloop\.mjs'\r\n& node \$script @args\r\nexit \$LASTEXITCODE\r\n$/,
+};
+
+function uninstallWorkloopUnlocked(home, dry, { purgeLedger }) {
+  const binRoot = path.join(home, "bin");
+  const state = readManagedSkills(path.join(binRoot, ".workloop-managed-skills.json"));
+
+  for (const { root, runtimes } of skillRootGroups(home).values()) {
+    const expected = {};
+    const conflicts = new Set();
+    for (const runtime of runtimes) {
+      for (const [skill, digest] of Object.entries(state.runtimes[runtime] ?? {})) {
+        if (expected[skill] && expected[skill] !== digest) conflicts.add(skill);
+        else expected[skill] = digest;
+      }
+    }
+    for (const skill of conflicts) {
+      delete expected[skill];
+      plan("warning", `${path.join(root, skill)} has conflicting recorded digests across aliased skill roots; preserved`);
+    }
+    for (const [skill, digest] of Object.entries(expected)) {
+      const target = path.join(root, skill);
+      if (!pathPresent(target)) continue;
+      if (managedTreeDigest(target) !== digest) {
+        plan("ok", `${target} (changed since workloop installed it; preserved)`);
+        continue;
+      }
+      plan("remove", target);
+      if (!dry) fs.rmSync(target, { recursive: true, force: true });
+    }
+  }
+
+  for (const [name, shape] of Object.entries(SHIM_SHAPES)) {
+    const target = path.join(binRoot, name);
+    if (!pathPresent(target)) continue;
+    let body;
+    try {
+      body = fs.readFileSync(target, "utf8");
+    } catch (cause) {
+      plan("warning", `${target} could not be read (${cause.code ?? cause.message}); preserved`);
+      continue;
+    }
+    if (!shape.test(body)) {
+      plan("warning", `${target} is not a workloop-generated shim; preserved`);
+      continue;
+    }
+    plan("remove", target);
+    if (!dry) fs.rmSync(target, { force: true });
+  }
+
+  for (const name of [".workloop-runtime", ".workloop-managed-skills.json", ".workloop-active-release.json", ".workloop-activation-journal.json"]) {
+    const target = path.join(binRoot, name);
+    if (!pathPresent(target)) continue;
+    plan("remove", target);
+    if (!dry) fs.rmSync(target, { recursive: true, force: true });
+  }
+
+  // The HOME outcome ledger is the owner's audit history, not an install
+  // artifact, so removing workloop must not take it. --purge-ledger is the
+  // explicit opt-in; the default names the path so the owner can decide.
+  const ledger = path.join(home, ".workloop");
+  if (pathPresent(ledger)) {
+    if (purgeLedger) {
+      plan("remove", `${ledger} (outcome ledger; --purge-ledger)`);
+      if (!dry) fs.rmSync(ledger, { recursive: true, force: true });
+    } else {
+      plan("warning", `${ledger} kept: it holds the cross-repository outcome ledger. Remove it yourself, or rerun with --purge-ledger`);
+    }
+  }
+
+  for (const config of [path.join(home, ".codex", "config.toml"), path.join(home, ".codex", "hooks.json"), path.join(home, ".claude", "settings.json")]) {
+    if (!pathPresent(config)) continue;
+    let body;
+    try {
+      body = fs.readFileSync(config, "utf8");
+    } catch {
+      continue;
+    }
+    if (body.includes("workloop")) plan("warning", `${config} still references workloop; host hook and sandbox bindings are owner-managed and were left alone`);
+  }
+}
+
+export function uninstallWorkloop(home, dry = false, { purgeLedger = false } = {}) {
+  ACTIONS.length = 0;
+  const uninstall = () => uninstallWorkloopUnlocked(home, dry, { purgeLedger });
+  return dry ? uninstall() : withInstallLock(home, uninstall);
+}
+
 export function installWorkloopAssets(repo, home, dry = false) {
   ACTIONS.length = 0;
   const install = () => installWorkloopAssetsUnlocked(repo, home, dry);
@@ -864,19 +979,22 @@ function main() {
   if (configureCodex && !dry) withInstallLock(HOME, bindCodex);
   else bindCodex();
   inspectCodexHookProfiles(HOME);
+  return reportActions(`workloop install ${dry ? "(dry run) " : ""}from ${SOURCE}`, `runtime: ${installed.hash}\n`);
+}
+
+// The one place ACTIONS becomes output. Install and uninstall share it so a
+// removal report reads in the same vocabulary as the install that produced it.
+export function reportActions(header, trailer = "") {
   const order = ["new", "update", "remove", "warning", "ok", "error"];
   const counts = Object.fromEntries(order.map((kind) => [kind, 0]));
-  process.stdout.write(`workloop install ${dry ? "(dry run) " : ""}from ${SOURCE}\n\n`);
+  process.stdout.write(`${header}\n\n`);
   for (const kind of order) {
     for (const [, detail] of ACTIONS.filter(([rowKind]) => rowKind === kind)) {
       counts[kind] += 1;
       if (kind !== "ok") process.stdout.write(`  ${kind.padEnd(7)} ${detail}\n`);
     }
   }
-  process.stdout.write(
-    `\nruntime: ${installed.hash}\n` +
-      `summary: ${order.map((kind) => `${counts[kind]} ${kind}`).join(", ")}\n`,
-  );
+  process.stdout.write(`\n${trailer}summary: ${order.map((kind) => `${counts[kind]} ${kind}`).join(", ")}\n`);
   return counts.error ? 1 : 0;
 }
 
