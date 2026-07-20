@@ -7,7 +7,7 @@
     "workloop": "bin/workloop.mjs"
   },
   "scripts": {
-    "test": "node --test tests/workloop.test.mjs && node --test tests/command-safety-adversarial.test.mjs tests/foreign-session-scope.test.mjs tests/host-hooks.test.mjs tests/roadmap-e2e.test.mjs tests/workloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
+    "test": "node --test tests/workloop.test.mjs && npm run test:matrix",
     "test:matrix": "node --test tests/command-safety-adversarial.test.mjs tests/foreign-session-scope.test.mjs tests/host-hooks.test.mjs tests/roadmap-e2e.test.mjs tests/workloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
     "test:host-hooks": "node --test tests/host-hooks.test.mjs",
     "test:behavioral": "node --test tests/workloop.test.mjs",

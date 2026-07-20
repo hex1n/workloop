@@ -64,12 +64,18 @@
 - loop-core REFERENCE.md:3 绑定句改为 "The workloop runtime supervises one
   durable task...",并落消歧规约一句。
 
-### Phase 2 — 状态迁移与协议过渡
+### Phase 2 — 状态迁移与协议过渡 —— 已作废,改为硬切换(2026-07-20)
 
-- 新 verb(沿 `migrate-artifact-names` 先例):`.taskloop/` → `.workloop/`,
-  `--granted-by user` 硬要求,双目录并存 fail-closed,sha256 receipt。
-- 环境变量双读:`WORKLOOP_*` 优先;读到 `TASKLOOP_*` 时 stderr 提示一次。
-- 判据输出前缀双收;捆绑 `acceptance-*.mjs` 发射端改新前缀。
+**决定推翻本阶段的过渡期设计:不做任何兼容层。** 用户基数为一,过渡期只
+存在于本机本仓库,兼容代码的维护成本高于它消除的风险。三项均已实现后删除:
+
+- ~~新 verb `migrate-state-dir`~~:不做。`.taskloop/` 由人手改名一次;
+  遗留目录对运行时不可见,读作 no task。
+- ~~环境变量双读~~:不做。只读 `WORKLOOP_*`。
+- ~~判据输出前缀双收~~:不做。只收 `WORKLOOP_CRITERION:`;
+  捆绑 `acceptance-*.mjs` 发射端已全部为新前缀。
+
+本仓库自身的 `.taskloop/` 已于 2026-07-20 手工迁入 `.workloop/`(过程见下)。
 
 ### Phase 3 — 安装器与宿主 hook
 
@@ -114,10 +120,11 @@
 
 ## 风险与回退
 
-- 双目录 fail-closed 防状态分叉;GitHub redirect 兜底旧链接;npm 旧包只
-  deprecate 不删。
-- 过渡期两名并存(旧 shim 转发、env 双读、前缀双收),以各宿主重装收口;
-  双读/双收的移除时点由后续决策记录。
+- GitHub redirect 兜底旧链接;npm 旧包只 deprecate 不删。
+- 硬切换的代价已实测:手工 `mv .taskloop .workloop` 在 `.workloop/` 已存在时
+  会**嵌套而非改名**(运行时先建了目录),3MB 事件账本被孤立,`status` 静默
+  报 no task。这是本次改名唯一真实伤害;`.workloop/` 不在版本控制内,无 git
+  兜底。已于 2026-07-20 22:52 恢复并 `audit` 验证链完整。
 - Windows 套件与 CI workflow 中的名字必须同批改,否则矩阵门禁失真。
 
 ## 完成判据(建议,供 dogfood open 用)

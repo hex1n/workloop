@@ -6,3 +6,7 @@ coverage/
 .idea/
 __pycache__/
 .claude/
+
+# Manual e2e runs seed disposable git-repo/HOME fixtures under docs/e2e-test/;
+# the run's execution-report.md is the durable evidence, not the raw fixture.
+docs/e2e-test/**/fixture/
