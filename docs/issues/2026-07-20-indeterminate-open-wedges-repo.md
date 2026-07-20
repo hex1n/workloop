@@ -1,5 +1,14 @@
 # open 判据 indeterminate 时提交 task_opened 却拒绝投影，仓库无 CLI 出路
 
+> **已修复(2026-07-21)。** 根因比本文初稿判断的更宽:不是 indeterminate 这一
+> 条校验的问题,而是 **decider 完全不做 reducer 会做的校验**,于是任何
+> `createTask` 拒绝条件都能楔死仓库(已实证第二条:default policy 要求 open 时
+> unsatisfied)。修法是让 `V3_DECIDERS.open` 在返回事件前,用同一份空状态跑一遍
+> `V3_REDUCERS.task_opened`——采纳下文"预期行为"的方案 1,且以调用 reducer 而非
+> 复述其检查清单的方式实现,两者从此不会漂移。回归测试见
+> `tests/workloop.test.mjs`;退掉修复后该测试与既有的 indeterminate 测试共 2 项
+> 转红。既有被楔死的账本不会被本次修复自动解开。
+
 ## 问题摘要
 
 `open` 在判据观察为 `indeterminate` 时报 "task not opened",但 `task_opened`
