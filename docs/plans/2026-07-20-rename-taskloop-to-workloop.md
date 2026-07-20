@@ -105,15 +105,18 @@
 验证:在临时 `WORKLOOP_INSTALL_HOME` 下先造出"旧 manifest + 四棵树"的状态,
 再跑 `node install.mjs`,断言 journal 状态为已完成且 `workloop` shim 存在。
 
-- 新 runtime 目录 + `workloop` shim;旧 `taskloop` shim 替换为一行提示转发,
-  journal 记录。
-- `lib/host-hooks.mjs` recipes 更新;各宿主 repo 重装 hook,
-  `hooks --action record-install` 留痕。**本仓库自身的会话 hook 也指向
-  `~/bin/taskloop.mjs`,重装前当前会话仍受旧运行时保护。**
+- [x] 新 runtime 目录 + `workloop` shim。旧 `taskloop` shim **不做转发提示,
+  直接删除**(硬切换后转发层同属兼容层);`~/bin` 下六项遗留已于 2026-07-20
+  清除,删前确认无任何可执行配置引用它们。
+- [x] `~/.claude/settings.json` 的 PreToolUse/Stop 已指向 `workloop.mjs`;
+  `~/.codex/config.toml` 的 `writable_roots` 与 project trust 条目已清理。
+- [ ] `lib/host-hooks.mjs` recipes 更新;各宿主 repo 重装 hook,
+  `hooks --action record-install` 留痕。
 
 ### Phase 4 — 对外(不可逆,逐项确认后执行)
 
-- GitHub 仓库改名(旧 URL 自动 redirect)。
+- [x] GitHub 仓库改名(旧 URL 自动 redirect)。已完成;本地 remote 一度仍指旧名,
+  靠 redirect 工作,2026-07-20 已 `set-url` 到 `hex1n/workloop`。
 - npm 发布 `workloop@0.2.0`;`@hex1n/taskloop` 执行 `npm deprecate` 指向新名,
   不删除。
 - README / README.zh-CN 开头段重写(定位句同步升级为完整监督面)。
@@ -121,15 +124,46 @@
 ## 风险与回退
 
 - GitHub redirect 兜底旧链接;npm 旧包只 deprecate 不删。
-- 硬切换的代价已实测:手工 `mv .taskloop .workloop` 在 `.workloop/` 已存在时
-  会**嵌套而非改名**(运行时先建了目录),3MB 事件账本被孤立,`status` 静默
-  报 no task。这是本次改名唯一真实伤害;`.workloop/` 不在版本控制内,无 git
-  兜底。已于 2026-07-20 22:52 恢复并 `audit` 验证链完整。
 - Windows 套件与 CI workflow 中的名字必须同批改,否则矩阵门禁失真。
 
-## 完成判据(建议,供 dogfood open 用)
+### 硬切换的实测代价:产品名嵌进持久化路径(2026-07-20)
 
-1. `npm test` 全绿(132 项,含先在失败的处置)。
-2. 活范围 `grep -r "taskloop"`(排除历史目录与本方案自身)= 0。
-3. `TASKLOOP_INSTALL_HOME` 临时家下 `node install.mjs` 安装→卸载往返干净,
-   dry-run 无 error 行。
+根因一条:**产品名同时是状态目录名、manifest 文件名和 sandbox 可写根**,而
+运行时会按需自建状态目录。于是"改名"这个动作在三处各自失败一次,形态不同,
+共同点是**静默**——没有一处报错,全部表现为"看起来正常但账本不见了"。
+
+1. **仓库状态目录——嵌套而非改名。** 手工 `mv .taskloop .workloop` 时
+   `.workloop/` 已被运行时建出(它先写了 `.gitignore`),`mv` 于是把旧目录
+   *移进*新目录,得到 `.workloop/.taskloop/`。3.0MB 事件账本与 1033 行观察
+   记录被孤立,`status` 静默报 no task,其后每次写入都被记成 untracked work。
+   2026-07-20 22:52 恢复,`audit` 验证 valid、2363 records / 3003 events、
+   无 recovered tail。
+2. **HOME 级产出账本——静默孤立,且当时尚未触发。** `~/.workloop` 压根没被
+   创建,而 `~/.taskloop` 里存着活的 4552 行跨仓库 outcome 投影。下一次终态
+   事件会新建空账本,跨仓库历史从此对 meta-loop 不可见。此处目标不存在,
+   `mv` 是干净改名;`audit-outcomes` 验证 valid、4552 行全部认领。
+3. **managed skills manifest——阻塞发布且静默。** manifest 名为
+   `.taskloop-managed-skills.json`,改名后 `readManagedSkills` 读不到新名,
+   四棵已装 skill 树全部判为"非 workloop 所有",`install.mjs` 写下
+   `needs_manual_intervention` 并在 `activateRuntimeShims` 之前 return——新
+   shim 装不上,旧 shim 继续服务旧运行时,失败只在 journal 里可见。手工把
+   manifest 改名即解。
+
+两条可迁移的结论:
+
+- **改名前先盘点"名字进了哪些持久化路径"**,而不是只 grep 源码。本次三处
+  全部在版本控制之外(状态目录、HOME 目录、`~/bin` manifest),没有 git 兜底,
+  也不会出现在任何 diff 里。
+- **`mv A B` 不是改名,是"B 存在与否决定语义"。** 迁移已存在的目标目录必须
+  逐项移动内容并对每个碰撞 fail-closed;整目录 `mv` 只在目标确不存在时安全。
+  作废的 `migrate-state-dir` verb 原本要编码的正是这条,现由本节承载。
+
+## 完成判据
+
+1. [x] `npm test` 全绿。2026-07-20 实测:behavioral 132/132;matrix 214 项中
+   207 通过、7 项 Windows 用例在 darwin 跳过、0 失败。方案初稿担心的
+   `tests/taskloop.test.mjs:1182` 先在失败已不复现。
+2. [x] 活范围 `grep -r "taskloop"` = 0。仅 AGENTS.md 三处散文有意保留旧名
+   (历史文档引用、硬切换规则本身、manifest 手工改名步骤)。
+3. [ ] `WORKLOOP_INSTALL_HOME` 临时家下 `node install.mjs` 安装→卸载往返干净,
+   dry-run 无 error 行。**尚未验证**;本机实装走的是手工改名 manifest 的路径。
