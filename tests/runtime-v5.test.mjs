@@ -569,3 +569,136 @@ test("[W05] hook payload reading waits when an intermediate chunk ends with a cl
   assert.equal(result.stdout, ""); assert.equal(result.stderr, "");
   assert.equal(readEventStore(fx.repo).events.filter((event) => event.kind === "write_authorized").length, 1);
 });
+
+test("a command the reducer rejects leaves no record in the append-only log", (t) => {
+  const fx = fixture(t);
+  // `default` requires an unsatisfied criterion at open. Make the checker pass
+  // first so the reducer refuses the very event the command builder produced.
+  fs.writeFileSync(path.join(fx.repo, "done"), "");
+
+  const rejected = open(fx);
+
+  assert.notEqual(rejected.status, 0);
+  assert.match(rejected.stderr + rejected.stdout, /default policy requires criterion unsatisfied at open/);
+  // The log is append-only and has no in-band repair path, so a record the
+  // reducer rejects must never be written: replaying it would throw on every
+  // later load and hard-block every session in the repository.
+  const log = path.join(fx.repo, ".workloop", "events.jsonl");
+  assert.equal(fs.existsSync(log) && fs.readFileSync(log, "utf8").trim() !== "", false, "rejected command must not persist a record");
+
+  // The repository stays usable: the same command succeeds once its criterion
+  // actually fails, which is what the rejection asked for.
+  fs.rmSync(path.join(fx.repo, "done"));
+  const accepted = open(fx);
+  assert.equal(accepted.status, 0, accepted.stderr || accepted.stdout);
+  assert.equal(JSON.parse(run(["status", "--repo", fx.repo, "--json"], { env: fx.env }).stdout || "{}").lifecycle?.state ?? projection(fx.repo).lifecycle.state, "active");
+});
+
+test("archive-incompatible-state recovers a repository whose only damage is an unreplayable record", (t) => {
+  const fx = fixture(t);
+  assert.equal(open(fx).status, 0);
+  const stateDir = path.join(fx.repo, ".workloop");
+  // The exact dead end: the snapshot is gone and the log holds a record that
+  // cannot replay, so every load throws and every write is refused. Without an
+  // artifact to name, the sanctioned recovery verb used to fail ENOENT.
+  const log = path.join(stateDir, "events.jsonl");
+  const poisoned = fs.readFileSync(log, "utf8").trim().replace('"kind":"task_opened"', '"kind":"task_opened_unknown_kind"');
+  fs.writeFileSync(log, poisoned + "\n");
+  fs.rmSync(path.join(stateDir, "task.json"), { force: true });
+  assert.notEqual(run(["status", "--repo", fx.repo], { env: fx.env }).status, 0);
+
+  const archived = run(["archive-incompatible-state", "--repo", fx.repo, "--reason", "unreplayable record", "--granted-by", "user"], { env: fx.env });
+
+  assert.equal(archived.status, 0, archived.stderr);
+  const receipt = JSON.parse(archived.stdout);
+  assert.match(receipt.source_path, /events\.jsonl$/);
+  assert.equal(receipt.granted_by, "user");
+  assert.ok(fs.existsSync(path.join(fx.repo, receipt.archive_path)), "the damaged record is preserved as evidence");
+  // The repository is usable again: a fresh task opens normally.
+  assert.equal(open(fx).status, 0, "recovery must leave the repository openable");
+});
+
+test("archive-incompatible-state retires the damaged artifact, not the healthy snapshot", (t) => {
+  const fx = fixture(t);
+  assert.equal(open(fx).status, 0);
+  const stateDir = path.join(fx.repo, ".workloop");
+  const taskFile = path.join(stateDir, "task.json");
+  const log = path.join(stateDir, "events.jsonl");
+  // The realistic shape: the snapshot is rewritten on every commit, so it is
+  // present and healthy exactly when the event log is the damaged one.
+  const healthySnapshot = fs.readFileSync(taskFile);
+  fs.writeFileSync(log, fs.readFileSync(log, "utf8").trim().replace('"kind":"task_opened"', '"kind":"task_opened_unknown_kind"') + "\n");
+  assert.notEqual(run(["status", "--repo", fx.repo], { env: fx.env }).status, 0);
+
+  const archived = run(["archive-incompatible-state", "--repo", fx.repo, "--reason", "corrupt record", "--granted-by", "user"], { env: fx.env });
+
+  assert.equal(archived.status, 0, archived.stderr);
+  const receipt = JSON.parse(archived.stdout);
+  assert.match(receipt.source_path, /events\.jsonl$/, "the damaged log is what gets archived");
+  assert.ok(fs.existsSync(taskFile), "the healthy snapshot must survive");
+  assert.deepEqual(fs.readFileSync(taskFile), healthySnapshot, "the healthy snapshot must not be moved or rewritten");
+  assert.equal(fs.existsSync(log), false, "the damaged log is retired, not left in place");
+});
+
+test("archive-incompatible-state refuses naming states instead of retiring a healthy artifact", (t) => {
+  const fx = fixture(t);
+  assert.equal(open(fx).status, 0);
+  const stateDir = path.join(fx.repo, ".workloop");
+  const current = path.join(stateDir, "events.jsonl");
+  const legacy = path.join(stateDir, "events-v3.jsonl");
+  const taskFile = path.join(stateDir, "task.json");
+  const healthySnapshot = fs.readFileSync(taskFile);
+
+  // Only the legacy name exists: a migration state, not damage. Every
+  // taskloop-era upgrade lands here, and the repair is migrate-artifact-names.
+  fs.renameSync(current, legacy);
+  const migration = run(["archive-incompatible-state", "--repo", fx.repo, "--reason", "probe", "--granted-by", "user"], { env: fx.env });
+  assert.notEqual(migration.status, 0);
+  assert.match(migration.stderr, /migrate-artifact-names/);
+  assert.deepEqual(fs.readFileSync(taskFile), healthySnapshot, "a healthy snapshot must not be archived for a naming state");
+  assert.ok(fs.existsSync(legacy), "the legacy-named authority must survive");
+
+  // Both names present: refusing to choose an authority is also not damage.
+  fs.copyFileSync(legacy, current);
+  const conflict = run(["archive-incompatible-state", "--repo", fx.repo, "--reason", "probe", "--granted-by", "user"], { env: fx.env });
+  assert.notEqual(conflict.status, 0);
+  assert.match(conflict.stderr, /migrate-artifact-names/);
+  assert.ok(fs.existsSync(current) && fs.existsSync(legacy), "neither log may be retired on a name conflict");
+});
+
+test("archive-incompatible-state refuses a repository whose state loads cleanly", (t) => {
+  const fx = fixture(t);
+  assert.equal(open(fx).status, 0);
+  const taskFile = path.join(fx.repo, ".workloop", "task.json");
+  const healthy = fs.readFileSync(taskFile);
+
+  const refused = run(["archive-incompatible-state", "--repo", fx.repo, "--reason", "probe", "--granted-by", "user"], { env: fx.env });
+
+  assert.notEqual(refused.status, 0, "there is no incompatible state to archive");
+  assert.deepEqual(fs.readFileSync(taskFile), healthy, "healthy state must not be archived");
+});
+
+test("a structurally valid record the reducer rejects routes archival to the event log", (t) => {
+  const fx = fixture(t);
+  assert.equal(open(fx).status, 0);
+  const stateDir = path.join(fx.repo, ".workloop");
+  const log = path.join(stateDir, "events.jsonl");
+  const taskFile = path.join(stateDir, "task.json");
+  const healthySnapshot = fs.readFileSync(taskFile);
+  // Distinct from a poisoned `kind`, which readEventStore rejects at the parse
+  // layer: this record parses fine and only the reducer refuses it, which is
+  // the exact failure that hard-blocked this repository and the one path this
+  // whole feature exists to get right.
+  const records = fs.readFileSync(log, "utf8").trim().split("\n").map((line) => JSON.parse(line));
+  const last = records[records.length - 1];
+  const opened = last.events.find((event) => event.kind === "task_opened");
+  assert.ok(opened, "fixture must contain a task_opened event to duplicate");
+  fs.appendFileSync(log, JSON.stringify({ ...last, repo_sequence: last.repo_sequence + 1, events: [{ ...opened, task_event_sequence: opened.task_event_sequence + 1 }] }) + "\n");
+  assert.notEqual(run(["status", "--repo", fx.repo], { env: fx.env }).status, 0);
+
+  const archived = run(["archive-incompatible-state", "--repo", fx.repo, "--reason", "reducer-rejected record", "--granted-by", "user"], { env: fx.env });
+
+  assert.equal(archived.status, 0, archived.stderr);
+  assert.match(JSON.parse(archived.stdout).source_path, /events\.jsonl$/, "the log is what gets archived");
+  assert.deepEqual(fs.readFileSync(taskFile), healthySnapshot, "the healthy snapshot must survive");
+});

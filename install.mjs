@@ -419,6 +419,55 @@ function mergeCodexLedgerBinding(text, ledgerRoot) {
   return { text: appendTomlArrayPath(text, array, ledgerRoot), changed: true };
 }
 
+// Only the append-only outcome rows and their read cursors are ledger data.
+// Control state (task.json, untracked-writes.json) is schema-versioned on its
+// own axis and hard-blocks an armed Stop gate if it lands in the ledger root,
+// so migration is a whitelist, never a directory copy.
+const LEDGER_ROW_FILE = /^outcomes(?:-v\d+)?\.jsonl$/;
+const LEDGER_CURSOR_DIRECTORY = /^outcomes(?:-v\d+)?-cursors$/;
+
+function migrateLegacyLedgerRoot(home, dry) {
+  const legacyRoot = path.join(home, ".taskloop");
+  const ledgerRoot = path.join(home, ".workloop");
+  if (!pathPresent(legacyRoot)) return;
+  let entries;
+  try {
+    entries = fs.readdirSync(legacyRoot, { withFileTypes: true });
+  } catch (error) {
+    plan("warning", `cannot read the pre-rename ledger root ${legacyRoot}: ${error?.message ?? error}; preserved`);
+    return;
+  }
+  const carry = [];
+  for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
+    if (entry.isFile() && LEDGER_ROW_FILE.test(entry.name)) carry.push([entry.name, "file"]);
+    else if (entry.isDirectory() && LEDGER_CURSOR_DIRECTORY.test(entry.name)) {
+      for (const cursor of fs.readdirSync(path.join(legacyRoot, entry.name), { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+        if (cursor.isFile()) carry.push([path.join(entry.name, cursor.name), "file"]);
+      }
+    }
+  }
+  if (!carry.length) return;
+  for (const [relative] of carry) {
+    const source = path.join(legacyRoot, relative);
+    const target = path.join(ledgerRoot, relative);
+    // Rows already recorded under the current root are the live history; a
+    // stale pre-rename file must never overwrite them.
+    if (pathPresent(target)) {
+      plan("ok", `${target} (current ledger rows kept; pre-rename copy ignored)`);
+      continue;
+    }
+    plan("new", target);
+    if (dry) continue;
+    try {
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.copyFileSync(source, target);
+    } catch (error) {
+      plan("warning", `cannot migrate ledger rows ${source}: ${error?.message ?? error}; both copies preserved`);
+    }
+  }
+  plan("ok", `${legacyRoot} (pre-rename ledger preserved; remove it once the migrated rows read correctly)`);
+}
+
 function configureCodexLedgerBinding(home, { configure, dry }) {
   const config = path.join(home, ".codex", "config.toml");
   const ledgerRoot = path.join(home, ".workloop");
@@ -566,6 +615,78 @@ function inspectCodexHookProfiles(home) {
   }
 }
 
+// The rename moves the shim but cannot move a host's hook configuration: a
+// settings.json still naming the pre-rename shim keeps a whole session under
+// the old runtime while the install reports success. Diagnose it in the same
+// diagnose-never-rewrite style as the Codex hook inspection above.
+function claudeHookGroups(text) {
+  const parsed = JSON.parse(text);
+  const groups = parsed?.hooks;
+  if (!groups || typeof groups !== "object") return [];
+  return Object.entries(groups).flatMap(([event, entries]) => (Array.isArray(entries) ? entries : []).map((group) => ({
+    event,
+    matcher: typeof group?.matcher === "string" ? group.matcher : "",
+    commands: (Array.isArray(group?.hooks) ? group.hooks : [])
+      .map((handler) => handler?.command)
+      .filter((command) => typeof command === "string"),
+  })));
+}
+
+function claudeHookCommands(text) {
+  return claudeHookGroups(text).flatMap((group) => group.commands);
+}
+
+function inspectClaudeHookProfiles(home) {
+  const config = path.join(home, ".claude", "settings.json");
+  let text;
+  try {
+    text = fs.readFileSync(config, "utf8");
+  } catch (error) {
+    if (error?.code !== "ENOENT") plan("warning", `cannot inspect Claude Hook configuration ${config}: ${error?.message ?? error}; preserved ${config}`);
+    return;
+  }
+  let commands;
+  try {
+    commands = claudeHookCommands(text);
+  } catch (error) {
+    plan("warning", `cannot inspect Claude Hook configuration ${config}: ${error?.message ?? error}; preserved ${config}`);
+    return;
+  }
+  const stale = commands.filter((command) => /\btaskloop(?:\.mjs)?\b/i.test(command));
+  if (stale.length) {
+    plan(
+      "warning",
+      `Claude Hook configuration still runs the pre-rename shim: ${config} invokes taskloop.mjs, ` +
+        `so those sessions keep running the old runtime and write their state to .taskloop/ no matter what this install activated. ` +
+        `Replace taskloop.mjs with ${path.join(home, "bin", "workloop.mjs")} in each command; configuration preserved`,
+    );
+  }
+  inspectClaudeSubagentCoverage(config, text);
+}
+
+// A PreToolUse policy governs the tools it matches, and a subagent's own tool
+// calls have repeatedly been reported to slip past settings-level hooks
+// entirely (claude-code #34692, #40580, #42385). Matching the spawning tool is
+// the one lever with a confirmed fix (#26923): it cannot police what a subagent
+// does, but it lets the gate decide whether one starts at all. Without it, any
+// session can delegate a write the gate would have refused.
+function inspectClaudeSubagentCoverage(config, text) {
+  let groups;
+  try {
+    groups = claudeHookGroups(text);
+  } catch {
+    return;
+  }
+  const guarded = groups.filter((group) => group.event === "PreToolUse" && group.commands.some((command) => /workloop(?:\.mjs)?\b/i.test(command)));
+  if (!guarded.length) return;
+  if (guarded.some((group) => /(^|\|)\s*Agent\s*(\||$)/.test(group.matcher))) return;
+  plan(
+    "warning",
+    `Claude PreToolUse matcher does not cover the Agent tool in ${config}, so a subagent's tool calls can write what this gate would refuse. ` +
+      `Add Agent to the matcher to gate whether subagents start; configuration preserved`,
+  );
+}
+
 function pruneRuntimes(runtimeRoot, activeHash, dry) {
   if (!exists(runtimeRoot)) return;
   for (const name of fs.readdirSync(runtimeRoot).sort()) {
@@ -669,6 +790,24 @@ function readManagedSkills(file) {
   }
 }
 
+// A home upgraded from the pre-rename release still records ownership under
+// the old file name. Reading it back is not a trust decision: every adopted
+// digest is still compared against the tree on disk below, so a name the
+// legacy manifest claimed but never owned is refused exactly as before.
+function readManagedSkillsWithLegacyAdoption(home) {
+  const manifest = path.join(home, "bin", ".workloop-managed-skills.json");
+  const state = readManagedSkills(manifest);
+  const claims = Object.values(state.runtimes).some((entries) => Object.keys(entries).length) || state.legacyNames.size;
+  if (claims) return state;
+  const legacy = path.join(home, "bin", ".taskloop-managed-skills.json");
+  if (!pathPresent(legacy)) return state;
+  const adopted = readManagedSkills(legacy);
+  const adoptedNames = new Set(Object.values(adopted.runtimes).flatMap((entries) => Object.keys(entries)));
+  if (!adoptedNames.size && !adopted.legacyNames.size) return state;
+  plan("ok", `${legacy} (ownership records adopted under the current manifest name)`);
+  return adopted;
+}
+
 // Byte-exact source trees from the last asdf-owned core at
 // 9c6dbdb957b530997c17a80bd4d2bdf3d3c02fd8, plus the unpublished name-only
 // workloop installer used during this extraction. They permit a one-time safe
@@ -696,7 +835,7 @@ function installWorkloopAssetsUnlocked(repo, home, dry) {
     .map((entry) => entry.name)
     .sort();
   const manifest = path.join(home, "bin", ".workloop-managed-skills.json");
-  const previousState = readManagedSkills(manifest);
+  const previousState = readManagedSkillsWithLegacyAdoption(home);
   const previous = previousState.runtimes;
   const next = { ".claude": {}, ".codex": {} };
   const sourceDigests = Object.fromEntries(
@@ -819,14 +958,26 @@ export function installWorkloop(repo, home, dry = false) {
   return dry ? install() : withInstallLock(home, install);
 }
 
+function samePath(a, b) {
+  const left = path.normalize(a);
+  const right = path.normalize(b);
+  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+// A repository rename leaves core.hooksPath pointing at a directory that no
+// longer exists. That is this repository's own stale path, not somebody else's
+// hook directory, so reclaiming it cannot clobber a foreign configuration —
+// while a hooks path that still resolves stays untouched.
+export function hooksPathDisposition({ current, expected, present = pathPresent }) {
+  if (!current) return { action: "set" };
+  if (samePath(current, expected)) return { action: "keep" };
+  if (!present(current)) return { action: "reclaim" };
+  return { action: "refuse" };
+}
+
 function registerCommitDistribution(repo, dry) {
   if (!exists(path.join(repo, ".git")) || !exists(path.join(repo, "hooks", "post-commit"))) return;
   const expectedHooksPath = path.resolve(repo, "hooks");
-  const samePath = (a, b) => {
-    const left = path.normalize(a);
-    const right = path.normalize(b);
-    return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
-  };
   let current = "";
   try {
     current = execFileSync("git", ["-C", repo, "config", "--get", "core.hooksPath"], {
@@ -836,16 +987,23 @@ function registerCommitDistribution(repo, dry) {
   } catch {
     current = "";
   }
-  const currentHooksPath = current ? path.resolve(repo, current) : "";
-  if (current === "hooks" || (currentHooksPath && samePath(currentHooksPath, expectedHooksPath))) {
-    plan("ok", current === "hooks" ? "core.hooksPath=hooks" : `core.hooksPath=${current}`);
+  if (current === "hooks") {
+    plan("ok", "core.hooksPath=hooks");
     return;
   }
-  if (current) {
+  const currentHooksPath = current ? path.resolve(repo, current) : "";
+  const { action } = hooksPathDisposition({ current: currentHooksPath, expected: expectedHooksPath });
+  if (action === "keep") {
+    plan("ok", `core.hooksPath=${current}`);
+    return;
+  }
+  if (action === "refuse") {
     plan("error", `core.hooksPath is '${current}'; not replacing a foreign hook directory`);
     return;
   }
-  plan("update", "git config core.hooksPath hooks");
+  plan("update", action === "reclaim"
+    ? `git config core.hooksPath hooks (reclaimed from '${current}', which no longer exists)`
+    : "git config core.hooksPath hooks");
   if (!dry) execFileSync("git", ["-C", repo, "config", "core.hooksPath", "hooks"]);
 }
 
@@ -860,10 +1018,12 @@ function main() {
   ACTIONS.length = 0;
   const installed = installWorkloop(SOURCE, HOME, dry);
   registerCommitDistribution(SOURCE, dry);
+  migrateLegacyLedgerRoot(HOME, dry);
   const bindCodex = () => configureCodexLedgerBinding(HOME, { configure: configureCodex, dry });
   if (configureCodex && !dry) withInstallLock(HOME, bindCodex);
   else bindCodex();
   inspectCodexHookProfiles(HOME);
+  inspectClaudeHookProfiles(HOME);
   const order = ["new", "update", "remove", "warning", "ok", "error"];
   const counts = Object.fromEntries(order.map((kind) => [kind, 0]));
   process.stdout.write(`workloop install ${dry ? "(dry run) " : ""}from ${SOURCE}\n\n`);

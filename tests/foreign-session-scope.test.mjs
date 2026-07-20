@@ -346,3 +346,109 @@ test("the owner's own in-repo writes are unchanged: file tool gated by envelope,
   assertOwnerAllowed(fx, "Write", { file_path: path.join(fx.repoA, "src", "a.txt") }, "owner Write inside envelope");
   assertOwnerAllowed(fx, "Bash", { command: `cp ${fx.source} ${fx.repoA}/notes.txt` }, "owner shell write outside envelope stays allowed (no new friction)");
 });
+
+// --- Part 3: Windows-shaped paths through a POSIX-dialect parser -------------
+
+test("a POSIX-dialect parser keeps Windows absolute write targets intact", async () => {
+  const { analyzeToolCall, writeFileTargets, controlPlaneWriteFailure } = await import(new URL("../lib/supervision.mjs", import.meta.url));
+  const repo = path.join(path.parse(process.cwd()).root, "repo");
+  const home = path.join(path.parse(process.cwd()).root, "home");
+  const B = String.fromCharCode(92);
+  const targetOf = (command) => {
+    const mapping = { command };
+    return writeFileTargets("Bash", mapping, analyzeToolCall("Bash", mapping));
+  };
+  // A POSIX lexer treats every backslash as an escape, so an unguarded parse
+  // returns C:Usersx.gitconfig — a name that resolves nowhere near .git.
+  assert.deepEqual(targetOf(String.raw`echo x > C:\repo\.git\config`), [String.raw`C:\repo\.git\config`]);
+  // UNC reaches the same files by another spelling, admin shares included.
+  const UNC_SHARE = `${B}${B}server${B}share${B}.git${B}config`;
+  const UNC_ADMIN = `${B}${B}localhost${B}C$${B}repo${B}.git${B}config`;
+  assert.deepEqual(targetOf(`echo x > ${UNC_SHARE}`), [UNC_SHARE]);
+  assert.deepEqual(targetOf(`echo x > ${UNC_ADMIN}`), [UNC_ADMIN]);
+  // A single leading backslash IS a Windows root — it names the root of the
+  // current drive, and win32.isAbsolute agrees — so it must survive parsing too.
+  const ROOTED = `${B}dir${B}.git${B}config`;
+  assert.deepEqual(targetOf(`echo x > ${ROOTED}`), [ROOTED]);
+  // But a POSIX escape of a command word is not a path: it has no later
+  // separator, and misreading it would break command classification.
+  assert.deepEqual(targetOf(String.raw`\ls > /tmp/out.txt`), ["/tmp/out.txt"]);
+  // A letter-colon prefix with a second colon is ordinary POSIX text, not a
+  // drive-relative path, so normal escape processing still applies.
+  assert.deepEqual(targetOf(String.raw`sed -i s:/old\ a:/new: notes.txt`), []);
+  // Genuine POSIX escaping is untouched: a backslash-escaped space is one word.
+  assert.deepEqual(targetOf(String.raw`echo x > /tmp/two\ words.txt`), ["/tmp/two words.txt"]);
+
+  const denies = (command) => Boolean(controlPlaneWriteFailure(repo, "Bash", { command }, home));
+  assert.equal(denies(`echo x > ${path.join(repo, ".git", "config")}`), true, "drive-letter control-state write must deny");
+  assert.equal(denies(`echo x > ${path.join(repo, ".workloop", "task.json")}`), true, "drive-letter control-state write must deny");
+});
+
+test("a POSIX-dialect parser resolves parent traversal in Windows paths by Windows rules", async () => {
+  const { analyzeToolCall } = await import(new URL("../lib/supervision.mjs", import.meta.url));
+  // POSIX rules treat `C:\a\repoB` as ONE segment, so a single `..` erases the
+  // whole prefix and the target collapses to a relative path that re-resolves
+  // somewhere else entirely — outside whatever envelope guards the real target.
+  const command = String.raw`cp C:\t\source.txt C:\t\repoB/../repoA/src/a.txt`;
+  const call = analyzeToolCall("Bash", { command });
+  const destinations = call.commands.flatMap(({ analysis }) => analysis.local.destinations?.targets ?? []);
+  assert.deepEqual(destinations, [String.raw`C:\t\repoA\src\a.txt`]);
+});
+
+test("a drive-relative Windows path cannot smuggle a control-state write past the guard", async () => {
+  const { controlPlaneWriteFailure, analyzeToolCall, writeFileTargets } = await import(new URL("../lib/supervision.mjs", import.meta.url));
+  const B = String.fromCharCode(92);
+  const repo = path.join(path.parse(process.cwd()).root, "repo");
+  const home = path.join(path.parse(process.cwd()).root, "home");
+  const denies = (command) => Boolean(controlPlaneWriteFailure(repo, "Bash", { command }, home));
+  // `C:x` has no separator after the colon but still resolves on Windows —
+  // against that drive's current directory, which for an in-repo agent is the
+  // repo. Requiring a separator would leave this whole shape on the POSIX path.
+  assert.equal(denies(`echo x > C:.git${B}config`), true, "drive-relative control-state write must deny");
+  assert.equal(denies(`echo x > C:.workloop${B}task.json`), true, "drive-relative control-state write must deny");
+  assert.equal(denies(`echo x > C:..${B}repo${B}.git${B}config`), true, "drive-relative traversal must deny");
+  // The absolute form still denies, and ordinary POSIX text is still escaped.
+  assert.equal(denies(`echo x > ${path.join(repo, ".git", "config")}`), true);
+  const targetOf = (command) => writeFileTargets("Bash", { command }, analyzeToolCall("Bash", { command }));
+  assert.deepEqual(targetOf(String.raw`echo x > /tmp/two\ words.txt`), ["/tmp/two words.txt"]);
+});
+
+test("every Windows root shape reaches the control-state guard", async () => {
+  const { controlPlaneWriteFailure } = await import(new URL("../lib/supervision.mjs", import.meta.url));
+  const B = String.fromCharCode(92);
+  // Use a real absolute repo path so every spelling below resolves against the
+  // same base; a rooted path is drive-current-root relative, so it only names
+  // the same file when the base really is on that drive.
+  const repo = path.resolve("test-fixture-repo");
+  const home = path.join(path.parse(repo).root, "home");
+  const denies = (command) => Boolean(controlPlaneWriteFailure(repo, "Bash", { command }, home));
+  for (const control of [`.git${B}config`, `.workloop${B}task.json`]) {
+    // drive-absolute and rooted name the same file; a parser that mangles
+    // either one hides a control-state write. (Drive-relative has its own test
+    // above, since its base is the drive's current directory, not the repo.)
+    const absolute = path.join(repo, control);
+    assert.equal(denies(`echo x > ${absolute}`), true, `drive-absolute ${control}`);
+    assert.equal(denies(`echo x > ${absolute.slice(2)}`), true, `rooted ${control}`);
+  }
+});
+
+test("an alternate-data-stream suffix does not smuggle a write past the control-state guard", async () => {
+  const { controlPlaneWriteFailure, analyzeToolCall, writeFileTargets } = await import(new URL("../lib/supervision.mjs", import.meta.url));
+  const B = String.fromCharCode(92);
+  const repo = path.resolve("test-fixture-repo");
+  const home = path.join(path.parse(repo).root, "home");
+  const denies = (command) => Boolean(controlPlaneWriteFailure(repo, "Bash", { command }, home));
+  // `path:stream` names the same file entry as `path`, so a write to the stream
+  // is a write to the control file and must reach the guard. The second colon
+  // must therefore not disqualify the word from being read as a Windows path.
+  for (const control of [`.git${B}config`, `.workloop${B}task.json`]) {
+    const target = path.join(repo, control);
+    assert.equal(denies(`echo x > ${target}`), true, `plain ${control}`);
+    assert.equal(denies(`echo x > ${target}:hidden`), true, `ADS ${control}`);
+    assert.equal(denies(`cp secret.txt ${target}:hidden`), true, `ADS via cp ${control}`);
+  }
+  // Three or more colons is sed-style syntax, not a drive reference, and keeps
+  // ordinary POSIX escape processing.
+  const targetOf = (command) => writeFileTargets("Bash", { command }, analyzeToolCall("Bash", { command }));
+  assert.deepEqual(targetOf(String.raw`sed -i s:/old\ a:/new: notes.txt`), []);
+});

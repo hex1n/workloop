@@ -10,6 +10,6 @@ fs.readFileSync = function countedReadFileSync(file, ...args) {
 };
 
 process.on("exit", () => {
-  const target = process.env.TASKLOOP_EVENT_READ_COUNT_FILE;
+  const target = process.env.WORKLOOP_EVENT_READ_COUNT_FILE;
   if (target) fs.writeFileSync(target, String(eventStoreReads));
 });
