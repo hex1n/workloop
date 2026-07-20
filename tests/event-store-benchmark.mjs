@@ -26,7 +26,7 @@ function summarize(values, passed) {
 }
 
 function benchmarkEventStore() {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-event-benchmark-"));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-event-benchmark-"));
   try {
     const records = [];
     let previous = null;

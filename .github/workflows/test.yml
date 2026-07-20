@@ -46,15 +46,15 @@ jobs:
           $PSVersionTable.PSVersion.ToString()
       - name: PowerShell Core smoke
         timeout-minutes: 2
-        run: node .\bin\taskloop.mjs help | Out-Null
+        run: node .\bin\workloop.mjs help | Out-Null
       - name: Windows PowerShell smoke
         timeout-minutes: 2
         shell: powershell
-        run: node .\bin\taskloop.mjs help | Out-Null
+        run: node .\bin\workloop.mjs help | Out-Null
       - name: Command Prompt smoke
         timeout-minutes: 2
         shell: cmd
-        run: node bin\taskloop.mjs help >NUL
+        run: node bin\workloop.mjs help >NUL
       - name: Portable skills
         timeout-minutes: 2
         run: npm run test:skills
@@ -109,11 +109,11 @@ jobs:
         run: node --test --test-name-pattern="Windows installer reaps a stale lock" tests/windows.test.mjs
       - name: W01-W08 event authority, recovery, transcript, and concurrency
         timeout-minutes: 5
-        run: node --test --test-reporter=spec --test-name-pattern="\[W0[1-8]\]" tests/windows.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/taskloop-architecture.test.mjs
+        run: node --test --test-reporter=spec --test-name-pattern="\[W0[1-8]\]" tests/windows.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/workloop-architecture.test.mjs
       - name: Architecture
         timeout-minutes: 3
         run: |
-          $output = & node --test --test-reporter=spec tests/taskloop-architecture.test.mjs 2>&1 | Out-String
+          $output = & node --test --test-reporter=spec tests/workloop-architecture.test.mjs 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0) {
             $escaped = $output.Replace("%", "%25").Replace("`r", "%0D").Replace("`n", "%0A")
             Write-Output "::error title=Windows architecture::$escaped"
@@ -126,7 +126,7 @@ jobs:
       - name: Command safety, behavioral and hook protocol
         timeout-minutes: 5
         run: |
-          $output = & node --test --test-reporter=spec tests/command-safety-adversarial.test.mjs tests/taskloop.test.mjs 2>&1 | Out-String
+          $output = & node --test --test-reporter=spec tests/command-safety-adversarial.test.mjs tests/workloop.test.mjs 2>&1 | Out-String
           if ($LASTEXITCODE -ne 0) {
             $failureIndex = $output.IndexOf("failing tests:")
             $details = if ($failureIndex -ge 0) { $output.Substring($failureIndex) } else { $output }

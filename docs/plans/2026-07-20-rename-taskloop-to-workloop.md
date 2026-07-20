@@ -73,10 +73,37 @@
 
 ### Phase 3 — 安装器与宿主 hook
 
+**必须先做 manifest 迁移,否则首次安装必然阻塞**(2026-07-20 读码确认,
+修正本方案初稿"发布阻塞不触发"的错误判断):
+
+改名把 managed skills manifest 从 `.taskloop-managed-skills.json` 换成
+`.workloop-managed-skills.json`。新装时 `readManagedSkills` 读不到新文件,
+返回空 `legacyNames`(`install.mjs:653/668`),而 `~/.claude/skills/` 与
+`~/.codex/skills/` 下四棵 skill 树由旧运行时装着、真实存在。于是
+`legacySkillCanBeAdopted(skill, actual, false, current)`(`install.mjs:687`)
+两个条件都不成立——`LEGACY_CORE_DIGESTS` 只收历史 digest,当前 skill 内容早已
+变化——`install.mjs:735` 判为 error,`installWorkloop` 在 `install.mjs:790` 写下
+`needs_manual_intervention` 并 return,**`activateRuntimeShims` 永不执行**:
+`workloop` shim 装不上,旧 `taskloop` shim 继续服务旧运行时,且失败是静默的
+(journal 里才看得到)。
+
+迁移动作(择一,推荐前者):
+
+1. 安装前把 `~/bin/.taskloop-managed-skills.json` 改名为
+   `.workloop-managed-skills.json`。manifest 内部格式不含产品名,改名即可被
+   `readManagedSkills` 正常认领,四棵树按 owned 走正常 update 路径。
+2. 或安装前手工删除 `~/.claude/skills/` 与 `~/.codex/skills/` 下的
+   `loop-core`、`workloop`、`judgmentloop`、`meta-loop` 四棵树,让新装当作
+   全新分发。代价:本地对 skill 的任何修改会丢失。
+
+验证:在临时 `WORKLOOP_INSTALL_HOME` 下先造出"旧 manifest + 四棵树"的状态,
+再跑 `node install.mjs`,断言 journal 状态为已完成且 `workloop` shim 存在。
+
 - 新 runtime 目录 + `workloop` shim;旧 `taskloop` shim 替换为一行提示转发,
-  journal 记录。managed skills 无新名分发,install.mjs:872 的发布阻塞不触发。
+  journal 记录。
 - `lib/host-hooks.mjs` recipes 更新;各宿主 repo 重装 hook,
-  `hooks --action record-install` 留痕。
+  `hooks --action record-install` 留痕。**本仓库自身的会话 hook 也指向
+  `~/bin/taskloop.mjs`,重装前当前会话仍受旧运行时保护。**
 
 ### Phase 4 — 对外(不可逆,逐项确认后执行)
 

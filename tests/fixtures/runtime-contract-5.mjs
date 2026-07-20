@@ -7,8 +7,8 @@ const RUNTIME5_INFO = Object.freeze({
   task_snapshot_schema_version: 3,
   event_record_schema_version: 2,
   outcome_projection_schema_version: 3,
-  event_store: ".taskloop/events.jsonl",
-  outcome_projection: "~/.taskloop/outcomes.jsonl",
+  event_store: ".workloop/events.jsonl",
+  outcome_projection: "~/.workloop/outcomes.jsonl",
 });
 
 const RUNTIME5_EVENT_KINDS = Object.freeze([

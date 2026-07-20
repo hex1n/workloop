@@ -17,8 +17,8 @@ test("public docs and skills use the canonical observation/lifecycle/policy voca
   const joined = files.map((rel) => fs.readFileSync(path.join(ROOT, rel), "utf8")).join("\n");
   for (const token of ["unsatisfied", "satisfied", "indeterminate", "active", "suspended", "terminal", "deferred_witness", "steady_satisfied", "criterion_generation_id"]) assert.match(joined, new RegExp(token));
   assert.doesNotMatch(joined, /--earn-red|--keep-green|\bearn_red\b|\bred_witnessed\b|\bkeep_green\b|\bstate: done\b/);
-  assert.match(joined, /~\/\.taskloop\/outcomes\.jsonl/);
-  assert.doesNotMatch(joined, /~\/\.taskloop\/outcomes-v\d+\.jsonl/);
+  assert.match(joined, /~\/\.workloop\/outcomes\.jsonl/);
+  assert.doesNotMatch(joined, /~\/\.workloop\/outcomes-v\d+\.jsonl/);
 });
 
 test("workloop remains task-facing and delegates shared semantics to loop-core", () => {
@@ -57,13 +57,13 @@ test("meta-loop ships a human-gated monthly incremental reminder binding", () =>
   const skill = fs.readFileSync(path.join(ROOT, "skills/meta-loop/SKILL.md"), "utf8");
   const reminder = fs.readFileSync(path.join(ROOT, "skills/meta-loop/REMINDER.md"), "utf8");
   assert.match(skill, /monthly reminder/); assert.match(skill, /incremental terminal and abandoned/); assert.match(skill, /never unattended/);
-  assert.match(reminder, /taskloop ledger --json/); assert.match(reminder, /newTerminal/); assert.match(reminder, /newAbandoned/); assert.match(reminder, /msg \* \$message/);
+  assert.match(reminder, /workloop ledger --json/); assert.match(reminder, /newTerminal/); assert.match(reminder, /newAbandoned/); assert.match(reminder, /msg \* \$message/);
 });
 
 test("every CLI verb named by a portable skill exists in runtime help", () => {
   const help = fs.readFileSync(path.join(ROOT, "lib/application.mjs"), "utf8");
   const joined = files.filter((file) => file.endsWith("SKILL.md")).map((file) => fs.readFileSync(path.join(ROOT, file), "utf8")).join("\n");
-  for (const verb of ["open", "status", "verify", "achieve", "review", "ledger", "sync-outcomes"]) if (new RegExp(`taskloop ${verb}\\b`).test(joined)) assert.match(help, new RegExp(`\\b${verb}\\b`));
+  for (const verb of ["open", "status", "verify", "achieve", "review", "ledger", "sync-outcomes"]) if (new RegExp(`workloop ${verb}\\b`).test(joined)) assert.match(help, new RegExp(`\\b${verb}\\b`));
 });
 
 test("release sources contain no removed public-domain vocabulary", () => {

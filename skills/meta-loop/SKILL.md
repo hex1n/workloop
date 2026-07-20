@@ -1,17 +1,17 @@
 ---
 name: meta-loop
-description: Diagnose whether supervised loops converge, where they fail, how adoption behaves, and whether landed work survives after close, from taskloop's machine ledger joined to repository history. Use for the periodic ledger review, when the monthly reminder reports new terminal or abandoned counts, when asked why loops stall, suspend, or bypass supervision, or whether achieved work was later reverted or superseded.
+description: Diagnose whether supervised loops converge, where they fail, how adoption behaves, and whether landed work survives after close, from workloop's machine ledger joined to repository history. Use for the periodic ledger review, when the monthly reminder reports new terminal or abandoned counts, when asked why loops stall, suspend, or bypass supervision, or whether achieved work was later reverted or superseded.
 argument-hint: "[review window or operating question]"
 ---
 
 # Meta-loop
 
-Meta-loop is the human-in-the-loop reader and co-author of taskloop's aggregate
+Meta-loop is the human-in-the-loop reader and co-author of workloop's aggregate
 contract. It never reads raw event schemas or legacy projections directly.
 
 ## Read the ledger
 
-Run `taskloop ledger --json --repo <repo>` for every repository in scope. Treat
+Run `workloop ledger --json --repo <repo>` for every repository in scope. Treat
 the returned `integrity` object as part of every number:
 
 - `covered` evidence supports claims about the selected window;

@@ -17,7 +17,7 @@ const INDETERMINATE = 2;
 // One bounded line, stable for a given cause: no durations, counts, or paths
 // that move between runs, or the three-identical-failures suspension goes blind.
 function say(message) {
-  process.stdout.write(`TASKLOOP_CRITERION: ${message}\n`);
+  process.stdout.write(`WORKLOOP_CRITERION: ${message}\n`);
 }
 
 let pkg;

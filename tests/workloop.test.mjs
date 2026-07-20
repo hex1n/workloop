@@ -14,7 +14,7 @@ import { artifactTimestamp, localTimestamp, outputTail } from "../lib/prims.mjs"
 import { EVIDENCE_LOCK_DIR, EVIDENCE_LOSS_DIR, EVIDENCE_MAX_BYTES, EVIDENCE_SEQUENCE_FILE, appendEvidence, evidencePath, foldEvidence, pretooluseEvidenceState, readEvidence } from "../lib/evidence-ledger.mjs";
 
 const ROOT = path.resolve(".");
-const CLI = path.join(ROOT, "bin", "taskloop.mjs");
+const CLI = path.join(ROOT, "bin", "workloop.mjs");
 const AT = "2026-07-11T00:00:00.000Z";
 
 test("local timestamp renderings omit timezone, T, and milliseconds", () => {
@@ -64,7 +64,7 @@ function withoutVolatileRuntimeFields(value) {
 }
 
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-v1-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-v1-"));
   const repo = path.join(root, "repo"); const home = path.join(root, "home");
   fs.mkdirSync(repo, { recursive: true }); fs.mkdirSync(home, { recursive: true });
   spawnSync("git", ["init", "-q"], { cwd: repo });
@@ -72,7 +72,7 @@ function fixture(t) {
   fs.writeFileSync(path.join(repo, "work.txt"), "start\n");
   spawnSync("git", ["add", "."], { cwd: repo });
   spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "fixture"], { cwd: repo });
-  const env = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home, TASKLOOP_SESSION_ID: "", CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "" };
+  const env = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home, WORKLOOP_SESSION_ID: "", CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "" };
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return { root, repo, home, env };
 }
@@ -352,7 +352,7 @@ test("criterion files dispatch through the platform interpreter without shell te
   assert.deepEqual(criterionFileInvocation("checks/acceptance.mjs", "linux", "/node"), { executable: "/node", args: ["checks/acceptance.mjs"] });
   assert.deepEqual(criterionFileInvocation("checks/acceptance.js", "win32", "C:/node.exe"), { executable: "C:/node.exe", args: ["checks/acceptance.js"] });
   assert.deepEqual(criterionFileInvocation("checks/acceptance.sh", "linux", "/node"), { executable: "/bin/sh", args: ["checks/acceptance.sh"] });
-  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-shebang-")); t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-shebang-")); t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const bashCriterion = path.join(directory, "acceptance.sh");
   fs.writeFileSync(bashCriterion, "#!/usr/bin/env bash\n[[ -n bash ]]\n");
   assert.deepEqual(criterionFileInvocation(bashCriterion, "linux", "/node"), { executable: "/usr/bin/env", args: ["bash", bashCriterion] });
@@ -364,19 +364,19 @@ test("criterion files dispatch through the platform interpreter without shell te
 });
 
 test("criterion messages use the last dedicated stdout line and never infer a verdict", () => {
-  assert.equal(criterionMessage("noise\nTASKLOOP_CRITERION: first\nmore\nTASKLOOP_CRITERION: final\n"), "final");
+  assert.equal(criterionMessage("noise\nWORKLOOP_CRITERION: first\nmore\nWORKLOOP_CRITERION: final\n"), "final");
   assert.equal(criterionMessage("satisfied: old convention\nnoise"), null);
-  assert.equal(criterionMessage("TASKLOOP_CRITERION:    \n"), null);
-  assert.ok(Buffer.byteLength(criterionMessage(`TASKLOOP_CRITERION: ${"雪".repeat(500)}`), "utf8") <= 160);
+  assert.equal(criterionMessage("WORKLOOP_CRITERION:    \n"), null);
+  assert.ok(Buffer.byteLength(criterionMessage(`WORKLOOP_CRITERION: ${"雪".repeat(500)}`), "utf8") <= 160);
 });
 
 test("criterion message identity is bounded and stdout-exclusive", (t) => {
   const fx = fixture(t);
-  fs.writeFileSync(path.join(fx.repo, "check.mjs"), "process.stdout.write('TASKLOOP_CRITERION: real stdout\\n' + 'x'.repeat(6000)); process.stderr.write('TASKLOOP_CRITERION: spoofed stderr\\n'); process.exit(3);\n");
+  fs.writeFileSync(path.join(fx.repo, "check.mjs"), "process.stdout.write('WORKLOOP_CRITERION: real stdout\\n' + 'x'.repeat(6000)); process.stderr.write('WORKLOOP_CRITERION: spoofed stderr\\n'); process.exit(3);\n");
   const observation = runCriterionSource({ kind: "file", value: "check.mjs" }, fx.repo, 5, "tri-state");
   assert.equal(observation.verdict, "unsatisfied");
   assert.equal(criterionMessage(observation.execution.output_tail), "real stdout");
-  assert.match(observation.execution.output_tail, /\[stderr\] TASKLOOP_CRITERION: spoofed stderr/);
+  assert.match(observation.execution.output_tail, /\[stderr\] WORKLOOP_CRITERION: spoofed stderr/);
   assert.ok(Buffer.byteLength(observation.execution.output_tail, "utf8") <= 4096);
 });
 
@@ -384,7 +384,7 @@ test("command criteria refuse missing executables as indeterminate", (t) => {
   const fx = fixture(t);
   const opened = run(["open", "--repo", fx.repo, "--goal", "typo", "--criterion", "definitely-not-a-command-xyz", "--criterion-policy", "default", "--alignment-because", "probe", "--files", "work.txt"], { env: fx.env });
   assert.equal(opened.status, 2); assert.match(opened.stderr, /criterion indeterminate|command.not.found/i);
-  assert.equal(fs.existsSync(path.join(fx.repo, ".taskloop", "task.json")), false);
+  assert.equal(fs.existsSync(path.join(fx.repo, ".workloop", "task.json")), false);
 });
 
 test("criterion subjects stay inside the envelope and cannot name the checker", (t) => {
@@ -398,11 +398,11 @@ test("criterion subjects stay inside the envelope and cannot name the checker", 
 
 test("state-directory criterion files do not determine proof assurance", (t) => {
   const fx = fixture(t);
-  fs.mkdirSync(path.join(fx.repo, ".taskloop"), { recursive: true });
-  fs.writeFileSync(path.join(fx.repo, ".taskloop", "check.mjs"), "process.exit(0);\n");
-  const metadata = criterionMetadata({ source: { kind: "file", value: ".taskloop/check.mjs" }, protocol: "binary", timeoutSeconds: 5, repo: fx.repo });
+  fs.mkdirSync(path.join(fx.repo, ".workloop"), { recursive: true });
+  fs.writeFileSync(path.join(fx.repo, ".workloop", "check.mjs"), "process.exit(0);\n");
+  const metadata = criterionMetadata({ source: { kind: "file", value: ".workloop/check.mjs" }, protocol: "binary", timeoutSeconds: 5, repo: fx.repo });
   assert.equal(metadata.provenance, "state_dir");
-  const opened = run(["open", "--repo", fx.repo, "--goal", "guard", "--criterion-file", ".taskloop/check.mjs", "--criterion-policy", "steady-satisfied", "--reason", "guard", "--alignment-because", "probe", "--files", "work.txt", "--risk", "routine", "--risk-reason", "shape-neutral probe"], { env: fx.env });
+  const opened = run(["open", "--repo", fx.repo, "--goal", "guard", "--criterion-file", ".workloop/check.mjs", "--criterion-policy", "steady-satisfied", "--reason", "guard", "--alignment-because", "probe", "--files", "work.txt", "--risk", "routine", "--risk-reason", "shape-neutral probe"], { env: fx.env });
   assert.equal(opened.status, 0, opened.stderr);
   const achieved = run(["achieve", "--repo", fx.repo], { env: fx.env });
   assert.equal(achieved.status, 0, achieved.stderr);
@@ -425,13 +425,13 @@ test("criterion side effects become indeterminate", (t) => {
 });
 
 test("incompatible state archival preserves bytes and records a receipt", (t) => {
-  const fx = fixture(t); fs.mkdirSync(path.join(fx.repo, ".taskloop")); const raw = '{"version":0,"x":1}\n'; fs.writeFileSync(path.join(fx.repo, ".taskloop", "task.json"), raw);
+  const fx = fixture(t); fs.mkdirSync(path.join(fx.repo, ".workloop")); const raw = '{"version":0,"x":1}\n'; fs.writeFileSync(path.join(fx.repo, ".workloop", "task.json"), raw);
   assert.throws(() => loadTask(fx.repo), /incompatible/);
   assert.throws(() => archiveIncompatibleState(fx.repo, { reason: "upgrade", grantedBy: "self", at: AT }), /user/);
   const receipt = archiveIncompatibleState(fx.repo, { reason: "upgrade", grantedBy: "user", at: AT });
   assert.equal(fs.readFileSync(path.join(fx.repo, receipt.archive_path), "utf8"), raw);
-  assert.equal(fs.existsSync(path.join(fx.repo, ".taskloop", "task.json")), false);
-  fs.writeFileSync(path.join(fx.repo, ".taskloop", "task.json"), raw);
+  assert.equal(fs.existsSync(path.join(fx.repo, ".workloop", "task.json")), false);
+  fs.writeFileSync(path.join(fx.repo, ".workloop", "task.json"), raw);
   const second = archiveIncompatibleState(fx.repo, { reason: "upgrade again", grantedBy: "user", at: AT });
   assert.notEqual(second.archive_path, receipt.archive_path); assert.match(path.basename(second.archive_path), /^incompatible-\d{8}-\d{6}-[0-9a-f]{64}-[0-9a-f-]+\.json$/);
 });
@@ -462,7 +462,7 @@ test("CLI steady-satisfied Stop never auto closes and achieve does", (t) => {
 
 test("CLI public vocabulary is clean break and info is contract 5", () => {
   const help = run(["help"]); assert.equal(help.status, 0); assert.doesNotMatch(help.stdout, /earn-red|keep-green|\bdone\b|\bred\b|\bgreen\b|--provisional|weak_sensor_unreviewed/);
-  const info = JSON.parse(run(["info"]).stdout); assert.equal(info.runtime_contract, 5); assert.equal(info.task_snapshot_schema_version, 3); assert.equal(info.event_record_schema_version, 2); assert.equal(info.outcome_projection_schema_version, 3); assert.equal(info.outcome_projection, "~/.taskloop/outcomes.jsonl");
+  const info = JSON.parse(run(["info"]).stdout); assert.equal(info.runtime_contract, 5); assert.equal(info.task_snapshot_schema_version, 3); assert.equal(info.event_record_schema_version, 2); assert.equal(info.outcome_projection_schema_version, 3); assert.equal(info.outcome_projection, "~/.workloop/outcomes.jsonl");
   assert.notEqual(run(["open", "--earn-red"]).status, 0); assert.notEqual(run(["done"]).status, 0);
 });
 
@@ -517,7 +517,7 @@ test("CLI proof acceptance, waiver, defaults and grant floors stay independent",
   const waived = fixture(t); fs.writeFileSync(path.join(waived.repo, "done"), "yes\n");
   result = run(["open", "--repo", waived.repo, "--goal", "waived", "--criterion-file", "check.mjs", "--criterion-policy", "steady-satisfied", "--reason", "guard", "--alignment-because", "probe", "--files", "work.txt", "--review-policy", "waived", "--review-waiver-reason", "user accepts review cost"], { env: waived.env });
   assert.equal(result.status, 0, result.stderr); const waivedClose = run(["achieve", "--repo", waived.repo], { env: waived.env }); assert.equal(waivedClose.status, 0); assert.match(waivedClose.stdout, /review waived: user accepts review cost \(self\)/);
-  const waiverEvents = fs.readFileSync(path.join(waived.home, ".taskloop", "outcomes.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+  const waiverEvents = fs.readFileSync(path.join(waived.home, ".workloop", "outcomes.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
   const waiverAssurance = waiverEvents.find((row) => row.kind === "task_opened").payload.assurance;
   assert.equal(waiverAssurance.review_waiver_reason, "user accepts review cost"); assert.equal(waiverAssurance.review_waiver_granted_by, "self");
 
@@ -537,8 +537,8 @@ test("automatic Stop echoes accepted review advisories on stderr without changin
 test("hook contract is byte-exact for deny, block, and release", (t) => {
   const fx = fixture(t); assert.equal(open(fx).status, 0);
   const denied = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "outside.txt") } }) });
-  assert.equal(denied.stdout, '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"taskloop: write outside envelope: outside.txt"}}\n');
-  const blocked = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) }); assert.match(blocked.stdout, /^\{"decision":"block","reason":"taskloop: criterion unsatisfied;/);
+  assert.equal(denied.stdout, '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"workloop: write outside envelope: outside.txt"}}\n');
+  const blocked = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) }); assert.match(blocked.stdout, /^\{"decision":"block","reason":"workloop: criterion unsatisfied;/);
   const read = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Read", tool_input: {} }) }); assert.equal(read.stdout, "");
 });
 
@@ -558,7 +558,7 @@ test("Codex-safe and legacy no-argument Stop paths never emit resumable stdout",
 
 test("unknown is migration-only and cannot be selected as an explicit hook profile", (t) => {
   const fx = fixture(t); assert.equal(open(fx).status, 0);
-  const statePath = path.join(fx.repo, ".taskloop", "task.json");
+  const statePath = path.join(fx.repo, ".workloop", "task.json");
   const before = fs.readFileSync(statePath);
   const stopped = run(["hook", "--profile", "unknown"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
   assert.equal(stopped.status, 2);
@@ -573,7 +573,7 @@ test("host profiles change Stop encoding without changing adjudication", (t) => 
     const stopped = run(["hook", "--profile", profile], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
     assert.equal(stopped.status, 0);
     const state = loadTask(fx.repo);
-    const records = fs.readFileSync(path.join(fx.repo, ".taskloop", "events.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+    const records = fs.readFileSync(path.join(fx.repo, ".workloop", "events.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
     return withoutVolatileRuntimeFields({ projection: state, records });
   });
   assert.deepEqual(summaries[1], summaries[0]);
@@ -582,10 +582,10 @@ test("host profiles change Stop encoding without changing adjudication", (t) => 
 
 test("bound tasks admit only the latest episode session to Stop adjudication", (t) => {
   const fx = fixture(t);
-  const ownerEnv = { ...fx.env, TASKLOOP_SESSION_ID: "owner-session" };
+  const ownerEnv = { ...fx.env, WORKLOOP_SESSION_ID: "owner-session" };
   assert.equal(open({ ...fx, env: ownerEnv }).status, 0);
   assert.equal(loadTask(fx.repo).episodes.at(-1).host_session_id, "owner-session");
-  const statePath = path.join(fx.repo, ".taskloop", "task.json");
+  const statePath = path.join(fx.repo, ".workloop", "task.json");
   const before = fs.readFileSync(statePath, "utf8");
   const foreign = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo, session_id: "foreign-session" }) });
   assert.equal(foreign.stdout, "");
@@ -600,7 +600,7 @@ test("Codex thread env is not treated as a payload-domain session identity", (t)
   assert.equal(open({ ...fx, env }).status, 0); assert.equal(loadTask(fx.repo).episodes.at(-1).host_session_id, "cli");
 });
 
-test("Codex PreToolUse injects the payload-domain session into taskloop CLI commands", (t) => {
+test("Codex PreToolUse injects the payload-domain session into workloop CLI commands", (t) => {
   const fx = fixture(t);
   const command = `node ${JSON.stringify(CLI)} status --repo ${JSON.stringify(fx.repo)}`;
   const result = run(["hook", "--profile", "claude"], {
@@ -621,16 +621,16 @@ test("Codex PreToolUse injects the payload-domain session into taskloop CLI comm
       hookEventName: "PreToolUse",
       permissionDecision: "allow",
       updatedInput: {
-        command: `export TASKLOOP_SESSION_ID='codex-session-1' TASKLOOP_ACTING_SESSION_ID='codex-session-1'; ${command}`,
+        command: `export WORKLOOP_SESSION_ID='codex-session-1' WORKLOOP_ACTING_SESSION_ID='codex-session-1'; ${command}`,
         timeout: 10,
       },
     },
   });
 });
 
-test("session injection folds backslash-newline continuations in taskloop commands", (t) => {
+test("session injection folds backslash-newline continuations in workloop commands", (t) => {
   const fx = fixture(t);
-  // Agents format taskloop invocations across continuation lines; folding keeps
+  // Agents format workloop invocations across continuation lines; folding keeps
   // them rewritable so the opening session stays bound instead of "cli".
   const command = `node ${JSON.stringify(CLI)} status \\\n  --repo ${JSON.stringify(fx.repo)}`;
   const result = run(["hook", "--profile", "claude"], {
@@ -640,10 +640,10 @@ test("session injection folds backslash-newline continuations in taskloop comman
   assert.equal(result.status, 0);
   const output = JSON.parse(result.stdout).hookSpecificOutput;
   assert.equal(output.permissionDecision, "allow");
-  assert.equal(output.updatedInput.command, `export TASKLOOP_SESSION_ID='codex-session-2' TASKLOOP_ACTING_SESSION_ID='codex-session-2'; ${command}`);
+  assert.equal(output.updatedInput.command, `export WORKLOOP_SESSION_ID='codex-session-2' WORKLOOP_ACTING_SESSION_ID='codex-session-2'; ${command}`);
 });
 
-test("single-quoted continuations stay literal and unrewritable taskloop text nudges toward a single command", (t) => {
+test("single-quoted continuations stay literal and unrewritable workloop text nudges toward a single command", (t) => {
   const fx = fixture(t);
   const command = `node ${JSON.stringify(CLI)} status --repo 'a\\\nb'`;
   const result = run(["hook", "--profile", "claude"], {
@@ -652,29 +652,29 @@ test("single-quoted continuations stay literal and unrewritable taskloop text nu
   });
   assert.equal(result.status, 0);
   assert.equal(result.stdout, "", "a literal quoted newline must not be folded into a rewrite");
-  assert.match(result.stderr, /run taskloop alone as a single command/);
+  assert.match(result.stderr, /run workloop alone as a single command/);
 });
 
 test("episode-less authority changes retain the injected acting agent", (t) => {
   const fx = fixture(t);
-  const env = { ...fx.env, TASKLOOP_SESSION_ID: "owner", TASKLOOP_ACTING_SESSION_ID: "child-agent" };
+  const env = { ...fx.env, WORKLOOP_SESSION_ID: "owner", WORKLOOP_ACTING_SESSION_ID: "child-agent" };
   assert.equal(open({ ...fx, env }).status, 0);
   const authorized = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner", agent_id: "child-agent", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } }) });
   assert.equal(authorized.stdout, "");
   assert.equal(run(["amend", "--repo", fx.repo, "--criterion-file", "check.mjs", "--reason", "agent refinement"], { env }).status, 0);
   assert.equal(run(["accept-proof-gap", "--repo", fx.repo, "--reason", "user accepts remaining proof limits", "--granted-by", "user"], { env }).status, 0);
-  const records = fs.readFileSync(path.join(fx.repo, ".taskloop", "events.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+  const records = fs.readFileSync(path.join(fx.repo, ".workloop", "events.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
   const authorityChanges = records.filter((record) => record.events.some((event) => ["task_amended", "proof_gap_accepted"].includes(event.kind)));
   assert.deepEqual(authorityChanges.map((record) => record.actor.session_id), ["child-agent", "child-agent"]);
 });
 
 test("PreToolUse threads the host command id into the write-authorization record", (t) => {
   const fx = fixture(t);
-  const env = { ...fx.env, TASKLOOP_SESSION_ID: "owner" };
+  const env = { ...fx.env, WORKLOOP_SESSION_ID: "owner" };
   assert.equal(open({ ...fx, env }).status, 0);
   const authorized = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner", tool_use_id: "toolu_write_01", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } }) });
   assert.equal(authorized.stdout, "");
-  const records = fs.readFileSync(path.join(fx.repo, ".taskloop", "events.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+  const records = fs.readFileSync(path.join(fx.repo, ".workloop", "events.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
   const authorization = records.find((record) => record.events.some((event) => event.kind === "write_authorized"));
   assert.equal(authorization.command_id, "toolu_write_01");
   // The opening CLI command carried no host command id and stays null.
@@ -683,7 +683,7 @@ test("PreToolUse threads the host command id into the write-authorization record
 
 test("PreToolUse survives a non-shell tool carrying a multi-line command field (Codex apply_patch)", (t) => {
   const fx = fixture(t);
-  const env = { ...fx.env, TASKLOOP_SESSION_ID: "owner" };
+  const env = { ...fx.env, WORKLOOP_SESSION_ID: "owner" };
   assert.equal(open({ ...fx, env }).status, 0);
   // Codex's apply_patch reaches the hook as a non-bash tool whose command field
   // holds the multi-line patch text. Identity-assignment parsing must not treat
@@ -699,7 +699,7 @@ test("PreToolUse survives a non-shell tool carrying a multi-line command field (
 
 test("hooks never crash on hostile or malformed payloads", async (t) => {
   const fx = fixture(t);
-  const env = { ...fx.env, TASKLOOP_SESSION_ID: "owner" };
+  const env = { ...fx.env, WORKLOOP_SESSION_ID: "owner" };
   assert.equal(open({ ...fx, env }).status, 0);
   const patch = "*** Begin Patch\n*** Update File: work.txt\n@@\n-start\n+c\n*** End Patch\n";
   const inRepo = path.join(fx.repo, "work.txt");
@@ -719,7 +719,7 @@ test("hooks never crash on hostile or malformed payloads", async (t) => {
     ["claude", pre({ tool_name: "Write", tool_input: "not-an-object" })],
     ["claude", pre({ tool_name: "Write", tool_input: { file_path: ["a", "b"] } })],
     ["claude", pre({ tool_name: "Write", tool_input: { file_path: {} } })],
-    ["claude", pre({ tool_name: "Bash", tool_input: { command: "cat > f <<'EOF'\nTASKLOOP_SESSION_ID=x\nEOF" } })],
+    ["claude", pre({ tool_name: "Bash", tool_input: { command: "cat > f <<'EOF'\nWORKLOOP_SESSION_ID=x\nEOF" } })],
     ["claude", pre({ tool_name: "Bash", tool_input: { command: "echo " + "x".repeat(200000) } })],
     ["claude", pre({ tool_name: "PowerShell", tool_input: { command: "$env:A='b'\nSet-Content work.txt hi" } })],
     ["claude", pre({ tool_name: "", tool_input: { command: "rm -rf x" } })],
@@ -764,42 +764,42 @@ test("Codex session injection is scoped, validates owner and actor identities, a
   });
 
   assert.equal(hook("codex-1", "Bash", "node --version").stdout, "");
-  assert.equal(hook("codex-1", "Bash", "echo taskloop").stdout, "");
+  assert.equal(hook("codex-1", "Bash", "echo workloop").stdout, "");
   for (const quotedCommand of [
-    `taskloop open --goal "fix it" --reason "why"`,
+    `workloop open --goal "fix it" --reason "why"`,
     `node ${CLI} suspend --reason "stuck" --remaining "more"`,
   ]) {
     const updated = JSON.parse(hook("codex-1", "Bash", quotedCommand).stdout).hookSpecificOutput.updatedInput.command;
-    assert.match(updated, /^export TASKLOOP_SESSION_ID='codex-1' TASKLOOP_ACTING_SESSION_ID='codex-1'; /);
+    assert.match(updated, /^export WORKLOOP_SESSION_ID='codex-1' WORKLOOP_ACTING_SESSION_ID='codex-1'; /);
     assert.ok(updated.endsWith(quotedCommand));
   }
   assert.equal(hook("codex-1", "Bash", `node ${JSON.stringify(CLI)} status; echo done`).stdout, "");
   assert.equal(hook("codex-1", "Bash", `node ${JSON.stringify(CLI)} status | sed -n 1p`).stdout, "");
   assert.equal(hook("codex-1", "mcp__shell__run", `node ${JSON.stringify(CLI)} status`).stdout, "");
   assert.equal(hook("bad id", "Bash", `node ${JSON.stringify(CLI)} status`).stdout, "");
-  assert.match(hook("codex-1", "Bash", `TASKLOOP_SESSION_ID=codex-1 node ${JSON.stringify(CLI)} status`).stdout, /TASKLOOP_ACTING_SESSION_ID/);
-  assert.equal(hook("codex-1", "Bash", `echo TASKLOOP_SESSION_ID=someone-else taskloop`).stdout, "");
+  assert.match(hook("codex-1", "Bash", `WORKLOOP_SESSION_ID=codex-1 node ${JSON.stringify(CLI)} status`).stdout, /WORKLOOP_ACTING_SESSION_ID/);
+  assert.equal(hook("codex-1", "Bash", `echo WORKLOOP_SESSION_ID=someone-else workloop`).stdout, "");
 
-  const conflict = hook("codex-1", "Bash", `TASKLOOP_SESSION_ID=someone-else node ${JSON.stringify(CLI)} status`);
+  const conflict = hook("codex-1", "Bash", `WORKLOOP_SESSION_ID=someone-else node ${JSON.stringify(CLI)} status`);
   assert.match(conflict.stdout, /"permissionDecision":"deny"/);
   assert.match(conflict.stdout, /conflicts with the host hook session id/);
 
-  const forgedActor = hook("codex-1", "Bash", `TASKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`);
+  const forgedActor = hook("codex-1", "Bash", `WORKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`);
   assert.match(forgedActor.stdout, /"permissionDecision":"deny"/);
   assert.match(forgedActor.stdout, /host-managed/);
-  const forgedAfterOwner = hook("codex-1", "Bash", `TASKLOOP_SESSION_ID=codex-1 TASKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`);
+  const forgedAfterOwner = hook("codex-1", "Bash", `WORKLOOP_SESSION_ID=codex-1 WORKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`);
   assert.match(forgedAfterOwner.stdout, /host-managed/);
-  assert.match(hook("codex-1", "Bash", `env FOO=1 TASKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
-  assert.match(hook("codex-1", "Bash", `FOO=1 TASKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
+  assert.match(hook("codex-1", "Bash", `env FOO=1 WORKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
+  assert.match(hook("codex-1", "Bash", `FOO=1 WORKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
   for (const separator of ["&&", "||", "|", "&", ";"]) {
-    assert.match(hook("codex-1", "Bash", `export TASKLOOP_ACTING_SESSION_ID=forged ${separator} node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
+    assert.match(hook("codex-1", "Bash", `export WORKLOOP_ACTING_SESSION_ID=forged ${separator} node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
   }
-  assert.match(hook("codex-1", "Bash", `sleep 0 & TASKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
-  assert.match(hook("codex-1", "Bash", `TASKLOOP_ACTING_SESSION_ID="$(echo forged)" node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
-  const wrappedForgery = `TASKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`;
+  assert.match(hook("codex-1", "Bash", `sleep 0 & WORKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
+  assert.match(hook("codex-1", "Bash", `WORKLOOP_ACTING_SESSION_ID="$(echo forged)" node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
+  const wrappedForgery = `WORKLOOP_ACTING_SESSION_ID=forged node ${JSON.stringify(CLI)} status`;
   assert.match(hook("codex-1", "Bash", `sh -c ${JSON.stringify(wrappedForgery)}`).stdout, /host-managed/);
   assert.match(hook("codex-1", "Bash", `bash -lc ${JSON.stringify(wrappedForgery)}`).stdout, /host-managed/);
-  assert.match(hook("codex-1", "Bash", ["bash <<TASKLOOP_EOF", wrappedForgery, "TASKLOOP_EOF"].join("\n")).stdout, /host-managed/);
+  assert.match(hook("codex-1", "Bash", ["bash <<WORKLOOP_EOF", wrappedForgery, "WORKLOOP_EOF"].join("\n")).stdout, /host-managed/);
   assert.match(hook("codex-1", "Bash", `echo "$(${wrappedForgery})"`).stdout, /host-managed/);
   assert.equal(hook("codex-1", "Bash", `FOO="$(id)" node ${JSON.stringify(CLI)} status`).stdout, "");
   assert.equal(hook("codex-1", "Bash", "FOO=`id` node " + JSON.stringify(CLI) + " status").stdout, "");
@@ -808,17 +808,17 @@ test("Codex session injection is scoped, validates owner and actor identities, a
   }
 
   const powershell = hook("codex-1", "PowerShell", `node ${JSON.stringify(CLI)} status`);
-  assert.match(JSON.parse(powershell.stdout).hookSpecificOutput.updatedInput.command, /^\$env:TASKLOOP_SESSION_ID='codex-1'; \$env:TASKLOOP_ACTING_SESSION_ID='codex-1'; /);
-  assert.match(hook("codex-1", "PowerShell", `$env:TASKLOOP_ACTING_SESSION_ID='forged'; node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
+  assert.match(JSON.parse(powershell.stdout).hookSpecificOutput.updatedInput.command, /^\$env:WORKLOOP_SESSION_ID='codex-1'; \$env:WORKLOOP_ACTING_SESSION_ID='codex-1'; /);
+  assert.match(hook("codex-1", "PowerShell", `$env:WORKLOOP_ACTING_SESSION_ID='forged'; node ${JSON.stringify(CLI)} status`).stdout, /host-managed/);
   assert.equal(hook("codex-1", "PowerShell", `$env:FOO="$(id)"; node ${JSON.stringify(CLI)} status`).stdout, "");
 
-  const maliciousActor = hook("codex-1", "Bash", `node ${JSON.stringify(CLI)} status`, "child'; touch /tmp/taskloop-injected; '");
+  const maliciousActor = hook("codex-1", "Bash", `node ${JSON.stringify(CLI)} status`, "child'; touch /tmp/workloop-injected; '");
   const safeCommand = JSON.parse(maliciousActor.stdout).hookSpecificOutput.updatedInput.command;
-  assert.match(safeCommand, /TASKLOOP_ACTING_SESSION_ID='codex-1'/);
-  assert.doesNotMatch(safeCommand, /taskloop-injected/);
+  assert.match(safeCommand, /WORKLOOP_ACTING_SESSION_ID='codex-1'/);
+  assert.doesNotMatch(safeCommand, /workloop-injected/);
 
-  const explicitOwner = hook("codex-1", "Bash", `TASKLOOP_SESSION_ID=codex-1 node ${JSON.stringify(CLI)} status`, "child-1");
-  assert.match(JSON.parse(explicitOwner.stdout).hookSpecificOutput.updatedInput.command, /^export TASKLOOP_ACTING_SESSION_ID='child-1'; TASKLOOP_SESSION_ID=codex-1 /);
+  const explicitOwner = hook("codex-1", "Bash", `WORKLOOP_SESSION_ID=codex-1 node ${JSON.stringify(CLI)} status`, "child-1");
+  assert.match(JSON.parse(explicitOwner.stdout).hookSpecificOutput.updatedInput.command, /^export WORKLOOP_ACTING_SESSION_ID='child-1'; WORKLOOP_SESSION_ID=codex-1 /);
 });
 
 test("nudge mode records agent and permission anchors without denying wider untracked work", (t) => {
@@ -835,10 +835,10 @@ test("nudge mode records agent and permission anchors without denying wider untr
   const payload = JSON.parse(ledger.stdout);
   assert.equal(payload.integrity.record_count, 2);
   assert.deepEqual(readEvidence(fx.repo).filter((row) => row.kind === "untracked_write").map((row) => row.gate_seq), [1, 2]);
-  const rows = fs.readFileSync(path.join(fx.repo, ".taskloop", "untracked-observations.jsonl"), "utf8");
+  const rows = fs.readFileSync(path.join(fx.repo, ".workloop", "untracked-observations.jsonl"), "utf8");
   assert.match(rows, /"acting_session":"child"/); assert.match(rows, /"permission_mode_raw":"bypassPermissions"/); assert.match(rows, /"gate":"nudge"/);
-  assert.equal(fs.readFileSync(path.join(fx.repo, ".taskloop", ".gitignore"), "utf8"), "*\n");
-  assert.doesNotMatch(spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: fx.repo, encoding: "utf8" }).stdout, /\.taskloop/);
+  assert.equal(fs.readFileSync(path.join(fx.repo, ".workloop", ".gitignore"), "utf8"), "*\n");
+  assert.doesNotMatch(spawnSync("git", ["status", "--porcelain", "--untracked-files=all"], { cwd: fx.repo, encoding: "utf8" }).stdout, /\.workloop/);
 });
 
 test("ledger exposes control-plane shell text that could not be safely rewritten", (t) => {
@@ -849,7 +849,7 @@ test("ledger exposes control-plane shell text that could not be safely rewritten
     input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner", tool_name: "Bash", tool_input: { command } }),
   });
   assert.equal(hook.stdout, "");
-  for (const ordinary of ["rg taskloop lib/", "ls taskloop", "npm pack taskloop"]) {
+  for (const ordinary of ["rg workloop lib/", "ls workloop", "npm pack workloop"]) {
     const ordinaryHook = run(["hook", "--profile", "claude"], {
       cwd: fx.repo, env: fx.env,
       input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner", tool_name: "Bash", tool_input: { command: ordinary } }),
@@ -913,10 +913,10 @@ test("ledger treats only agent-bearing actor anchors as independent review ancho
   const fx = fixture(t);
   assert.equal(open(fx).status, 0);
   appendEvidence(fx.repo, { at: AT, kind: "actor_anchor", sequence_session: "owner", acting_session: "owner", agent_id: null });
-  let reviewed = run(["review", "--repo", fx.repo, "--level", "fresh-context", "--reviewer", "parent", "--blocking-findings", "0", "--advisory-findings", "0"], { env: { ...fx.env, TASKLOOP_ACTING_SESSION_ID: "owner" } });
+  let reviewed = run(["review", "--repo", fx.repo, "--level", "fresh-context", "--reviewer", "parent", "--blocking-findings", "0", "--advisory-findings", "0"], { env: { ...fx.env, WORKLOOP_ACTING_SESSION_ID: "owner" } });
   assert.equal(reviewed.status, 0, reviewed.stderr);
   appendEvidence(fx.repo, { at: AT, kind: "actor_anchor", sequence_session: "owner", acting_session: "child", agent_id: "child" });
-  reviewed = run(["review", "--repo", fx.repo, "--level", "fresh-context", "--reviewer", "child", "--blocking-findings", "0", "--advisory-findings", "0"], { env: { ...fx.env, TASKLOOP_ACTING_SESSION_ID: "child" } });
+  reviewed = run(["review", "--repo", fx.repo, "--level", "fresh-context", "--reviewer", "child", "--blocking-findings", "0", "--advisory-findings", "0"], { env: { ...fx.env, WORKLOOP_ACTING_SESSION_ID: "child" } });
   assert.equal(reviewed.status, 0, reviewed.stderr);
   appendEvidence(fx.repo, { at: AT, kind: "stop_census", sequence_session: "owner", acting_session: "owner", pretooluse_armed: true, mode: "nudge" });
   const ledger = JSON.parse(run(["ledger", "--json", "--repo", fx.repo], { env: fx.env }).stdout);
@@ -935,7 +935,7 @@ test("ledger treats only agent-bearing actor anchors as independent review ancho
 
 test("ledger exposes user authority claims as unanchored", (t) => {
   const fx = fixture(t);
-  const agentEnv = { ...fx.env, TASKLOOP_ACTING_SESSION_ID: "agent-session" };
+  const agentEnv = { ...fx.env, WORKLOOP_ACTING_SESSION_ID: "agent-session" };
   const opened = run([
     "open", "--repo", fx.repo, "--goal", "authority claims", "--criterion-file", "check.mjs", "--criterion-policy", "default",
     "--alignment-because", "the checker exercises the result", "--files", "work.txt",
@@ -997,7 +997,7 @@ test("ledger surfaces recorded reviews with their finding counts for advisory mi
   assert.equal(row.blocking_findings_count, 0);
   assert.equal(row.advisory_findings_count, 2);
   assert.match(row.reviewed_at, /^\d{4}-\d{2}-\d{2}T/);
-  fs.appendFileSync(path.join(fx.repo, ".taskloop", "events.jsonl"), "{broken\n");
+  fs.appendFileSync(path.join(fx.repo, ".workloop", "events.jsonl"), "{broken\n");
   const corrupt = JSON.parse(run(["ledger", "--json", "--repo", fx.repo], { env: fx.env }).stdout);
   assert.equal(corrupt.queries.reviews, "unknown");
 });
@@ -1006,7 +1006,7 @@ test("ledger reports authority-backed user claims as unknown when authority is i
   const fx = fixture(t);
   const opened = open(fx, "default", ["--network-allowed", "--granted-by", "user", "--reason", "user approved network authority"]);
   assert.equal(opened.status, 0, opened.stderr);
-  fs.appendFileSync(path.join(fx.repo, ".taskloop", "events.jsonl"), "{broken\n");
+  fs.appendFileSync(path.join(fx.repo, ".workloop", "events.jsonl"), "{broken\n");
 
   const ledger = run(["ledger", "--json", "--repo", fx.repo], { env: fx.env });
   assert.equal(ledger.status, 2);
@@ -1036,7 +1036,7 @@ test("partial evidence-lock acquisition cleans its directory before degrading op
   };
   try { assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), false); }
   finally { fs.writeFileSync = originalWrite; }
-  assert.equal(fs.existsSync(path.join(fx.repo, ".taskloop", EVIDENCE_LOCK_DIR)), false);
+  assert.equal(fs.existsSync(path.join(fx.repo, ".workloop", EVIDENCE_LOCK_DIR)), false);
   assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), true);
 });
 
@@ -1068,7 +1068,7 @@ test("dropped PreToolUse evidence stays unknown across a different-session appen
 test("a corrupt scratch evidence counter rebuilds from the durable stream", (t) => {
   const fx = fixture(t);
   assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), true);
-  fs.writeFileSync(path.join(fx.repo, ".taskloop", "evidence-sequences.json"), "{broken\n");
+  fs.writeFileSync(path.join(fx.repo, ".workloop", "evidence-sequences.json"), "{broken\n");
   assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "owner", acting_session: "owner" }), true);
   const rows = readEvidence(fx.repo);
   assert.deepEqual(rows.map((row) => row.seq), [1, 2]);
@@ -1091,7 +1091,7 @@ test("malformed and unknown-version evidence rows degrade visibly without wedgin
 });
 
 test("evidence-loss markers prevent false complete coverage", (t) => {
-  const fx = fixture(t); const directory = path.join(fx.repo, ".taskloop", EVIDENCE_LOSS_DIR);
+  const fx = fixture(t); const directory = path.join(fx.repo, ".workloop", EVIDENCE_LOSS_DIR);
   fs.mkdirSync(directory, { recursive: true });
   fs.writeFileSync(path.join(directory, "lock-timeout.json"), JSON.stringify({ at: AT, reason: "evidence ledger lock timeout" }) + "\n");
   const folded = foldEvidence(readEvidence(fx.repo));
@@ -1124,7 +1124,7 @@ test("evidence compaction bounds the active stream and reports truncated history
   assert.ok(folded.history_truncated_records >= 1);
   assert.equal(folded.coverage, "gapped");
   assert.equal(readEvidence(fx.repo).some((row) => row.kind === "actor_anchor"), false);
-  fs.rmSync(path.join(fx.repo, ".taskloop", EVIDENCE_SEQUENCE_FILE));
+  fs.rmSync(path.join(fx.repo, ".workloop", EVIDENCE_SEQUENCE_FILE));
   assert.equal(appendEvidence(fx.repo, { at: AT, kind: "probe", sequence_session: "other", acting_session: "other" }), true);
   assert.equal(pretooluseEvidenceState(fx.repo, "owner"), "unknown");
 });
@@ -1159,7 +1159,7 @@ test("parallel evidence appends retain contiguous per-session sequences", async 
 
 test("PreToolUse denial wins over Codex session command rewriting", (t) => {
   const fx = fixture(t);
-  const env = { ...fx.env, TASKLOOP_SESSION_ID: "owner" };
+  const env = { ...fx.env, WORKLOOP_SESSION_ID: "owner" };
   assert.equal(open({ ...fx, env }).status, 0);
   const command = `node ${JSON.stringify(CLI)} status && rm -rf ${JSON.stringify(fx.repo)}`;
   const result = run(["hook", "--profile", "claude"], {
@@ -1173,27 +1173,27 @@ test("PreToolUse denial wins over Codex session command rewriting", (t) => {
 });
 
 test("an unbound cli episode retains gate-all Stop behavior", (t) => {
-  const fx = fixture(t); const env = { ...fx.env, TASKLOOP_SESSION_ID: "", CLAUDE_CODE_SESSION_ID: "" };
+  const fx = fixture(t); const env = { ...fx.env, WORKLOOP_SESSION_ID: "", CLAUDE_CODE_SESSION_ID: "" };
   assert.equal(open({ ...fx, env }).status, 0);
   const stopped = run(["hook", "--profile", "claude"], { cwd: fx.repo, env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo, session_id: "any-session" }) });
   assert.match(stopped.stdout, /decision.*block/); assert.equal(loadTask(fx.repo).spent.rounds, 1);
 });
 
 test("session-scoped PreToolUse protects control state and gates foreign writes conservatively", (t) => {
-  const fx = fixture(t); const ownerEnv = { ...fx.env, TASKLOOP_SESSION_ID: "owner-session" };
+  const fx = fixture(t); const ownerEnv = { ...fx.env, WORKLOOP_SESSION_ID: "owner-session" };
   assert.equal(open({ ...fx, env: ownerEnv }).status, 0);
   const hook = (session_id, tool_name, tool_input) => run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id, tool_name, tool_input }) });
-  const ownerControl = hook("owner-session", "Write", { file_path: path.join(fx.repo, ".taskloop", "task.json") });
+  const ownerControl = hook("owner-session", "Write", { file_path: path.join(fx.repo, ".workloop", "task.json") });
   assert.match(ownerControl.stdout, /permissionDecision.*deny/); assert.match(ownerControl.stdout, /control state/);
-  assert.equal(hook("owner-session", "Read", { file_path: path.join(fx.repo, ".taskloop", "task.json") }).stdout, "");
+  assert.equal(hook("owner-session", "Read", { file_path: path.join(fx.repo, ".workloop", "task.json") }).stdout, "");
   const foreignControl = hook("foreign-session", "Bash", { command: `echo bad > ${path.join(fx.repo, ".git", "config")}` });
   assert.match(foreignControl.stdout, /permissionDecision.*deny/);
-  const homeControl = hook("owner-session", "Write", { file_path: path.join(fx.home, ".taskloop", "outcomes.jsonl") });
+  const homeControl = hook("owner-session", "Write", { file_path: path.join(fx.home, ".workloop", "outcomes.jsonl") });
   assert.match(homeControl.stdout, /permissionDecision.*deny/);
-  const tildeControl = hook("owner-session", "Write", { file_path: "~/.taskloop/outcomes.jsonl" });
+  const tildeControl = hook("owner-session", "Write", { file_path: "~/.workloop/outcomes.jsonl" });
   assert.match(tildeControl.stdout, /permissionDecision.*deny/); assert.match(tildeControl.stdout, /control state/);
   const inside = hook("foreign-session", "Write", { file_path: path.join(fx.repo, "work.txt") });
-  assert.match(inside.stdout, /permissionDecision.*deny/); assert.match(inside.stdout, /taskloop join/);
+  assert.match(inside.stdout, /permissionDecision.*deny/); assert.match(inside.stdout, /workloop join/);
   const unknown = hook("foreign-session", "Bash", { command: "sed -i.bak s/a/b/ work.txt" });
   assert.match(unknown.stdout, /permissionDecision.*deny/); assert.match(unknown.stdout, /resolve the write target/);
   const mixed = hook("foreign-session", "Bash", { command: `sed -i.bak s/a/b/ work.txt && echo x > ${path.join(fx.root, "outside.txt")}` });
@@ -1253,7 +1253,7 @@ test("session-scoped PreToolUse protects control state and gates foreign writes 
 test("control-plane denial recognizes linked-worktree .git files", (t) => {
   const fx = fixture(t); const sibling = path.join(fx.root, "linked");
   assert.equal(spawnSync("git", ["worktree", "add", "-q", "-b", "control-linked", sibling], { cwd: fx.repo }).status, 0);
-  const env = { ...fx.env, TASKLOOP_SESSION_ID: "owner" };
+  const env = { ...fx.env, WORKLOOP_SESSION_ID: "owner" };
   assert.equal(open({ ...fx, repo: sibling, env }).status, 0);
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: sibling, session_id: "owner", tool_name: "Bash", tool_input: { command: "echo bad > .git/config" } });
   const denied = run(["hook", "--profile", "claude"], { cwd: sibling, env: fx.env, input: payload }); assert.match(denied.stdout, /permissionDecision.*deny/); assert.match(denied.stdout, /control state/);
@@ -1284,7 +1284,7 @@ test("single-dimension PreToolUse budget denials remain byte-exact", (t) => {
     const fx = fixture(t); assert.equal(open(fx, "default", entry.args).status, 0);
     const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
     const denied = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: payload });
-    assert.equal(denied.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `taskloop: ${entry.reason}` } }) + "\n");
+    assert.equal(denied.stdout, JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: `workloop: ${entry.reason}` } }) + "\n");
   }
 });
 
@@ -1416,7 +1416,7 @@ test("token accounting establishes a zero baseline for each new task", (t) => {
 });
 
 test("episode cursors fast-forward across A to B to A without charging foreign transcript", (t) => {
-  const fx = fixture(t); const envA = { ...fx.env, TASKLOOP_SESSION_ID: "session-a" }; const envB = { ...fx.env, TASKLOOP_SESSION_ID: "session-b" };
+  const fx = fixture(t); const envA = { ...fx.env, WORKLOOP_SESSION_ID: "session-a" }; const envB = { ...fx.env, WORKLOOP_SESSION_ID: "session-b" };
   assert.equal(open({ ...fx, env: envA }, "default", ["--token-budget", "20"]).status, 0);
   const transcript = path.join(fx.root, "shared.jsonl"); const append = (tokens) => fs.appendFileSync(transcript, JSON.stringify({ output_tokens: tokens }) + "\n");
   fs.writeFileSync(transcript, "");
@@ -1433,8 +1433,8 @@ test("episode cursors fast-forward across A to B to A without charging foreign t
 });
 
 test("legacy transcript cursor sidecars are ignored by runtime contract 5", (t) => {
-  const fx = fixture(t); const env = { ...fx.env, TASKLOOP_SESSION_ID: "owner" }; assert.equal(open({ ...fx, env }).status, 0);
-  const sidecar = path.join(fx.repo, ".taskloop", "transcript-cursors.json"); fs.writeFileSync(sidecar, '{"legacy":true}\n');
+  const fx = fixture(t); const env = { ...fx.env, WORKLOOP_SESSION_ID: "owner" }; assert.equal(open({ ...fx, env }).status, 0);
+  const sidecar = path.join(fx.repo, ".workloop", "transcript-cursors.json"); fs.writeFileSync(sidecar, '{"legacy":true}\n');
   const transcript = path.join(fx.root, "legacy.jsonl"); fs.writeFileSync(transcript, JSON.stringify({ output_tokens: 9 }) + "\n");
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner", transcript_path: transcript, tool_name: "Read", tool_input: {} });
   assert.equal(run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: payload }).stdout, ""); assert.equal(loadTask(fx.repo).spent.output_tokens_estimate, 0);
@@ -1478,11 +1478,11 @@ test("wall-clock telemetry advances and user suspension and terminal close episo
 });
 
 test("join transfers an active episode without changing substantive or ledger revisions", (t) => {
-  const fx = fixture(t); const firstEnv = { ...fx.env, TASKLOOP_SESSION_ID: "session-a" };
+  const fx = fixture(t); const firstEnv = { ...fx.env, WORKLOOP_SESSION_ID: "session-a" };
   assert.equal(open({ ...fx, env: firstEnv }, "default", ["--review-policy", "required", "--required-review-level", "fresh-context"]).status, 0);
   assert.equal(run(["review", "--repo", fx.repo, "--level", "fresh-context", "--reviewer", "peer", "--blocking-findings", "0", "--advisory-findings", "0"], { env: firstEnv }).status, 0);
   const before = loadTask(fx.repo); const eventSequence = before.task_event_sequence;
-  const joined = run(["join", "--repo", fx.repo, "--reason", "continue here"], { env: { ...fx.env, TASKLOOP_SESSION_ID: "session-b" } });
+  const joined = run(["join", "--repo", fx.repo, "--reason", "continue here"], { env: { ...fx.env, WORKLOOP_SESSION_ID: "session-b" } });
   assert.equal(joined.status, 0, joined.stderr);
   const after = loadTask(fx.repo);
   assert.equal(after.task_revision, before.task_revision + 1);
@@ -1493,26 +1493,26 @@ test("join transfers an active episode without changing substantive or ledger re
   assert.equal(after.episodes.at(-2).end_task_revision, after.task_revision);
   assert.equal(after.episodes.at(-1).start_task_revision, after.task_revision);
   assert.equal(projectReviewRequirement(after).accepted, true);
-  const statePath = path.join(fx.repo, ".taskloop", "task.json"); const joinedBytes = fs.readFileSync(statePath, "utf8");
+  const statePath = path.join(fx.repo, ".workloop", "task.json"); const joinedBytes = fs.readFileSync(statePath, "utf8");
   const oldOwnerStop = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo, session_id: "session-a" }) });
   assert.equal(oldOwnerStop.stdout, ""); assert.equal(fs.readFileSync(statePath, "utf8"), joinedBytes);
   const audit = run(["audit", "--repo", fx.repo], { env: firstEnv }); assert.equal(audit.status, 0, audit.stdout + audit.stderr);
-  const projectionRows = fs.readFileSync(path.join(fx.home, ".taskloop", "outcomes.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
+  const projectionRows = fs.readFileSync(path.join(fx.home, ".workloop", "outcomes.jsonl"), "utf8").trim().split("\n").map(JSON.parse);
   assert.ok(projectionRows.some((row) => row.kind === "task_joined"));
   assert.doesNotThrow(() => assertV3TaskProjection(after));
 });
 
 test("join requires an active task and a real host identity", (t) => {
   const fx = fixture(t); assert.equal(open(fx).status, 0);
-  const unbound = run(["join", "--repo", fx.repo, "--reason", "take over"], { env: { ...fx.env, TASKLOOP_SESSION_ID: "", CODEX_THREAD_ID: "", CLAUDE_CODE_SESSION_ID: "" } });
-  assert.equal(unbound.status, 2); assert.match(unbound.stderr, /TASKLOOP_SESSION_ID/);
+  const unbound = run(["join", "--repo", fx.repo, "--reason", "take over"], { env: { ...fx.env, WORKLOOP_SESSION_ID: "", CODEX_THREAD_ID: "", CLAUDE_CODE_SESSION_ID: "" } });
+  assert.equal(unbound.status, 2); assert.match(unbound.stderr, /WORKLOOP_SESSION_ID/);
   assert.equal(run(["suspend", "--repo", fx.repo, "--reason", "needs-input", "--remaining", "x", "--failure", "x", "--next-action", "x"], { env: fx.env }).status, 0);
-  const suspended = run(["join", "--repo", fx.repo, "--reason", "take over"], { env: { ...fx.env, TASKLOOP_SESSION_ID: "session-b" } });
+  const suspended = run(["join", "--repo", fx.repo, "--reason", "take over"], { env: { ...fx.env, WORKLOOP_SESSION_ID: "session-b" } });
   assert.equal(suspended.status, 2); assert.match(suspended.stderr, /active task/);
 });
 
 test("lifecycle_log retains acting sessions across join, suspend, and resume", (t) => {
-  const fx = fixture(t); const envA = { ...fx.env, TASKLOOP_SESSION_ID: "session-a" }; const envB = { ...fx.env, TASKLOOP_SESSION_ID: "session-b" };
+  const fx = fixture(t); const envA = { ...fx.env, WORKLOOP_SESSION_ID: "session-a" }; const envB = { ...fx.env, WORKLOOP_SESSION_ID: "session-b" };
   assert.equal(open({ ...fx, env: envA }).status, 0);
   let state = loadTask(fx.repo); assert.deepEqual(state.lifecycle_log.map((row) => [row.event, row.acting_session]), [["open", "session-a"]]);
   assert.equal(run(["join", "--repo", fx.repo, "--reason", "handoff"], { env: envB }).status, 0);
@@ -1523,7 +1523,7 @@ test("lifecycle_log retains acting sessions across join, suspend, and resume", (
 });
 
 test("status projects session binding and resets hook contact at episode boundaries", (t) => {
-  const fx = fixture(t); const envA = { ...fx.env, TASKLOOP_SESSION_ID: "session-a" }; const envB = { ...fx.env, TASKLOOP_SESSION_ID: "session-b" };
+  const fx = fixture(t); const envA = { ...fx.env, WORKLOOP_SESSION_ID: "session-a" }; const envB = { ...fx.env, WORKLOOP_SESSION_ID: "session-b" };
   assert.equal(open({ ...fx, env: envA }).status, 0);
   let status = JSON.parse(run(["status", "--repo", fx.repo], { env: envA }).stdout);
   assert.deepEqual(status.session_binding, { bound: true, cli_identity_matches_owner: true, last_observed_owner_hook_contact: null, next_action: null });
@@ -1565,12 +1565,12 @@ test("long ASCII and multibyte criterion output cannot wedge Stop or achieve com
 
 test("repeated equivalent failures suspend as stuck before the round cap", (t) => {
   const fx = fixture(t);
-  fs.writeFileSync(path.join(fx.repo, "check.mjs"), "console.log('TASKLOOP_CRITERION: acceptance fixture is incomplete'); process.exit(1);\n");
+  fs.writeFileSync(path.join(fx.repo, "check.mjs"), "console.log('WORKLOOP_CRITERION: acceptance fixture is incomplete'); process.exit(1);\n");
   assert.equal(open(fx, "default", ["--rounds", "8"]).status, 0);
   for (let attempt = 0; attempt < 3; attempt += 1) run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
   const state = loadTask(fx.repo); assert.equal(state.lifecycle.state, "suspended"); assert.equal(state.lifecycle.reason, "stuck"); assert.equal(state.spent.rounds, 3);
   assert.equal(state.attempts.at(-1).failure_summary, "acceptance fixture is incomplete");
-  assert.doesNotMatch(state.lifecycle.judgment.remaining, /TASKLOOP_CRITERION/);
+  assert.doesNotMatch(state.lifecycle.judgment.remaining, /WORKLOOP_CRITERION/);
   assert.deepEqual(state.lifecycle_log.at(-1), { event: "suspend", source: "stop", acting_session: null, at: state.lifecycle.suspended_at, task_revision: state.task_revision, reason: "stuck" });
 });
 
@@ -1634,7 +1634,7 @@ test("a satisfied adjudication between stops resets the no-progress streak", (t)
 
 test("judgment loop: rubric-bearing tri-state adapter opens unsatisfied and closes only by explicit achieve", (t) => {
   const fx = fixture(t);
-  fs.writeFileSync(path.join(fx.repo, "acceptance.mjs"), "// rubric: clear, concrete, honest\nimport fs from 'node:fs';\nlet verdict = '';\ntry { verdict = fs.readFileSync('verdict.txt', 'utf8').trim(); } catch {}\nif (verdict === 'accepted') process.exit(4);\nif (verdict === '' || verdict === 'pending') { console.log('TASKLOOP_CRITERION: acceptance does not hold yet'); process.exit(3); }\nconsole.log('cannot adjudicate: ' + verdict); process.exit(2);\n");
+  fs.writeFileSync(path.join(fx.repo, "acceptance.mjs"), "// rubric: clear, concrete, honest\nimport fs from 'node:fs';\nlet verdict = '';\ntry { verdict = fs.readFileSync('verdict.txt', 'utf8').trim(); } catch {}\nif (verdict === 'accepted') process.exit(4);\nif (verdict === '' || verdict === 'pending') { console.log('WORKLOOP_CRITERION: acceptance does not hold yet'); process.exit(3); }\nconsole.log('cannot adjudicate: ' + verdict); process.exit(2);\n");
   const opened = run(["open", "--repo", fx.repo, "--goal", "taste deliverable", "--criterion-file", "acceptance.mjs", "--criterion-protocol", "tri-state", "--criterion-policy", "steady-satisfied", "--reason", "human acceptance closes explicitly", "--alignment-because", "the adapter reads the recorded human verdict against the embedded rubric", "--not-covered", "taste quality itself", "--files", "draft.txt", "--risk", "routine", "--risk-reason", "isolated fixture"], { env: fx.env });
   assert.equal(opened.status, 0, opened.stderr);
   assert.match(opened.stdout, /criterion unsatisfied/);
@@ -1669,7 +1669,7 @@ test("report emits a machine-generated closeout artifact", (t) => {
   assert.equal(md.status, 0, md.stderr);
   assert.match(md.stdout, /fresh_context by r1: blocking 0, advisory 2/);
   assert.notEqual(run(["report", "--repo", fx.repo, "--json", "--markdown"], { env: fx.env }).status, 0);
-  for (const heading of ["# taskloop report", "## Outcome", "## Goal", "## Criterion", "## Alignment", "## Reviews", "## Envelope and touched files", "## Assurance", "## Budget"]) assert.match(md.stdout, new RegExp(heading));
+  for (const heading of ["# workloop report", "## Outcome", "## Goal", "## Criterion", "## Alignment", "## Reviews", "## Envelope and touched files", "## Assurance", "## Budget"]) assert.match(md.stdout, new RegExp(heading));
   const parsed = JSON.parse(run(["report", "--repo", fx.repo, "--json"], { env: fx.env }).stdout);
   for (const key of ["runtime_contract", "task_snapshot_schema_version", "event_record_schema_version", "outcome_projection_schema_version", "task_id", "generated_at", "lifecycle", "closure", "goal", "criterion", "proof_assurance", "alignment", "reviews", "grants", "envelope", "touched_files", "envelope_deviations", "assurance", "machine_risk_floor", "budget", "spent"]) assert.ok(key in parsed, key);
   assert.deepEqual(parsed.envelope_deviations, []);
@@ -1699,7 +1699,7 @@ test("Markdown report renders every bounded and unbounded budget dimension", (t)
     task_snapshot_schema_version: 3,
     event_record_schema_version: 2,
     outcome_projection_schema_version: 3,
-    generated_by: "taskloop report — machine transcription of task state, not testimony",
+    generated_by: "workloop report — machine transcription of task state, not testimony",
     task_id: before.task_id,
     lifecycle: before.lifecycle,
     closure: closureProjection(before, { drift: false }),
@@ -1739,7 +1739,7 @@ test("Markdown report exposes a tallied output-token estimate", (t) => {
 });
 
 test("report on a suspended task carries the judgment snapshot", (t) => {
-  const fx = fixture(t); fs.writeFileSync(path.join(fx.repo, "check.mjs"), "console.log('TASKLOOP_CRITERION: report fixture incomplete'); process.exit(1);\n"); assert.equal(open(fx).status, 0);
+  const fx = fixture(t); fs.writeFileSync(path.join(fx.repo, "check.mjs"), "console.log('WORKLOOP_CRITERION: report fixture incomplete'); process.exit(1);\n"); assert.equal(open(fx).status, 0);
   for (let attempt = 0; attempt < 3; attempt += 1) run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) });
   assert.equal(loadTask(fx.repo).lifecycle.state, "suspended");
   const parsed = JSON.parse(run(["report", "--repo", fx.repo, "--json"], { env: fx.env }).stdout);
@@ -1753,7 +1753,7 @@ test("publish-shaped commands require an explicit publish grant", (t) => {
   const hook = (command) => run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, permission_mode: "default", tool_name: "Bash", tool_input: { command } }) });
   const denied = ["npm publish", "yarn publish", "pnpm publish --access public", "cargo publish", "twine upload dist/*", "docker push repo/img:tag", "helm push chart.tgz oci://registry", "mvn deploy", "gem push pkg.gem", "gh pr create --fill", "gh release create v1.0.0", "npm run build && docker push repo/img", "echo ok\nnpm publish", "echo ok\ngh pr create --fill", "/usr/local/bin/gh pr create --fill", "./gh release create v1", "npm \\\npublish", "gh pr \\\ncreate --fill", "npm\tpublish", "echo ok\r\nnpm publish", "npm pub\\\nlish", "gh p\\\nr create --fill", "gh pr cr\\\neate --fill"];
   for (const command of denied) assert.match(hook(command).stdout, /publish grant/, command);
-  const exempt = ["echo deploy", "grep -rn publish lib/", "ls deploy/", "cat release-notes.md", "node --test tests/taskloop.test.mjs", "mkdir -p releases", "echo gh pr create", "grep 'gh issue create' README.md", "gh pr create-notes", "echo npm publish"];
+  const exempt = ["echo deploy", "grep -rn publish lib/", "ls deploy/", "cat release-notes.md", "node --test tests/workloop.test.mjs", "mkdir -p releases", "echo gh pr create", "grep 'gh issue create' README.md", "gh pr create-notes", "echo npm publish"];
   for (const command of exempt) assert.doesNotMatch(hook(command).stdout, /publish grant/, command);
   assert.match(hook("/usr/local/bin/npm publish").stdout, /publish grant/);
   assert.match(hook("git push").stdout, /git operation.*authorization/i);
@@ -1847,9 +1847,9 @@ test("irreversible authority uses the raw host key before use", (t) => {
 test("destructive, network, and install commands require their matching grants", (t) => {
   const denied = fixture(t); assert.equal(open(denied).status, 0);
   const hook = (fx, command) => run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Bash", tool_input: { command } }) });
-  assert.match(hook(denied, "rm -rf ./never-executed").stdout, /destructive grant; run taskloop amend --destructive-scope/);
-  assert.match(hook(denied, "curl https://example.invalid/file").stdout, /network grant; run taskloop amend --network-allowed/);
-  assert.match(hook(denied, "npm install never-executed").stdout, /install grant; run taskloop amend --install-scripts-allowed/);
+  assert.match(hook(denied, "rm -rf ./never-executed").stdout, /destructive grant; run workloop amend --destructive-scope/);
+  assert.match(hook(denied, "curl https://example.invalid/file").stdout, /network grant; run workloop amend --network-allowed/);
+  assert.match(hook(denied, "npm install never-executed").stdout, /install grant; run workloop amend --install-scripts-allowed/);
 
   const allowed = fixture(t);
   const opened = open(allowed, "default", ["--destructive-allowed", "--network-allowed", "--install-scripts-allowed", "--granted-by", "user", "--reason", "explicit test authority"]); assert.equal(opened.status, 0, opened.stderr);
@@ -1891,14 +1891,14 @@ test("a path-scoped destructive grant covers literal rm inside its roots and fai
   const amended = fixture(t);
   assert.equal(open(amended).status, 0);
   fs.mkdirSync(path.join(amended.repo, ".scratch"), { recursive: true });
-  assert.match(hook(amended, "rm -rf .scratch").stdout, /destructive grant; run taskloop amend --destructive-scope/);
+  assert.match(hook(amended, "rm -rf .scratch").stdout, /destructive grant; run workloop amend --destructive-scope/);
   assert.equal(run(["amend", "--repo", amended.repo, "--destructive-scope", ".scratch", "--reason", "cleanup authority"], { env: amended.env }).status, 0);
   assert.equal(hook(amended, "rm -rf .scratch").stdout, "");
   const friction = JSON.parse(run(["ledger", "--json", "--repo", amended.repo], { env: amended.env }).stdout).queries.authority_friction;
   const frictionRow = Array.isArray(friction) ? friction.find((item) => /destructive grant/.test(item.reason)) : null;
   assert.ok(frictionRow, JSON.stringify(friction));
   assert.deepEqual(frictionRow.followed_by_grant?.kinds, ["destructive"]);
-  fs.appendFileSync(path.join(amended.repo, ".taskloop", "events.jsonl"), "garbage\n");
+  fs.appendFileSync(path.join(amended.repo, ".workloop", "events.jsonl"), "garbage\n");
   const corrupted = JSON.parse(run(["ledger", "--json", "--repo", amended.repo], { env: amended.env }).stdout);
   assert.equal(corrupted.integrity.authority, "invalid");
   assert.equal(corrupted.queries.authority_friction, "unknown");
@@ -1945,7 +1945,7 @@ test("command shapes observe executable shell payloads without pricing quoted se
   const pushed = ["git", "push", "origin", "main"].join(" ");
   assert.deepEqual(commandShapes(`sh -c ${JSON.stringify(pushed)}`), ["git_push"]);
   const publication = ["npm", ["pub", "lish"].join("")].join(" ");
-  const heredoc = ["bash <<TASKLOOP_TEST_EOF", publication, "TASKLOOP_TEST_EOF"].join("\n");
+  const heredoc = ["bash <<WORKLOOP_TEST_EOF", publication, "WORKLOOP_TEST_EOF"].join("\n");
   assert.deepEqual(commandShapes(heredoc), ["publish"]);
   assert.deepEqual(commandShapes(`echo "$(${publication})"`), ["publish"]);
   assert.deepEqual(commandShapes(`rg '$(${publication})' docs/`), []);
@@ -2016,8 +2016,8 @@ test("no-task multi-file writes retain the untracked task-opening nudge", (t) =>
 });
 
 test("verify never persists ordinary observations or burns rounds", (t) => {
-  const fx = fixture(t); assert.equal(open(fx).status, 0); const before = fs.readFileSync(path.join(fx.repo, ".taskloop", "task.json"), "utf8");
-  const verified = run(["verify", "--repo", fx.repo], { env: fx.env }); assert.equal(verified.status, 1); assert.equal(fs.readFileSync(path.join(fx.repo, ".taskloop", "task.json"), "utf8"), before);
+  const fx = fixture(t); assert.equal(open(fx).status, 0); const before = fs.readFileSync(path.join(fx.repo, ".workloop", "task.json"), "utf8");
+  const verified = run(["verify", "--repo", fx.repo], { env: fx.env }); assert.equal(verified.status, 1); assert.equal(fs.readFileSync(path.join(fx.repo, ".workloop", "task.json"), "utf8"), before);
   const payload = JSON.parse(verified.stdout); assert.equal(payload.persisted, false); assert.equal(payload.artifact_revision_after, payload.artifact_revision_before);
 });
 
@@ -2041,8 +2041,8 @@ test("CLI suspend uses kebab enums while storage uses snake case and Stop releas
   const fx = fixture(t); assert.equal(open(fx).status, 0);
   const suspended = run(["suspend", "--repo", fx.repo, "--reason", "needs-input", "--remaining", "credential", "--failure", "auth", "--next-action", "provide"], { env: fx.env });
   assert.equal(suspended.status, 0, suspended.stderr); assert.equal(loadTask(fx.repo).lifecycle.reason, "needs_input");
-  const before = fs.readFileSync(path.join(fx.repo, ".taskloop", "task.json"), "utf8");
-  const stop = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) }); assert.equal(stop.stdout, ""); assert.equal(fs.readFileSync(path.join(fx.repo, ".taskloop", "task.json"), "utf8"), before);
+  const before = fs.readFileSync(path.join(fx.repo, ".workloop", "task.json"), "utf8");
+  const stop = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) }); assert.equal(stop.stdout, ""); assert.equal(fs.readFileSync(path.join(fx.repo, ".workloop", "task.json"), "utf8"), before);
   assert.equal(run(["resume", "--repo", fx.repo, "--reason", "provided"], { env: fx.env }).status, 0);
 });
 
@@ -2065,12 +2065,12 @@ test("verify --record persists a cli_verify observation that feeds rounds and wi
   assert.equal(state.attempts.length, 1);
   assert.equal(state.witness.source_event, "cli_verify");
   assert.equal(state.lifecycle.state, "active");
-  assert.match(fs.readFileSync(path.join(fx.repo, ".taskloop", "events.jsonl"), "utf8"), /cli_verify/);
+  assert.match(fs.readFileSync(path.join(fx.repo, ".workloop", "events.jsonl"), "utf8"), /cli_verify/);
 });
 
 test("three identical recorded failure signatures suspend the task as stuck", (t) => {
   const fx = fixture(t);
-  fs.writeFileSync(path.join(fx.repo, "check.mjs"), "process.stdout.write('TASKLOOP_CRITERION: fixed failure cause\\n'); process.exit(1);\n");
+  fs.writeFileSync(path.join(fx.repo, "check.mjs"), "process.stdout.write('WORKLOOP_CRITERION: fixed failure cause\\n'); process.exit(1);\n");
   assert.equal(open(fx).status, 0);
   for (let round = 0; round < 2; round += 1) {
     const step = run(["verify", "--record", "--repo", fx.repo], { env: fx.env });

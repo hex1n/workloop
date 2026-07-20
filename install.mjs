@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Install taskloop's dependency-free runtime and loop skills.
+// Install workloop's dependency-free runtime and loop skills.
 
 import { createHash, randomUUID } from "node:crypto";
 import { execFileSync } from "node:child_process";
@@ -11,16 +11,16 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { directoryLockBackoff, localTimestamp, withOwnedDirectoryLock } from "./lib/prims.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
-const SOURCE = path.resolve(process.env.TASKLOOP_INSTALL_REPO ?? path.dirname(__filename));
-const HOME = path.resolve(process.env.TASKLOOP_INSTALL_HOME ?? os.homedir());
+const SOURCE = path.resolve(process.env.WORKLOOP_INSTALL_REPO ?? path.dirname(__filename));
+const HOME = path.resolve(process.env.WORKLOOP_INSTALL_HOME ?? os.homedir());
 // Read the source checkout's contract from its prims.mjs text instead of
-// importing it: TASKLOOP_INSTALL_REPO may point at a different checkout than
+// importing it: WORKLOOP_INSTALL_REPO may point at a different checkout than
 // the one this installer file (and its ./lib import) was loaded from, and the
 // gate must judge what it is about to install, not what it is running as.
 const RUNTIME_CONTRACT = (() => {
   const source = fs.readFileSync(path.join(SOURCE, "lib", "prims.mjs"), "utf8");
   const value = Number(source.match(/const RUNTIME_CONTRACT = (\d+);/)?.[1]);
-  if (value !== 5) throw new Error(`taskloop installer requires runtime contract 5 source; refusing contract ${Number.isFinite(value) ? value : "unknown"}`);
+  if (value !== 5) throw new Error(`workloop installer requires runtime contract 5 source; refusing contract ${Number.isFinite(value) ? value : "unknown"}`);
   return value;
 })();
 // Module-level plan log. Every exported entry point resets it so a library
@@ -35,8 +35,8 @@ function plan(kind, detail) {
 }
 
 function installFailpoint(name) {
-  if (process.env.TASKLOOP_INSTALL_FAILPOINT === name) {
-    throw new Error(`taskloop installer injected interruption at ${name}`);
+  if (process.env.WORKLOOP_INSTALL_FAILPOINT === name) {
+    throw new Error(`workloop installer injected interruption at ${name}`);
   }
 }
 
@@ -421,7 +421,7 @@ function mergeCodexLedgerBinding(text, ledgerRoot) {
 
 function configureCodexLedgerBinding(home, { configure, dry }) {
   const config = path.join(home, ".codex", "config.toml");
-  const ledgerRoot = path.join(home, ".taskloop");
+  const ledgerRoot = path.join(home, ".workloop");
   let current = "";
   try {
     current = fs.readFileSync(config, "utf8");
@@ -447,7 +447,7 @@ function configureCodexLedgerBinding(home, { configure, dry }) {
   if (!configure) {
     plan(
       "warning",
-      `Codex outcome ledger binding is missing; agent-run taskloop may drop ledger rows. ` +
+      `Codex outcome ledger binding is missing; agent-run workloop may drop ledger rows. ` +
         `Run node install.mjs --configure-codex to add ${ledgerRoot} to sandbox_workspace_write.writable_roots`,
     );
     return;
@@ -457,7 +457,7 @@ function configureCodexLedgerBinding(home, { configure, dry }) {
       plan(
         "error",
         `cannot safely configure Codex outcome ledger binding: ${config} is a symlink; ` +
-          "edit its owned target explicitly or use --add-dir ~/.taskloop",
+          "edit its owned target explicitly or use --add-dir ~/.workloop",
       );
       return;
     }
@@ -530,8 +530,8 @@ function codexStopCommands(config, text) {
     }
   }
   const commands = sections.filter((section) => section.event === "Stop").map((section) => section.lines.join("\n"));
-  if (unparsedHookLines.some((line) => /taskloop(?:\.mjs)?/i.test(line))) {
-    throw new Error("taskloop hook uses unsupported TOML syntax");
+  if (unparsedHookLines.some((line) => /workloop(?:\.mjs)?/i.test(line))) {
+    throw new Error("workloop hook uses unsupported TOML syntax");
   }
   return commands;
 }
@@ -547,7 +547,7 @@ function inspectCodexHookProfiles(home) {
     }
     let commands;
     try {
-      commands = codexStopCommands(config, text).filter((command) => /taskloop(?:\.mjs)?/i.test(command));
+      commands = codexStopCommands(config, text).filter((command) => /workloop(?:\.mjs)?/i.test(command));
     } catch (error) {
       plan("warning", `cannot inspect Codex Hook configuration ${config}: ${error?.message ?? error}; preserved ${config}`);
       continue;
@@ -555,14 +555,14 @@ function inspectCodexHookProfiles(home) {
     if (!commands.length) continue;
     const joined = commands.join("\n");
     if (/\bhook\s+--profile\s+codex-safe\b/.test(joined) && !commands.some((command) => !/\bhook\s+--profile\s+codex-safe\b/.test(command))) {
-      plan("ok", `Codex taskloop Stop hook uses codex-safe: ${config}`);
+      plan("ok", `Codex workloop Stop hook uses codex-safe: ${config}`);
       continue;
     }
     if (/\bhook\s+--profile\s+codex-cli-legacy\b/.test(joined)) {
-      plan("warning", `experimental Codex CLI legacy Stop hook found in ${config}; never use it in Codex App. Generate a safe recipe with taskloop hooks --profile codex-safe --mode nudge; configuration preserved`);
+      plan("warning", `experimental Codex CLI legacy Stop hook found in ${config}; never use it in Codex App. Generate a safe recipe with workloop hooks --profile codex-safe --mode nudge; configuration preserved`);
       continue;
     }
-    plan("warning", `legacy Codex taskloop Stop hook found in ${config}; generate a safe recipe with taskloop hooks --profile codex-safe --mode nudge and merge it manually; configuration preserved`);
+    plan("warning", `legacy Codex workloop Stop hook found in ${config}; generate a safe recipe with workloop hooks --profile codex-safe --mode nudge and merge it manually; configuration preserved`);
   }
 }
 
@@ -575,7 +575,7 @@ function pruneRuntimes(runtimeRoot, activeHash, dry) {
       plan("remove", target);
       continue;
     }
-    const released = path.join(path.dirname(runtimeRoot), `.taskloop-runtime-pruned-${name}.${process.pid}.${randomUUID()}`);
+    const released = path.join(path.dirname(runtimeRoot), `.workloop-runtime-pruned-${name}.${process.pid}.${randomUUID()}`);
     try {
       fs.renameSync(target, released);
       try { fs.rmSync(released, { recursive: true, force: true }); } catch { /* moved out of active runtime set; later cleanup can remove it */ }
@@ -589,7 +589,7 @@ function pruneRuntimes(runtimeRoot, activeHash, dry) {
 }
 
 function withInstallLock(home, action) {
-  const lock = path.join(home, "bin", ".taskloop-runtime.install-lock");
+  const lock = path.join(home, "bin", ".workloop-runtime.install-lock");
   fs.mkdirSync(path.dirname(lock), { recursive: true });
   return withOwnedDirectoryLock(lock, action, {
     timeoutMs: INSTALL_LOCK_TIMEOUT_MS,
@@ -599,7 +599,7 @@ function withInstallLock(home, action) {
     wait: () => directoryLockBackoff(25),
     ownerExtra: { at: localTimestamp() },
     removeOnOwnerWriteFailure: true,
-    timeoutError: () => new Error(`timed out waiting for taskloop install lock: ${lock}`),
+    timeoutError: () => new Error(`timed out waiting for workloop install lock: ${lock}`),
     // A later install can reap this lock only after its owner is gone.
     onReleaseError: () => {},
   });
@@ -608,19 +608,19 @@ function withInstallLock(home, action) {
 function activateRuntimeShims(home, hash, dry) {
   const nodeWrapper =
     "#!/usr/bin/env node\n\n" +
-    `import "./.taskloop-runtime/${hash}/bin/taskloop.mjs";\n`;
-  const windowsWrapper = '@echo off\r\nnode "%~dp0taskloop.mjs" %*\r\n';
-  const powershellWrapper = "$script = Join-Path $PSScriptRoot 'taskloop.mjs'\r\n& node $script @args\r\nexit $LASTEXITCODE\r\n";
-  writeTextAtomicIfChanged(path.join(home, "bin", "taskloop.mjs"), nodeWrapper, dry);
-  writeTextAtomicIfChanged(path.join(home, "bin", "taskloop.cmd"), windowsWrapper, dry);
-  writeTextAtomicIfChanged(path.join(home, "bin", "taskloop.ps1"), powershellWrapper, dry);
+    `import "./.workloop-runtime/${hash}/bin/workloop.mjs";\n`;
+  const windowsWrapper = '@echo off\r\nnode "%~dp0workloop.mjs" %*\r\n';
+  const powershellWrapper = "$script = Join-Path $PSScriptRoot 'workloop.mjs'\r\n& node $script @args\r\nexit $LASTEXITCODE\r\n";
+  writeTextAtomicIfChanged(path.join(home, "bin", "workloop.mjs"), nodeWrapper, dry);
+  writeTextAtomicIfChanged(path.join(home, "bin", "workloop.cmd"), windowsWrapper, dry);
+  writeTextAtomicIfChanged(path.join(home, "bin", "workloop.ps1"), powershellWrapper, dry);
 }
 
-function installTaskloopRuntimeUnlocked(repo, home, dry, { activate = true } = {}) {
+function installWorkloopRuntimeUnlocked(repo, home, dry, { activate = true } = {}) {
   const files = runtimeFiles(repo);
-  if (!files.length) throw new Error(`taskloop runtime is empty under ${repo}`);
+  if (!files.length) throw new Error(`workloop runtime is empty under ${repo}`);
   const hash = runtimeHash(files);
-  const runtimeRoot = path.join(home, "bin", ".taskloop-runtime");
+  const runtimeRoot = path.join(home, "bin", ".workloop-runtime");
   const versionRoot = path.join(runtimeRoot, hash);
   const install = () => {
     for (const entry of files) copyFile(entry.file, path.join(versionRoot, entry.relative), dry);
@@ -634,9 +634,9 @@ function installTaskloopRuntimeUnlocked(repo, home, dry, { activate = true } = {
   return install();
 }
 
-export function installTaskloopRuntime(repo, home, dry = false) {
+export function installWorkloopRuntime(repo, home, dry = false) {
   ACTIONS.length = 0;
-  const install = () => installTaskloopRuntimeUnlocked(repo, home, dry);
+  const install = () => installWorkloopRuntimeUnlocked(repo, home, dry);
   return dry ? install() : withInstallLock(home, install);
 }
 
@@ -671,8 +671,8 @@ function readManagedSkills(file) {
 
 // Byte-exact source trees from the last asdf-owned core at
 // 9c6dbdb957b530997c17a80bd4d2bdf3d3c02fd8, plus the unpublished name-only
-// taskloop installer used during this extraction. They permit a one-time safe
-// adoption without treating an arbitrary same-name directory as taskloop-owned.
+// workloop installer used during this extraction. They permit a one-time safe
+// adoption without treating an arbitrary same-name directory as workloop-owned.
 const LEGACY_CORE_DIGESTS = {
   "loop-core": new Set([
     "240b0483fc292a65f999eb598d12e48903fb4c3a50b77a0e3f2cd42dc5701e06",
@@ -689,13 +689,13 @@ export function legacySkillCanBeAdopted(skill, actualDigest, legacyNamed, curren
   return Boolean(legacyNamed && actualDigest && actualDigest === currentDigest);
 }
 
-function installTaskloopAssetsUnlocked(repo, home, dry) {
+function installWorkloopAssetsUnlocked(repo, home, dry) {
   const skillsRoot = path.join(repo, "skills");
   const skills = fs.readdirSync(skillsRoot, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
     .map((entry) => entry.name)
     .sort();
-  const manifest = path.join(home, "bin", ".taskloop-managed-skills.json");
+  const manifest = path.join(home, "bin", ".workloop-managed-skills.json");
   const previousState = readManagedSkills(manifest);
   const previous = previousState.runtimes;
   const next = { ".claude": {}, ".codex": {} };
@@ -733,14 +733,14 @@ function installTaskloopAssetsUnlocked(repo, home, dry) {
         if (!expectedPrevious) {
           const actual = managedTreeDigest(target);
           if (!legacySkillCanBeAdopted(skill, actual, previousState.legacyNames.has(skill), sourceDigests[skill])) {
-            plan("error", `${target} exists but is not proven taskloop-owned; preserve it or remove it explicitly`);
+            plan("error", `${target} exists but is not proven workloop-owned; preserve it or remove it explicitly`);
             continue;
           }
-          plan("ok", `${target} (adopt byte-exact legacy taskloop core)`);
+          plan("ok", `${target} (adopt byte-exact legacy workloop core)`);
         } else {
           const actual = managedTreeDigest(target);
           if (actual !== expectedPrevious) {
-            plan("error", `${target} changed since taskloop installed it; preserving the external or local takeover`);
+            plan("error", `${target} changed since workloop installed it; preserving the external or local takeover`);
             continue;
           }
         }
@@ -763,19 +763,19 @@ function installTaskloopAssetsUnlocked(repo, home, dry) {
   writeTextAtomicIfChanged(manifest, JSON.stringify({ version: 2, runtimes: next }, null, 2) + "\n", dry);
 }
 
-export function installTaskloopAssets(repo, home, dry = false) {
+export function installWorkloopAssets(repo, home, dry = false) {
   ACTIONS.length = 0;
-  const install = () => installTaskloopAssetsUnlocked(repo, home, dry);
+  const install = () => installWorkloopAssetsUnlocked(repo, home, dry);
   return dry ? install() : withInstallLock(home, install);
 }
 
-export function installTaskloop(repo, home, dry = false) {
+export function installWorkloop(repo, home, dry = false) {
   ACTIONS.length = 0;
   const install = () => {
-    const runtime = installTaskloopRuntimeUnlocked(repo, home, dry, { activate: false });
+    const runtime = installWorkloopRuntimeUnlocked(repo, home, dry, { activate: false });
     const releaseId = runtime.hash;
-    const journal = path.join(home, "bin", ".taskloop-activation-journal.json");
-    const releaseManifest = path.join(home, "bin", ".taskloop-active-release.json");
+    const journal = path.join(home, "bin", ".workloop-activation-journal.json");
+    const releaseManifest = path.join(home, "bin", ".workloop-active-release.json");
     const journalRow = {
       journal_version: 1,
       release_id: releaseId,
@@ -785,7 +785,7 @@ export function installTaskloop(repo, home, dry = false) {
     };
     writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
     installFailpoint("runtime-staged");
-    installTaskloopAssetsUnlocked(repo, home, dry);
+    installWorkloopAssetsUnlocked(repo, home, dry);
     if (ACTIONS.some(([kind]) => kind === "error")) {
       journalRow.status = "needs_manual_intervention";
       writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
@@ -798,7 +798,7 @@ export function installTaskloop(repo, home, dry = false) {
     journalRow.steps.shim_activated = true;
     writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
     installFailpoint("shim-activated");
-    const skillManifest = path.join(home, "bin", ".taskloop-managed-skills.json");
+    const skillManifest = path.join(home, "bin", ".workloop-managed-skills.json");
     const manifestRow = {
       release_manifest_version: 1,
       release_id: releaseId,
@@ -813,7 +813,7 @@ export function installTaskloop(repo, home, dry = false) {
     installFailpoint("manifest-committed");
     if (!dry) fs.rmSync(journal, { force: true });
     installFailpoint("journal-cleaned");
-    pruneRuntimes(path.join(home, "bin", ".taskloop-runtime"), runtime.hash, dry);
+    pruneRuntimes(path.join(home, "bin", ".workloop-runtime"), runtime.hash, dry);
     return runtime;
   };
   return dry ? install() : withInstallLock(home, install);
@@ -858,7 +858,7 @@ function main() {
     return 2;
   }
   ACTIONS.length = 0;
-  const installed = installTaskloop(SOURCE, HOME, dry);
+  const installed = installWorkloop(SOURCE, HOME, dry);
   registerCommitDistribution(SOURCE, dry);
   const bindCodex = () => configureCodexLedgerBinding(HOME, { configure: configureCodex, dry });
   if (configureCodex && !dry) withInstallLock(HOME, bindCodex);
@@ -866,7 +866,7 @@ function main() {
   inspectCodexHookProfiles(HOME);
   const order = ["new", "update", "remove", "warning", "ok", "error"];
   const counts = Object.fromEntries(order.map((kind) => [kind, 0]));
-  process.stdout.write(`taskloop install ${dry ? "(dry run) " : ""}from ${SOURCE}\n\n`);
+  process.stdout.write(`workloop install ${dry ? "(dry run) " : ""}from ${SOURCE}\n\n`);
   for (const kind of order) {
     for (const [, detail] of ACTIONS.filter(([rowKind]) => rowKind === kind)) {
       counts[kind] += 1;

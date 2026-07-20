@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1200" viewBox="0 0 1600 1200" role="img" aria-labelledby="title desc">
-  <title id="title">taskloop 的 Loop Engineering 双层反馈环</title>
-  <desc id="desc">以内层任务执行闭环和外层循环工程改进闭环说明当前 taskloop 仓库的定位。</desc>
+  <title id="title">workloop 的 Loop Engineering 双层反馈环</title>
+  <desc id="desc">以内层任务执行闭环和外层循环工程改进闭环说明当前 workloop 仓库的定位。</desc>
   <defs>
     <filter id="rough" x="-4%" y="-4%" width="108%" height="108%">
       <feTurbulence type="fractalNoise" baseFrequency="0.011" numOctaves="2" seed="12" result="n"/>
@@ -14,7 +14,7 @@
     </style>
   </defs>
   <rect width="1600" height="1200" fill="#fbfaf6" filter="url(#paper)"/>
-  <text x="55" y="58" class="ink title">taskloop × Loop Engineering</text>
+  <text x="55" y="58" class="ink title">workloop × Loop Engineering</text>
   <text x="57" y="88" class="ink body">不是“一次执行脚本”，而是：把任务环机器化，再用可审计反馈持续工程化这个环</text>
 
   <!-- Outer loop -->
@@ -111,5 +111,5 @@
   <text x="98" y="1022" class="ink mono">lib/application.mjs</text>
   <text x="98" y="1044" class="ink mono">tests/*.test.mjs</text>
 
-  <text x="70" y="1170" class="ink body">边界：taskloop 交付 runtime 与四个 kernel skills；Driver、OS sandbox、其他 loop skills 在仓库外组合。</text>
+  <text x="70" y="1170" class="ink body">边界：workloop 交付 runtime 与四个 kernel skills；Driver、OS sandbox、其他 loop skills 在仓库外组合。</text>
 </svg>

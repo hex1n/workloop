@@ -10,7 +10,7 @@ const UNSATISFIED = 3;
 const INDETERMINATE = 2;
 
 function say(message) {
-  process.stdout.write(`TASKLOOP_CRITERION: ${message}\n`);
+  process.stdout.write(`WORKLOOP_CRITERION: ${message}\n`);
 }
 
 let criterion; let install; let app;

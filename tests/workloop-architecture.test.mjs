@@ -11,7 +11,7 @@ import { withTaskLock } from "../lib/task-store.mjs";
 import { makeTaskOpenedCommand } from "./helpers/event-v3-fixture.mjs";
 
 const ROOT = path.resolve(".");
-const CLI = path.join(ROOT, "bin", "taskloop.mjs");
+const CLI = path.join(ROOT, "bin", "workloop.mjs");
 const MODULES = ["application.mjs", "criterion.mjs", "event-store.mjs", "evidence-ledger.mjs", "host-hooks.mjs", "outcome-projector.mjs", "prims.mjs", "supervision.mjs", "task-engine.mjs", "task-store.mjs", "untracked.mjs"];
 
 function run(script, args = [], options = {}) { return spawnSync(process.execPath, [script, ...args], { cwd: options.cwd ?? ROOT, env: options.env ?? process.env, input: options.input ?? "", encoding: "utf8" }); }
@@ -27,8 +27,8 @@ test("integration handshake exposes runtime-contract-5 independent schemas", () 
   const info = JSON.parse(run(CLI, ["info"]).stdout);
   assert.deepEqual({ runtime: info.runtime_contract, task: info.task_snapshot_schema_version, record: info.event_record_schema_version, outcome: info.outcome_projection_schema_version }, { runtime: 5, task: 3, record: 2, outcome: 3 });
   assert.equal(info.criterion_adapter_protocol_version, 2);
-  assert.equal(info.event_store, ".taskloop/events.jsonl");
-  assert.equal(info.outcome_projection, "~/.taskloop/outcomes.jsonl");
+  assert.equal(info.event_store, ".workloop/events.jsonl");
+  assert.equal(info.outcome_projection, "~/.workloop/outcomes.jsonl");
 });
 
 test("authority timestamps are UTC while human artifact names remain local", () => {
@@ -41,22 +41,22 @@ test("authority timestamps are UTC while human artifact names remain local", () 
 });
 
 test("Stop hooks exit zero with no task and with incompatible task state", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-stop-exit-v2-")); const repo = path.join(root, "repo"); const home = path.join(root, "home");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-stop-exit-v2-")); const repo = path.join(root, "repo"); const home = path.join(root, "home");
   fs.mkdirSync(repo, { recursive: true }); fs.mkdirSync(home, { recursive: true }); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const env = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home }; const payload = JSON.stringify({ hook_event_name: "Stop", cwd: repo });
   let stopped = run(CLI, ["hook", "--profile", "claude"], { cwd: repo, env, input: payload }); assert.equal(stopped.status, 0); assert.equal(stopped.stdout, "");
-  fs.mkdirSync(path.join(repo, ".taskloop"), { recursive: true }); fs.writeFileSync(path.join(repo, ".taskloop", "task.json"), '{"schema_version":1}\n');
+  fs.mkdirSync(path.join(repo, ".workloop"), { recursive: true }); fs.writeFileSync(path.join(repo, ".workloop", "task.json"), '{"schema_version":1}\n');
   stopped = run(CLI, ["hook", "--profile", "claude"], { cwd: repo, env, input: payload });
   assert.equal(stopped.status, 0);
   assert.equal(stopped.stderr, "task snapshot exists without a valid schema-v3 event authority; archive it with explicit user authorization\n");
-  assert.equal(stopped.stdout, '{"decision":"block","reason":"taskloop: task state unavailable (ORPHAN_V3_SNAPSHOT); refusing to adjudicate Stop"}\n');
+  assert.equal(stopped.stdout, '{"decision":"block","reason":"workloop: task state unavailable (ORPHAN_V3_SNAPSHOT); refusing to adjudicate Stop"}\n');
 });
 
 test("command-shaped authority fails closed when task authority is corrupt", (t) => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-corrupt-command-"));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-corrupt-command-"));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
-  fs.mkdirSync(path.join(repo, ".taskloop"), { recursive: true });
-  fs.writeFileSync(path.join(repo, ".taskloop", "task.json"), '{"schema_version":1}\n');
+  fs.mkdirSync(path.join(repo, ".workloop"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".workloop", "task.json"), '{"schema_version":1}\n');
   const command = ["npm", "pub", "lish"].join(" ").replace("pub lish", "publish");
   const result = run(CLI, ["hook", "--profile", "claude"], {
     cwd: repo,
@@ -99,14 +99,14 @@ test("Windows W01-W08 selection is non-vacuous in every listed source", () => {
     "event-store.test.mjs",
     "task-snapshot-v3.test.mjs",
     "runtime-v5.test.mjs",
-    "taskloop-architecture.test.mjs",
+    "workloop-architecture.test.mjs",
   ]) {
     assert.match(fs.readFileSync(path.join(ROOT, "tests", file), "utf8"), /\[W0[1-8]\]/, file);
   }
 });
 
 test("task lock serializes concurrent updates and fails closed on timeout", async (t) => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-lock-v1-")); t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-lock-v1-")); t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const helper = path.join(repo, "holder.mjs");
   const taskStoreUrl = pathToFileURL(path.join(ROOT, "lib", "task-store.mjs")).href;
   fs.writeFileSync(helper, `import {withTaskLock} from ${JSON.stringify(taskStoreUrl)}; withTaskLock(${JSON.stringify(repo)},()=>{process.stdout.write('held\\n');Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,500)});`);
@@ -122,7 +122,7 @@ test("task lock serializes concurrent updates and fails closed on timeout", asyn
 });
 
 test("ledger serializes snapshot reads behind the task lock", async (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-ledger-lock-v4-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-ledger-lock-v4-"));
   const repo = path.join(root, "repo"); const home = path.join(root, "home");
   fs.mkdirSync(repo, { recursive: true }); fs.mkdirSync(home, { recursive: true });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -152,9 +152,9 @@ test("ledger serializes snapshot reads behind the task lock", async (t) => {
 });
 
 test("[W06] task lock recovers a crashed owner and crashed reaper without double ownership", async (t) => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-stale-lock-v4-"));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-stale-lock-v4-"));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
-  const stateDir = path.join(repo, ".taskloop");
+  const stateDir = path.join(repo, ".workloop");
   const lock = path.join(stateDir, ".task.lock");
   const reaper = `${lock}.reaper`;
   const taskStoreUrl = pathToFileURL(path.join(ROOT, "lib", "task-store.mjs")).href;
@@ -203,14 +203,14 @@ test("[W06] task lock recovers a crashed owner and crashed reaper without double
 });
 
 test("PreToolUse lock timeout denies the write instead of preserving stale proof", (t) => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-hook-lock-v1-")); const repo = path.join(root, "repo"); const home = path.join(root, "home");
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-hook-lock-v1-")); const repo = path.join(root, "repo"); const home = path.join(root, "home");
   fs.mkdirSync(repo, { recursive: true }); fs.mkdirSync(home, { recursive: true }); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   spawnSync("git", ["init", "-q"], { cwd: repo });
   fs.writeFileSync(path.join(repo, "check.mjs"), "process.exit(1);\n"); fs.writeFileSync(path.join(repo, "work.txt"), "x\n");
   const env = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home };
   const opened = run(CLI, ["open", "--repo", repo, "--goal", "lock", "--criterion-file", "check.mjs", "--criterion-policy", "default", "--alignment-because", "probe", "--files", "work.txt"], { env }); assert.equal(opened.status, 0, opened.stderr);
-  const lock = path.join(repo, ".taskloop", ".task.lock"); fs.mkdirSync(lock); fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid, token: "held" }));
+  const lock = path.join(repo, ".workloop", ".task.lock"); fs.mkdirSync(lock); fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid, token: "held" }));
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: repo, tool_name: "Write", tool_input: { file_path: path.join(repo, "work.txt") } });
-  const denied = run(CLI, [], { cwd: repo, env: { ...env, TASKLOOP_LOCK_TIMEOUT_MS: "20" }, input: payload });
+  const denied = run(CLI, [], { cwd: repo, env: { ...env, WORKLOOP_LOCK_TIMEOUT_MS: "20" }, input: payload });
   assert.equal(denied.status, 0); assert.match(denied.stdout, /permissionDecision.*deny/); assert.match(denied.stdout, /artifact revision cannot be recorded/);
 });

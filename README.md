@@ -1,14 +1,18 @@
-# taskloop
+# workloop
 
 [中文说明](README.zh-CN.md)
 
-taskloop is a dependency-free Node.js CLI and portable loop kernel for
+workloop is a dependency-free Node.js CLI and portable loop kernel for
 machine-verifiable agent work. It supervises one durable task at a time: the
-runtime constrains writes, re-runs a fresh done-when criterion, records
-auditable evidence, and decides whether the task can close. Drivers,
-schedulers, and OS sandboxes stay outside this repository.
+runtime grants scoped write authority, polices writes as they happen, re-runs
+a fresh done-when criterion, records auditable evidence, and decides whether
+the task can close. Drivers, schedulers, and OS sandboxes stay outside this
+repository.
 
-This repository ships four kernel skills with the runtime:
+This repository ships four kernel skills with the runtime. The flagship skill
+carries the repository's name, the way `webpack` names both a project and its
+core package: `workloop` the CLI supervises the task, `skills/workloop` is the
+loop you run on it.
 
 - `skills/loop-core`: shared task, criterion, lifecycle, envelope, budget, and
   host-binding vocabulary.
@@ -21,20 +25,20 @@ This repository ships four kernel skills with the runtime:
 
 ## Architecture
 
-![taskloop architecture](docs/taskloop-balsamiq-architecture.svg)
+![workloop architecture](docs/workloop-balsamiq-architecture.svg)
 
-![taskloop loop engineering model](docs/taskloop-loop-engineering-balsamiq.svg)
+![workloop loop engineering model](docs/workloop-loop-engineering-balsamiq.svg)
 
 ## Repository Map
 
-- `bin/taskloop.mjs` is only the process entry.
+- `bin/workloop.mjs` is only the process entry.
 - `lib/application.mjs` is the single assembly layer for CLI verbs, hook
   dispatch, event commits, snapshots, projection, and reports.
 - Leaf modules in `lib/` may import only `lib/prims.mjs`; the architecture
   suite enforces that boundary.
 - `lib/task-engine.mjs` owns lifecycle transitions, policy decisions, closure,
   assurance, budgets, stuck detection, and review requirements.
-- `lib/event-store.mjs` owns hash-chained `.taskloop/events.jsonl`
+- `lib/event-store.mjs` owns hash-chained `.workloop/events.jsonl`
   authority.
 - `lib/task-store.mjs` owns the digest-checked schema-v3 snapshot wrapper and
   cross-process task lock.
@@ -71,21 +75,21 @@ new generation; old witnesses and reviews do not carry across it.
 ## Basic Use
 
 ```sh
-node bin/taskloop.mjs open --repo . --goal "observable outcome" \
+node bin/workloop.mjs open --repo . --goal "observable outcome" \
   --criterion "npm test" --criterion-policy default \
   --alignment-because "the suite exercises the requested behavior" \
   --not-covered "deployed environment" \
   --files "lib/**" --files "tests/**"
 
-node bin/taskloop.mjs status --repo .
-node bin/taskloop.mjs verify --repo .
-node bin/taskloop.mjs achieve --repo .
+node bin/workloop.mjs status --repo .
+node bin/workloop.mjs verify --repo .
+node bin/workloop.mjs achieve --repo .
 ```
 
 Prefer a repository-relative criterion file for portable work:
 
 ```sh
-taskloop open --repo . --goal "observable outcome" \
+workloop open --repo . --goal "observable outcome" \
   --criterion-file "acceptance.mjs" \
   --criterion-protocol tri-state \
   --criterion-policy default \
@@ -101,29 +105,29 @@ silent/indeterminate, so old 0/1 adapters must be updated before use.
 Other lifecycle verbs:
 
 ```sh
-taskloop suspend --repo . --reason needs-input --remaining "credential" \
+workloop suspend --repo . --reason needs-input --remaining "credential" \
   --failure "cannot authenticate" --next-action "provide test access"
-taskloop resume --repo . --reason "access supplied"
-taskloop join --repo . --reason "continue this active task in this session"
-taskloop not-needed --repo . --evidence "read-only probe showed the goal already holds"
-taskloop abandon --repo . --reason "superseded"
+workloop resume --repo . --reason "access supplied"
+workloop join --repo . --reason "continue this active task in this session"
+workloop not-needed --repo . --evidence "read-only probe showed the goal already holds"
+workloop abandon --repo . --reason "superseded"
 ```
 
 ## Runtime Authority
 
-Runtime contract 5 uses `.taskloop/events.jsonl` as the only repository
-authority. `.taskloop/task.json` is a schema-v3 snapshot wrapper that may be
+Runtime contract 5 uses `.workloop/events.jsonl` as the only repository
+authority. `.workloop/task.json` is a schema-v3 snapshot wrapper that may be
 deleted and rebuilt from events; it is never promoted to authority. Every
 public mutation commits one hash-chained transaction before refreshing the
 snapshot.
 
-`~/.taskloop/outcomes.jsonl` is a best-effort HOME projection, not task
+`~/.workloop/outcomes.jsonl` is a best-effort HOME projection, not task
 authority. Rebuild it idempotently with:
 
 ```sh
-taskloop sync-outcomes --repo .
-taskloop audit --repo .
-taskloop audit-outcomes
+workloop sync-outcomes --repo .
+workloop audit --repo .
+workloop audit-outcomes
 ```
 
 Runtime contract 5 removes schema versions from active artifact names while
@@ -132,23 +136,23 @@ still has legacy versioned artifact names, normal commands fail closed until the
 user authorizes the one-time rename:
 
 ```sh
-taskloop migrate-artifact-names --repo . \
+workloop migrate-artifact-names --repo . \
   --reason "adopt stable artifact names" --granted-by user
 ```
 
 If an older projection already occupies `outcomes.jsonl`, migration preserves
-its exact bytes under `~/.taskloop/archive/` before promoting the current
+its exact bytes under `~/.workloop/archive/` before promoting the current
 projection. Two current-schema projections remain an explicit conflict.
 
 Schema-2 tasks and orphan/mixed snapshots fail closed. Preserve incompatible
 state byte-for-byte only with explicit user provenance:
 
 ```sh
-taskloop archive-incompatible-state --repo . \
+workloop archive-incompatible-state --repo . \
   --reason "runtime-contract-5 hard cutover" --granted-by user
 ```
 
-`taskloop info` exposes the active versions:
+`workloop info` exposes the active versions:
 
 - `runtime_contract: 5`
 - `criterion_adapter_protocol_version: 2`
@@ -168,7 +172,7 @@ Command safety is deny-by-default. Git mutations and authority expansions are
 explicit grants with provenance:
 
 ```sh
-taskloop amend --repo . --git-allowed add \
+workloop amend --repo . --git-allowed add \
   --git-reason "prepare the user-requested commit" \
   --granted-by user --reason "user requested staging"
 ```
@@ -206,13 +210,13 @@ variables remains outside this structural model.
 Hook recipes require an explicit profile:
 
 ```sh
-taskloop hooks --profile codex-safe --mode nudge
-taskloop hooks --profile claude --mode nudge
+workloop hooks --profile codex-safe --mode nudge
+workloop hooks --profile claude --mode nudge
 ```
 
 `codex-safe` preserves PreToolUse deny/rewrite behavior but releases a held
 Stop with zero stdout and an explanatory stderr warning; continue through an
-external driver or run `taskloop achieve` explicitly. `claude` preserves Claude
+external driver or run `workloop achieve` explicitly. `claude` preserves Claude
 Code's session-internal `decision:block` continuation. `codex-cli-legacy` is
 only a version-pinned experiment and must not be used in Codex App.
 
@@ -234,7 +238,7 @@ needs no review by default, `substantial` requires `fresh-context`, and
 an explicit override; every waiver requires a reason and remains audited.
 
 ```sh
-taskloop review --repo . --level fresh-context --reviewer peer \
+workloop review --repo . --level fresh-context --reviewer peer \
   --blocking-findings 0 --advisory-findings 0
 ```
 
@@ -249,13 +253,13 @@ unknowns instead of converting missing history into clean negatives.
 node install.mjs
 npm test
 npm run bench:event-store -- --json
-node bin/taskloop.mjs help
+node bin/workloop.mjs help
 ```
 
-Use `TASKLOOP_INSTALL_HOME` for manual install tests. The installer preserves
+Use `WORKLOOP_INSTALL_HOME` for manual install tests. The installer preserves
 unowned, locally modified, symlinked, or externally taken-over skill trees and
 deduplicates aliased Claude/Codex roots. It reads user-level Codex Hook
-configuration only to warn about legacy taskloop Stop commands; it does not
+configuration only to warn about legacy workloop Stop commands; it does not
 rewrite Hook configuration unless `--configure-codex` is explicitly supplied,
 and that flag is limited to the outcome-projection writable root.
 

@@ -43,7 +43,7 @@ test("a path-scoped destructive grant fails closed on every unprovable form", ()
   // repository: an absolute root must work, and the symlinked tmpdir spelling
   // (/var vs /private/var) must converge through canonicalization.
   if (process.platform !== "win32") {
-    const absoluteRoot = path.join(os.tmpdir(), "taskloop-scope-root");
+    const absoluteRoot = path.join(os.tmpdir(), "workloop-scope-root");
     const absolute = { envelope: { files: ["**"], git: [], destructive: false, network: false }, grants: [{ kind: "destructive", scope: [absoluteRoot] }] };
     assert.equal(commandSafetyFailure(absolute, `rm -rf ${absoluteRoot}/run-1`, { repo }), null);
     assert.match(commandSafetyFailure(absolute, `rm -rf ${path.join(os.tmpdir(), "other-session")}`, { repo }), /outside the granted destructive scope/);

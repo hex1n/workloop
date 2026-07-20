@@ -1,6 +1,6 @@
 ---
 name: workloop
-description: Run approved, machine-verifiable work until its criterion is satisfied and the task can reach a terminal outcome. Use when work arrives with an executable done-when check, when a taskloop nudge or deny routes untracked work here, or when a fix must first recover the failure as a failing check.
+description: Run approved, machine-verifiable work until its criterion is satisfied and the task can reach a terminal outcome. Use when work arrives with an executable done-when check, when a workloop nudge or deny routes untracked work here, or when a fix must first recover the failure as a failing check.
 argument-hint: "[approved work + done-when criterion + envelope]"
 ---
 
@@ -36,12 +36,12 @@ review receipts belong in version control with the artifact history.
 ## 2. Open
 
 Prefer a dedicated repository-relative `.mjs` criterion that emits one bounded
-`TASKLOOP_CRITERION: ...` summary on stdout and exits with the tri-state
+`WORKLOOP_CRITERION: ...` summary on stdout and exits with the tri-state
 protocol (4 satisfied, 3 unsatisfied, 2 indeterminate). This avoids shell-text
 transport and keeps the failure identity portable. Open it with:
 
 ```text
-taskloop open --goal "<goal>" --criterion-file "acceptance.mjs" \
+workloop open --goal "<goal>" --criterion-file "acceptance.mjs" \
   --criterion-protocol tri-state --criterion-policy default \
   --criterion-authored-by self \
   --alignment-because "<coverage>" --not-covered "<gap>" \
@@ -101,7 +101,7 @@ not accepted, ask a reviewer at least that independent (`fresh_context` or
 `../loop-core/REFERENCE.md`: feed the blocking findings back — the criterion
 (spec) axis alone gates, standards findings are advisory — then record the
 current generation/revisions and blocking/advisory counts with `review`.
-taskloop only emits the requirement; reviewer scheduling belongs to the host.
+workloop only emits the requirement; reviewer scheduling belongs to the host.
 
 ### Steering
 

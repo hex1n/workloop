@@ -29,7 +29,7 @@ import test from "node:test";
 // deny-for-the-wrong-reason while stage 2's message rewording stays free.
 
 const ROOT = path.resolve(".");
-const CLI = path.join(ROOT, "bin", "taskloop.mjs");
+const CLI = path.join(ROOT, "bin", "workloop.mjs");
 
 const OWNER_SESSION = "owner-session-A";
 const FOREIGN_SESSION = "foreign-session-B";
@@ -41,7 +41,7 @@ const CASE_INSENSITIVE_FS = process.platform === "win32" || process.platform ===
 const POSIX = process.platform !== "win32";
 
 function foreignFixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-fss-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-fss-"));
   const repoA = path.join(root, "repoA");
   const repoB = path.join(root, "repoB");
   const home = path.join(root, "home");
@@ -63,11 +63,11 @@ function foreignFixture(t) {
     } catch { /* symlink unsupported; the symlink case skips itself */ }
   }
 
-  const ownerEnv = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home, TASKLOOP_SESSION_ID: OWNER_SESSION, CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "" };
+  const ownerEnv = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home, WORKLOOP_SESSION_ID: OWNER_SESSION, CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "" };
   const opened = spawnSync(process.execPath, [CLI, "open", "--repo", repoA, "--goal", "foreign scope fixture", "--criterion-file", "check.mjs", "--criterion-policy", "default", "--alignment-because", "the checker exercises the result", "--not-covered", "deployment", "--files", "src/**", "--risk", "routine", "--risk-reason", "isolated reversible fixture"], { cwd: repoA, env: ownerEnv, encoding: "utf8" });
   assert.equal(opened.status, 0, opened.stderr);
 
-  const callEnv = { ...ownerEnv, TASKLOOP_SESSION_ID: "" };
+  const callEnv = { ...ownerEnv, WORKLOOP_SESSION_ID: "" };
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return { root, repoA, repoB, home, callEnv, symlinkInEnvelope, source: path.join(repoA, "source.txt") };
 }
@@ -110,13 +110,13 @@ function assertOwnerAllowed(fx, toolName, toolInput, label) {
 
 function openTaskIn(fx, repo, ownerSession, files = "**") {
   fs.writeFileSync(path.join(repo, "check.mjs"), "process.exit(1);\n");
-  const env = { ...fx.callEnv, TASKLOOP_SESSION_ID: ownerSession };
+  const env = { ...fx.callEnv, WORKLOOP_SESSION_ID: ownerSession };
   const result = spawnSync(process.execPath, [CLI, "open", "--repo", repo, "--goal", "external repo task", "--criterion-file", "check.mjs", "--criterion-policy", "default", "--alignment-because", "the checker exercises the result", "--not-covered", "x", "--files", files, "--risk", "routine", "--risk-reason", "isolated reversible fixture"], { cwd: repo, env, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
 }
 
 function terminateTaskIn(fx, repo, ownerSession) {
-  const env = { ...fx.callEnv, TASKLOOP_SESSION_ID: ownerSession };
+  const env = { ...fx.callEnv, WORKLOOP_SESSION_ID: ownerSession };
   const result = spawnSync(process.execPath, [CLI, "abandon", "--repo", repo, "--reason", "test teardown"], { cwd: repo, env, encoding: "utf8" });
   assert.equal(result.status, 0, result.stderr);
 }
@@ -144,9 +144,9 @@ test("foreign write into the envelope by case-fold variant is denied on case-ins
   assertDenied(fx, "Write", { file_path: path.join(fx.repoA, "SRC", "A.TXT") }, ENVELOPE, "case-fold envelope target");
 });
 
-test("foreign writes to taskloop and git control state are denied", (t) => {
+test("foreign writes to workloop and git control state are denied", (t) => {
   const fx = foreignFixture(t);
-  assertDenied(fx, "Write", { file_path: path.join(fx.repoA, ".taskloop", "task.json") }, CONTROL, "taskloop control state");
+  assertDenied(fx, "Write", { file_path: path.join(fx.repoA, ".workloop", "task.json") }, CONTROL, "workloop control state");
   assertDenied(fx, "Write", { file_path: path.join(fx.repoA, ".git", "config") }, CONTROL, "git control state");
 });
 
@@ -195,9 +195,9 @@ test("a foreign recursive copy whose subtree cannot be enumerated fails closed",
   assertDenied(fx, "Bash", { command: `cp -a ${fx.repoA}/docs ${fx.repoB}/copy` }, UNPROVABLE, "archive cp");
 });
 
-test("a foreign shell writer into taskloop control state is denied", (t) => {
+test("a foreign shell writer into workloop control state is denied", (t) => {
   const fx = foreignFixture(t);
-  assertDenied(fx, "Bash", { command: `cp ${fx.source} ${fx.repoA}/.taskloop/task.json` }, CONTROL, "cp into .taskloop");
+  assertDenied(fx, "Bash", { command: `cp ${fx.source} ${fx.repoA}/.workloop/task.json` }, CONTROL, "cp into .workloop");
   assertDenied(fx, "Bash", { command: `rm ${fx.repoA}/.git/config` }, /destructive|control state/, "rm of git control state");
 });
 
@@ -226,7 +226,7 @@ test("a foreign shell writer into the same repo but outside the envelope is allo
   assertAllowed(fx, "Write", { file_path: path.join(fx.repoA, "docs", "note.txt") }, "write tool into a non-envelope directory");
 });
 
-// --- Part 4: git -C delegation to the target repository's taskloop state ------
+// --- Part 4: git -C delegation to the target repository's workloop state ------
 
 test("a foreign non-read-only git command targeting an unsupervised external repo is allowed", (t) => {
   const fx = foreignFixture(t);
@@ -250,7 +250,7 @@ test("delegation never treats this repository or a subdirectory as external", (t
 test("a foreign git command targeting an external repo with another session's active task is denied", (t) => {
   const fx = foreignFixture(t);
   openTaskIn(fx, fx.repoB, "external-owner");
-  assertDenied(fx, "Bash", { command: `git -C ${fx.repoB} commit -m x` }, /active taskloop task/, "external repo owned by another session");
+  assertDenied(fx, "Bash", { command: `git -C ${fx.repoB} commit -m x` }, /active workloop task/, "external repo owned by another session");
 });
 
 test("a foreign git command whose external repo task this session owns is allowed", (t) => {
@@ -275,7 +275,7 @@ test("a foreign file write into an external repo is allowed when that repo is un
 
 test("a foreign file write into an external repo's control state is always denied", (t) => {
   const fx = foreignFixture(t);
-  assertDenied(fx, "Bash", { command: `cp ${fx.source} ${fx.repoB}/.taskloop/task.json` }, CONTROL, "cp into external repo taskloop control state");
+  assertDenied(fx, "Bash", { command: `cp ${fx.source} ${fx.repoB}/.workloop/task.json` }, CONTROL, "cp into external repo workloop control state");
   assertDenied(fx, "Bash", { command: `cp ${fx.source} ${fx.repoB}/.git/config` }, CONTROL, "cp into external repo git control state");
 });
 
@@ -310,7 +310,7 @@ test("the Write tool into an external repo's active envelope is judged the same 
 
 test("the owner's control state is protected against a shell writer, like the file tool", (t) => {
   const fx = foreignFixture(t);
-  assertOwnerDenied(fx, "Bash", { command: `cp ${fx.source} ${fx.repoA}/.taskloop/task.json` }, CONTROL, "owner cp into taskloop control state");
+  assertOwnerDenied(fx, "Bash", { command: `cp ${fx.source} ${fx.repoA}/.workloop/task.json` }, CONTROL, "owner cp into workloop control state");
   assertOwnerDenied(fx, "Bash", { command: `cp ${fx.source} ${fx.repoA}/.git/config` }, CONTROL, "owner cp into git control state");
 });
 
@@ -325,13 +325,13 @@ test("an owner git command on an unsupervised external repo is not blocked by th
 test("an owner git command on an external repo owned by another session is denied there", (t) => {
   const fx = foreignFixture(t);
   openTaskIn(fx, fx.repoB, "external-owner", "**");
-  assertOwnerDenied(fx, "Bash", { command: `git -C ${fx.repoB} commit -m x` }, /active taskloop task/, "owner git into another session's external repo");
+  assertOwnerDenied(fx, "Bash", { command: `git -C ${fx.repoB} commit -m x` }, /active workloop task/, "owner git into another session's external repo");
 });
 
 test("an owner file write into an external repo is judged by that repo's own state", (t) => {
   const fx = foreignFixture(t);
   assertOwnerAllowed(fx, "Bash", { command: `cp ${fx.source} ${fx.repoB}/dest.txt` }, "owner cp into unsupervised external repo");
-  assertOwnerDenied(fx, "Bash", { command: `cp ${fx.source} ${fx.repoB}/.taskloop/x` }, CONTROL, "owner cp into external repo control state");
+  assertOwnerDenied(fx, "Bash", { command: `cp ${fx.source} ${fx.repoB}/.workloop/x` }, CONTROL, "owner cp into external repo control state");
 });
 
 test("an owner file write intersecting another session's external task envelope is denied", (t) => {

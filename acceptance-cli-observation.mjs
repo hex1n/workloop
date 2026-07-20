@@ -11,7 +11,7 @@ const UNSATISFIED = 3;
 const INDETERMINATE = 2;
 
 function say(message) {
-  process.stdout.write(`TASKLOOP_CRITERION: ${message}\n`);
+  process.stdout.write(`WORKLOOP_CRITERION: ${message}\n`);
 }
 
 const read = (file) => {
@@ -24,7 +24,7 @@ const app = read("lib/application.mjs");
 const store = read("lib/event-store.mjs");
 const engine = read("lib/task-engine.mjs");
 const fixture = read("tests/fixtures/runtime-contract-5.mjs");
-const suite = read("tests/taskloop.test.mjs");
+const suite = read("tests/workloop.test.mjs");
 if ([skill, calibration, app, store, engine, fixture, suite].some((text) => text === null)) {
   say("sources unreadable");
   process.exit(INDETERMINATE);

@@ -264,8 +264,8 @@ test("runtime-contract-5 fixture freezes the external handshake and authority ho
     task_snapshot_schema_version: 3,
     event_record_schema_version: 2,
     outcome_projection_schema_version: 3,
-    event_store: ".taskloop/events.jsonl",
-    outcome_projection: "~/.taskloop/outcomes.jsonl",
+    event_store: ".workloop/events.jsonl",
+    outcome_projection: "~/.workloop/outcomes.jsonl",
   });
   assert.deepEqual(RUNTIME5_EVENT_KINDS, V3_EVENT_KINDS);
   assert.deepEqual(AUTHORITY_FAILURE_HOOKS, {
@@ -995,7 +995,7 @@ test("schema-v3 terminal events cover achieved, not-needed, and abandoned tasks"
 });
 
 test("[W08] production event store probes directory fsync while committing a canonical genesis", (t) => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop event 空格 "));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop event 空格 "));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const command = makeTaskOpenedCommand({ seed: "event-store-production", index: 1, atEpochMs: 1_784_000_000_000 });
   const domainEvent = decide(null, command).events[0];
@@ -1045,7 +1045,7 @@ test("[W08] production event store probes directory fsync while committing a can
   });
   if (process.platform === "win32") assert.match(receipt.directory_fsync, /^(?:supported|unsupported:(?:EISDIR|EPERM|EINVAL))$/);
   else assert.equal(receipt.directory_fsync, "supported");
-  assert.equal(eventStorePath(repo), path.join(repo, ".taskloop", "events.jsonl"));
+  assert.equal(eventStorePath(repo), path.join(repo, ".workloop", "events.jsonl"));
   const replay = readEventStore(repo);
   assert.equal(replay.records.length, 1);
   assert.deepEqual(replay.records[0], record);
@@ -1078,12 +1078,12 @@ test("[W08] directory fsync degrades only for the frozen Windows capability allo
   assert.deepEqual(WINDOWS_DIRECTORY_FSYNC_UNSUPPORTED, { open: ["EISDIR", "EPERM"], fsync: ["EINVAL", "EPERM"] });
   for (const code of WINDOWS_DIRECTORY_FSYNC_UNSUPPORTED.open) {
     const error = Object.assign(new Error(code), { code });
-    assert.equal(syncDirectory("C:\\repo\\.taskloop", { openSync() { throw error; } }, "win32"), `unsupported:${code}`);
+    assert.equal(syncDirectory("C:\\repo\\.workloop", { openSync() { throw error; } }, "win32"), `unsupported:${code}`);
   }
   for (const code of WINDOWS_DIRECTORY_FSYNC_UNSUPPORTED.fsync) {
     let closed = 0;
     const error = Object.assign(new Error(code), { code });
-    assert.equal(syncDirectory("C:\\repo\\.taskloop", { openSync() { return 9; }, fsyncSync() { throw error; }, closeSync(fd) { assert.equal(fd, 9); closed += 1; } }, "win32"), `unsupported:${code}`);
+    assert.equal(syncDirectory("C:\\repo\\.workloop", { openSync() { return 9; }, fsyncSync() { throw error; }, closeSync(fd) { assert.equal(fd, 9); closed += 1; } }, "win32"), `unsupported:${code}`);
     assert.equal(closed, 1);
   }
   for (const stage of ["open", "fsync"]) {
@@ -1091,12 +1091,12 @@ test("[W08] directory fsync degrades only for the frozen Windows capability allo
     const operations = stage === "open"
       ? { openSync() { throw error; } }
       : { openSync() { return 9; }, fsyncSync() { throw error; }, closeSync() {} };
-    assert.throws(() => syncDirectory("C:\\repo\\.taskloop", operations, "win32"), (seen) => seen === error);
+    assert.throws(() => syncDirectory("C:\\repo\\.workloop", operations, "win32"), (seen) => seen === error);
   }
 });
 
 test("record schema 2 appends to and replays a legacy schema-1 authority", (t) => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-record-upgrade-"));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-record-upgrade-"));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const opened = makeTaskOpenedCommand({ seed: "record-upgrade", index: 1, atEpochMs: 1_784_000_000_000 });
   const openEvent = { ...decide(null, opened).events[0], task_event_sequence: 1 };
@@ -1126,7 +1126,7 @@ test("record schema 2 appends to and replays a legacy schema-1 authority", (t) =
 });
 
 test("production event store appends one complete transaction and enforces the chain", (t) => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-event-append-"));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-event-append-"));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const opened = makeTaskOpenedCommand({ seed: "event-store-append", index: 1, atEpochMs: 1_784_000_000_000 });
   const openEvent = { ...decide(null, opened).events[0], task_event_sequence: 1 };
@@ -1184,7 +1184,7 @@ test("production event store appends one complete transaction and enforces the c
 });
 
 test("production replay durably quarantines a torn tail and recovery is reentrant", (t) => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-event-tail-"));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-event-tail-"));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const opened = makeTaskOpenedCommand({ seed: "event-store-tail", index: 1, atEpochMs: 1_784_000_000_000 });
   const genesis = buildRecord({
@@ -1233,7 +1233,7 @@ test("production replay durably quarantines a torn tail and recovery is reentran
   const receipt = JSON.parse(receiptBytes);
   assert.deepEqual(receipt, replay.recovered_tail);
   assert.equal(receiptBytes, `${JSON.stringify(JSON.parse(canonicalJson(replay.recovered_tail)), null, 2)}\n`);
-  const quarantineFiles = fs.readdirSync(path.join(repo, ".taskloop", "quarantine"));
+  const quarantineFiles = fs.readdirSync(path.join(repo, ".workloop", "quarantine"));
   assert.equal(quarantineFiles.filter((name) => name.endsWith(".bin")).length, 1);
   assert.equal(quarantineFiles.filter((name) => name.endsWith(".json")).length, 1);
   assert.equal(readEventStore(repo, { recoveryEpochMs }).recovered_tail, null);
@@ -1272,7 +1272,7 @@ test("production replay fails closed on internal corruption without changing aut
     })(), "TASK_SEQUENCE_GAP"],
   ];
   for (const [name, malformed, code] of cases) await t.test(name, () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-event-corrupt-"));
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-event-corrupt-"));
     try {
       const target = eventStorePath(repo);
       fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -1284,7 +1284,7 @@ test("production replay fails closed on internal corruption without changing aut
   });
 
   await t.test("hash chain", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-event-chain-"));
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-event-chain-"));
     try {
       commitRecord(repo, genesis);
       const second = buildRecord({
@@ -1304,7 +1304,7 @@ test("production replay fails closed on internal corruption without changing aut
   });
 
   await t.test("corrupt prefix plus torn tail", () => {
-    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-event-prefix-"));
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-event-prefix-"));
     try {
       const value = structuredClone(genesis);
       value.events[0].payload.goal = null;
@@ -1316,13 +1316,13 @@ test("production replay fails closed on internal corruption without changing aut
       fs.writeFileSync(target, bytes);
       assert.throws(() => readEventStore(repo), (error) => error.code === "UNKNOWN_EVENT_FIELD");
       assert.deepEqual(fs.readFileSync(target), bytes);
-      assert.equal(fs.existsSync(path.join(repo, ".taskloop", "quarantine")), false);
+      assert.equal(fs.existsSync(path.join(repo, ".workloop", "quarantine")), false);
     } finally { fs.rmSync(repo, { recursive: true, force: true }); }
   });
 });
 
 test("[W03] crash child proves partial-tail quarantine and reentrant recovery", async (t) => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-event-crash-"));
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-event-crash-"));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   const opened = makeTaskOpenedCommand({ seed: "event-store-crash", index: 1, atEpochMs: 1_784_000_000_000 });
   const genesis = buildRecord({
@@ -1334,7 +1334,7 @@ test("[W03] crash child proves partial-tail quarantine and reentrant recovery", 
   fs.writeFileSync(commandFile, canonicalJson(genesis));
   const common = ["--repo", repo, "--command-file", commandFile];
   for (const [seam, authorityExists] of [["before-genesis-temp-create", false], ["after-genesis-temp-fsync", false], ["after-genesis-rename", true]]) {
-    const seamRepo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-event-genesis-seam-"));
+    const seamRepo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-event-genesis-seam-"));
     try {
       const seamCommand = path.join(seamRepo, "record.json");
       fs.writeFileSync(seamCommand, canonicalJson(genesis));
@@ -1395,7 +1395,7 @@ test("[W03] crash child proves partial-tail quarantine and reentrant recovery", 
   const recoveredNew = readEventStore(repo);
   assert.deepEqual(recoveredNew.records, [genesis, second]);
 
-  const writeCrashRepo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-event-write-seam-"));
+  const writeCrashRepo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-event-write-seam-"));
   try {
     commitRecord(writeCrashRepo, genesis);
     const writeCommandFile = path.join(writeCrashRepo, "record.json");

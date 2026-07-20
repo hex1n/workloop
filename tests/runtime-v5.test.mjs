@@ -10,14 +10,14 @@ import { syncOutcomeRecords } from "../lib/outcome-projector.mjs";
 import { canonicalJson, sha256Hex } from "../lib/prims.mjs";
 
 const ROOT = path.resolve(".");
-const CLI = path.join(ROOT, "bin", "taskloop.mjs");
+const CLI = path.join(ROOT, "bin", "workloop.mjs");
 
 function run(args, { cwd = ROOT, env = process.env, input = "" } = {}) {
   return spawnSync(process.execPath, [CLI, ...args], { cwd, env, input, encoding: "utf8" });
 }
 
 function fixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-v5-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-v5-"));
   const repo = path.join(root, "repo"); const home = path.join(root, "home");
   fs.mkdirSync(repo, { recursive: true }); fs.mkdirSync(home, { recursive: true });
   spawnSync("git", ["init", "-q"], { cwd: repo });
@@ -25,7 +25,7 @@ function fixture(t) {
   fs.writeFileSync(path.join(repo, "work.txt"), "start\n");
   spawnSync("git", ["add", "."], { cwd: repo });
   spawnSync("git", ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-qm", "fixture"], { cwd: repo });
-  const env = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home, TASKLOOP_SESSION_ID: "owner-v5" };
+  const env = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home, WORKLOOP_SESSION_ID: "owner-v5" };
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   return { root, repo, home, env };
 }
@@ -35,16 +35,16 @@ function open(fx, extra = []) {
 }
 
 function projection(repo) {
-  return JSON.parse(fs.readFileSync(path.join(repo, ".taskloop", "task.json"), "utf8")).projection;
+  return JSON.parse(fs.readFileSync(path.join(repo, ".workloop", "task.json"), "utf8")).projection;
 }
 
 test("runtime contract 5 describes independent repository and HOME schemas", () => {
   const info = JSON.parse(run(["info"]).stdout);
   assert.deepEqual(info, {
-    name: "taskloop", runtime_contract: 5, criterion_adapter_protocol_version: 2, task_snapshot_schema_version: 3,
+    name: "workloop", runtime_contract: 5, criterion_adapter_protocol_version: 2, task_snapshot_schema_version: 3,
     event_record_schema_version: 2, outcome_projection_schema_version: 3,
-    event_store: ".taskloop/events.jsonl", outcome_projection: "~/.taskloop/outcomes.jsonl",
-    distribution_owner: "taskloop",
+    event_store: ".workloop/events.jsonl", outcome_projection: "~/.workloop/outcomes.jsonl",
+    distribution_owner: "workloop",
   });
 });
 
@@ -68,7 +68,7 @@ test("status, verify, report, and audit self-describe the active storage contrac
     }, { runtime: 5, snapshot: 3, record: 2, outcome: 3 }, args[0]);
   }
 
-  fs.appendFileSync(path.join(fx.repo, ".taskloop", "events.jsonl"), "{broken}\n");
+  fs.appendFileSync(path.join(fx.repo, ".workloop", "events.jsonl"), "{broken}\n");
   const corrupt = run(["audit", "--repo", fx.repo], { env: fx.env });
   assert.equal(corrupt.status, 2);
   const report = JSON.parse(corrupt.stdout);
@@ -84,7 +84,7 @@ test("CLI mutations commit one authority record and a disposable snapshot", (t) 
   assert.equal(first.records.length, 1);
   assert.deepEqual(first.events.map((event) => event.kind), ["task_opened"]);
   const before = projection(fx.repo);
-  fs.rmSync(path.join(fx.repo, ".taskloop", "task.json"));
+  fs.rmSync(path.join(fx.repo, ".workloop", "task.json"));
   const status = run(["status", "--repo", fx.repo], { env: fx.env });
   assert.equal(status.status, 0, status.stderr);
   assert.deepEqual(projection(fx.repo), before);
@@ -109,7 +109,7 @@ test("PreToolUse validates repository authority once before its commit", (t) => 
   const env = {
     ...fx.env,
     NODE_OPTIONS: [fx.env.NODE_OPTIONS, `--require=${preload}`].filter(Boolean).join(" "),
-    TASKLOOP_EVENT_READ_COUNT_FILE: countFile,
+    WORKLOOP_EVENT_READ_COUNT_FILE: countFile,
   };
   const hook = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v5", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
   const result = run(["hook", "--profile", "claude"], { cwd: fx.repo, env, input: hook });
@@ -124,23 +124,23 @@ test("Stop preserves the task-state failure protocol for unclassified lock error
   const env = {
     ...fx.env,
     NODE_OPTIONS: [fx.env.NODE_OPTIONS, `--require=${preload}`].filter(Boolean).join(" "),
-    TASKLOOP_FAIL_TASK_LOCK: "1",
+    WORKLOOP_FAIL_TASK_LOCK: "1",
   };
   const payload = JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo, session_id: "owner-v5" });
   const result = run(["hook", "--profile", "claude"], { cwd: fx.repo, env, input: payload });
   assert.equal(result.status, 0);
   assert.equal(result.stderr, "synthetic task lock failure\n");
-  assert.equal(result.stdout, '{"decision":"block","reason":"taskloop: task state unavailable (EACCES); refusing to adjudicate Stop"}\n');
+  assert.equal(result.stdout, '{"decision":"block","reason":"workloop: task state unavailable (EACCES); refusing to adjudicate Stop"}\n');
 
   const safe = run(["hook", "--profile", "codex-safe"], { cwd: fx.repo, env, input: payload });
   assert.equal(safe.status, 0);
   assert.equal(safe.stdout, "");
-  assert.match(safe.stderr, /^synthetic task lock failure\ntaskloop: task state unavailable \(EACCES\); refusing to adjudicate Stop; Codex safe profile cannot resume this session;/);
+  assert.match(safe.stderr, /^synthetic task lock failure\nworkloop: task state unavailable \(EACCES\); refusing to adjudicate Stop; Codex safe profile cannot resume this session;/);
 });
 
 test("authority guard rejects legacy, orphan, mixed, and corrupt state without overwriting events", (t) => {
   const fx = fixture(t);
-  const stateDir = path.join(fx.repo, ".taskloop"); fs.mkdirSync(stateDir, { recursive: true });
+  const stateDir = path.join(fx.repo, ".workloop"); fs.mkdirSync(stateDir, { recursive: true });
   const taskFile = path.join(stateDir, "task.json");
   const legacy = Buffer.from('{"schema_version":2,"opaque":"bytes"}\n');
   fs.writeFileSync(taskFile, legacy);
@@ -175,7 +175,7 @@ test("authority guard rejects legacy, orphan, mixed, and corrupt state without o
 
 test("artifact-name migration adopts legacy authority and derived HOME paths without changing bytes", (t) => {
   const fx = fixture(t); assert.equal(open(fx).status, 0);
-  const stateDir = path.join(fx.repo, ".taskloop");
+  const stateDir = path.join(fx.repo, ".workloop");
   const currentEvent = path.join(stateDir, "events.jsonl");
   const legacyEvent = path.join(stateDir, "events-v3.jsonl");
   if (fs.existsSync(currentEvent)) fs.renameSync(currentEvent, legacyEvent);
@@ -187,7 +187,7 @@ test("artifact-name migration adopts legacy authority and derived HOME paths wit
   snapshot.snapshot_digest = sha256Hex(canonicalJson(snapshotPreimage));
   fs.writeFileSync(taskFile, `${JSON.stringify(snapshot, null, 2)}\n`);
 
-  const homeState = path.join(fx.home, ".taskloop");
+  const homeState = path.join(fx.home, ".workloop");
   const currentOutcome = path.join(homeState, "outcomes.jsonl");
   const legacyOutcome = path.join(homeState, "outcomes-v3.jsonl");
   if (fs.existsSync(currentOutcome)) fs.renameSync(currentOutcome, legacyOutcome);
@@ -238,7 +238,7 @@ test("artifact-name migration adopts legacy authority and derived HOME paths wit
 
 test("artifact-name migration fails closed when both authority names exist", (t) => {
   const fx = fixture(t); assert.equal(open(fx).status, 0);
-  const stateDir = path.join(fx.repo, ".taskloop");
+  const stateDir = path.join(fx.repo, ".workloop");
   const currentEvent = path.join(stateDir, "events.jsonl");
   const legacyEvent = path.join(stateDir, "events-v3.jsonl");
   if (fs.existsSync(currentEvent)) fs.copyFileSync(currentEvent, legacyEvent);
@@ -258,7 +258,7 @@ test("artifact-name migration fails closed when both authority names exist", (t)
 
 test("artifact-name migration refuses two current-schema outcome projections", (t) => {
   const fx = fixture(t); assert.equal(open(fx).status, 0);
-  const homeState = path.join(fx.home, ".taskloop");
+  const homeState = path.join(fx.home, ".workloop");
   const currentOutcome = path.join(homeState, "outcomes.jsonl");
   const legacyOutcome = path.join(homeState, "outcomes-v3.jsonl");
   fs.copyFileSync(currentOutcome, legacyOutcome);
@@ -292,7 +292,7 @@ test("transcript baseline and increment are in authority and a denied retry cann
   assert.match(response.stdout, /output-token budget exhausted \(3\/3\)/);
   assert.equal(projection(fx.repo).spent.output_tokens_estimate, 3);
   assert.equal(readEventStore(fx.repo).events.filter((event) => event.kind === "output_tokens_tallied").length, tallyCount);
-  assert.equal(fs.existsSync(path.join(fx.repo, ".taskloop", "transcript-cursors.json")), false);
+  assert.equal(fs.existsSync(path.join(fx.repo, ".workloop", "transcript-cursors.json")), false);
 });
 
 test("[W07] transcript ranges use UTF-8 byte offsets, CRLF, partial records, and replacement generations", (t) => {
@@ -329,7 +329,7 @@ test("[W07] transcript ranges use UTF-8 byte offsets, CRLF, partial records, and
 
 test("the outcome projection is best-effort, idempotent, and rebuildable from repository authority", (t) => {
   const fx = fixture(t); assert.equal(open(fx).status, 0);
-  const projectionFile = path.join(fx.home, ".taskloop", "outcomes.jsonl");
+  const projectionFile = path.join(fx.home, ".workloop", "outcomes.jsonl");
   assert.equal(fs.readFileSync(projectionFile, "utf8").trim().split("\n").length, 1);
   assert.equal(run(["sync-outcomes", "--repo", fx.repo], { env: fx.env }).status, 0);
   assert.equal(fs.readFileSync(projectionFile, "utf8").trim().split("\n").length, 1);
@@ -339,7 +339,7 @@ test("the outcome projection is best-effort, idempotent, and rebuildable from re
   assert.equal(JSON.parse(rebuilt.stdout).added, 1);
   assert.equal(run(["audit-outcomes"], { env: fx.env }).status, 0);
 
-  const cursorDir = path.join(fx.home, ".taskloop", "outcomes-cursors");
+  const cursorDir = path.join(fx.home, ".workloop", "outcomes-cursors");
   const cursorFile = path.join(cursorDir, fs.readdirSync(cursorDir)[0]);
   fs.writeFileSync(cursorFile, "{damaged cursor}\n");
   const rescanned = run(["sync-outcomes", "--repo", fx.repo], { env: fx.env });
@@ -369,7 +369,7 @@ test("outcome cursor makes the normal commit path incremental", (t) => {
   const fx = fixture(t); assert.equal(open(fx).status, 0);
   const replay = readEventStore(fx.repo);
   const first = replay.records[0];
-  const projectionFile = path.join(fx.home, ".taskloop", "outcomes.jsonl");
+  const projectionFile = path.join(fx.home, ".workloop", "outcomes.jsonl");
   const repoIdentity = JSON.parse(fs.readFileSync(projectionFile, "utf8")).repo_identity;
   const second = buildRecord({
     transactionId: "818af0be-e1c7-4cf2-8177-d605e10175f4",
@@ -403,7 +403,7 @@ test("outcome cursor makes the normal commit path incremental", (t) => {
 test("a stale repo cursor cannot omit history after the shared projection is rebuilt by another repo", (t) => {
   const fx = fixture(t); assert.equal(open(fx).status, 0);
   const first = readEventStore(fx.repo).records[0];
-  const projectionFile = path.join(fx.home, ".taskloop", "outcomes.jsonl");
+  const projectionFile = path.join(fx.home, ".workloop", "outcomes.jsonl");
   const repoIdentity = JSON.parse(fs.readFileSync(projectionFile, "utf8")).repo_identity;
   const otherRepoIdentity = `sha256:${"b".repeat(64)}`;
   const other = buildRecord({
@@ -451,7 +451,7 @@ test("a stale repo cursor cannot omit history after the shared projection is reb
 
 test("a normal commit repairs a prior torn outcome tail from repository authority", (t) => {
   const fx = fixture(t); assert.equal(open(fx).status, 0);
-  const projectionFile = path.join(fx.home, ".taskloop", "outcomes.jsonl");
+  const projectionFile = path.join(fx.home, ".workloop", "outcomes.jsonl");
   fs.appendFileSync(projectionFile, '{"projection_schema_version":3');
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v5", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
   const committed = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: payload });
@@ -462,7 +462,7 @@ test("a normal commit repairs a prior torn outcome tail from repository authorit
 
 test("HOME projection and cursor failures never roll back repository authority", (t) => {
   const cursorFx = fixture(t);
-  const homeState = path.join(cursorFx.home, ".taskloop");
+  const homeState = path.join(cursorFx.home, ".workloop");
   fs.mkdirSync(homeState, { recursive: true });
   const blockedCursorDir = path.join(homeState, "outcomes-cursors");
   fs.writeFileSync(blockedCursorDir, "blocks cursor directory creation\n");
@@ -493,7 +493,7 @@ test("HOME projection and cursor failures never roll back repository authority",
 });
 
 test("[W05] twenty concurrent mutations serialize without sequence gaps or lost writes", async (t) => {
-  const concurrency = Number.parseInt(process.env.TASKLOOP_W05_CONCURRENCY ?? "20", 10);
+  const concurrency = Number.parseInt(process.env.WORKLOOP_W05_CONCURRENCY ?? "20", 10);
   assert.ok(Number.isSafeInteger(concurrency) && concurrency > 0);
   const fx = fixture(t); assert.equal(open(fx, ["--writes", String(concurrency)]).status, 0);
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v5", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });

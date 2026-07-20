@@ -26,7 +26,7 @@ function parsed(result, label) {
 }
 
 function installFixture(t) {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-windows-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-windows-"));
   const home = path.join(root, "home with spaces 用户");
   fs.mkdirSync(home, { recursive: true });
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
@@ -34,8 +34,8 @@ function installFixture(t) {
     ...process.env,
     HOME: home,
     USERPROFILE: home,
-    TASKLOOP_INSTALL_HOME: home,
-    TASKLOOP_INSTALL_REPO: ROOT,
+    WORKLOOP_INSTALL_HOME: home,
+    WORKLOOP_INSTALL_REPO: ROOT,
   };
   return { root, home, env };
 }
@@ -44,7 +44,7 @@ function installedFixture(t) {
   const fixture = installFixture(t);
   const installed = runNode(INSTALLER, [], { env: fixture.env });
   assert.equal(installed.status, 0, installed.stderr || installed.stdout);
-  return { ...fixture, shim: path.join(fixture.home, "bin", "taskloop.mjs") };
+  return { ...fixture, shim: path.join(fixture.home, "bin", "workloop.mjs") };
 }
 
 function pidRegisteredWithin(pidFile, timeoutMs) {
@@ -60,29 +60,29 @@ function pidRegisteredWithin(pidFile, timeoutMs) {
   }
 }
 
-test("Windows install is repeatable and exposes taskloop to cmd and both PowerShell editions", { skip: !WINDOWS }, (t) => {
+test("Windows install is repeatable and exposes workloop to cmd and both PowerShell editions", { skip: !WINDOWS }, (t) => {
   const fixture = installFixture(t);
   const source = path.join(fixture.root, "install source");
   for (const directory of ["bin", "lib", "skills"]) fs.cpSync(path.join(ROOT, directory), path.join(source, directory), { recursive: true });
-  const env = { ...fixture.env, TASKLOOP_INSTALL_REPO: source };
+  const env = { ...fixture.env, WORKLOOP_INSTALL_REPO: source };
   for (const attempt of ["first", "second"]) {
     const installed = runNode(INSTALLER, [], { env });
     assert.equal(installed.status, 0, `${attempt} install: ${installed.stderr || installed.stdout}`);
   }
 
-  const firstRelease = JSON.parse(fs.readFileSync(path.join(fixture.home, "bin", ".taskloop-active-release.json"), "utf8")).release_id;
+  const firstRelease = JSON.parse(fs.readFileSync(path.join(fixture.home, "bin", ".workloop-active-release.json"), "utf8")).release_id;
   fs.appendFileSync(path.join(source, "lib", "prims.mjs"), "\n// Windows upgrade probe.\n");
   const upgraded = runNode(INSTALLER, [], { env });
   assert.equal(upgraded.status, 0, `upgrade install: ${upgraded.stderr || upgraded.stdout}`);
-  const secondRelease = JSON.parse(fs.readFileSync(path.join(fixture.home, "bin", ".taskloop-active-release.json"), "utf8")).release_id;
+  const secondRelease = JSON.parse(fs.readFileSync(path.join(fixture.home, "bin", ".workloop-active-release.json"), "utf8")).release_id;
   assert.notEqual(secondRelease, firstRelease);
-  assert.deepEqual(fs.readdirSync(path.join(fixture.home, "bin", ".taskloop-runtime")), [secondRelease]);
+  assert.deepEqual(fs.readdirSync(path.join(fixture.home, "bin", ".workloop-runtime")), [secondRelease]);
 
   const shellEnv = withPath(env, path.join(fixture.home, "bin"));
   const commands = [
-    [process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", "taskloop info"], "cmd"],
-    ["powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "taskloop info"], "Windows PowerShell"],
-    ["pwsh.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "taskloop info"], "PowerShell Core"],
+    [process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", "workloop info"], "cmd"],
+    ["powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "workloop info"], "Windows PowerShell"],
+    ["pwsh.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "workloop info"], "PowerShell Core"],
   ];
   for (const [executable, args, label] of commands) {
     const info = parsed(spawnSync(executable, args, { env: shellEnv, encoding: "utf8", timeout: 30_000 }), label);
@@ -112,7 +112,7 @@ for (const [label, executable, argsFor, spawnOptions] of hookShells) {
     const args = argsFor(command);
     const response = parsed(spawnSync(executable, args, { env: fixture.env, input: payload, encoding: "utf8", timeout: 30_000, ...spawnOptions }), label);
     assert.equal(response.hookSpecificOutput.permissionDecision, "allow", label);
-    assert.match(response.hookSpecificOutput.updatedInput.command, /^\$env:TASKLOOP_SESSION_ID='windows-session'; /, label);
+    assert.match(response.hookSpecificOutput.updatedInput.command, /^\$env:WORKLOOP_SESSION_ID='windows-session'; /, label);
   });
 }
 
@@ -130,8 +130,8 @@ test("[W01] Windows genesis and replay survive spaces, Unicode, and drive-case p
   const audited = parsed(runNode(fixture.shim, ["audit", "--repo", repo], { cwd: repo, env: fixture.env }), "W01 audit");
   assert.equal(audited.valid, true);
   assert.equal(audited.last_repo_sequence, 1);
-  assert.equal(fs.readdirSync(path.join(repo, ".taskloop")).some((name) => name.includes(".genesis.") && name.endsWith(".tmp")), false);
-  const taskFile = path.join(repo, ".taskloop", "task.json");
+  assert.equal(fs.readdirSync(path.join(repo, ".workloop")).some((name) => name.includes(".genesis.") && name.endsWith(".tmp")), false);
+  const taskFile = path.join(repo, ".workloop", "task.json");
   let previousRevision = JSON.parse(fs.readFileSync(taskFile, "utf8")).projection.task_revision;
 
   for (const content of ["second\n", "third\n"]) {
@@ -170,7 +170,7 @@ test("Windows installer reaps a stale lock owned by an exited process", { skip: 
   const fixture = installFixture(t);
   const exited = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" });
   assert.equal(exited.status, 0, exited.stderr);
-  const lock = path.join(fixture.home, "bin", ".taskloop-runtime.install-lock");
+  const lock = path.join(fixture.home, "bin", ".workloop-runtime.install-lock");
   fs.mkdirSync(lock, { recursive: true });
   fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ pid: Number(exited.stdout), token: "exited" }));
   const old = new Date(Date.now() - 10 * 60_000);

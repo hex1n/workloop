@@ -1,27 +1,27 @@
 # Monthly host reminder
 
-This binding is host-owned: taskloop supplies the trusted aggregate and the
+This binding is host-owned: workloop supplies the trusted aggregate and the
 host supplies the monthly scheduler. The reminder stores only the previous
 aggregate counts, never task or actor identifiers.
 
 On Windows, save the following as a self-contained PowerShell action and bind
-it monthly with Task Scheduler. Set `TASKLOOP_REPO` in that scheduled action.
+it monthly with Task Scheduler. Set `WORKLOOP_REPO` in that scheduled action.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
-$repo = $env:TASKLOOP_REPO
-if ([string]::IsNullOrWhiteSpace($repo)) { throw 'TASKLOOP_REPO is required' }
-$stateDir = Join-Path $HOME '.taskloop'
+$repo = $env:WORKLOOP_REPO
+if ([string]::IsNullOrWhiteSpace($repo)) { throw 'WORKLOOP_REPO is required' }
+$stateDir = Join-Path $HOME '.workloop'
 $baselinePath = Join-Path $stateDir 'meta-loop-reminder-baseline.json'
 $duePath = Join-Path $stateDir 'meta-loop-due.txt'
-$ledger = taskloop ledger --json --repo $repo | ConvertFrom-Json
-if ($LASTEXITCODE -ne 0) { throw 'taskloop ledger failed' }
+$ledger = workloop ledger --json --repo $repo | ConvertFrom-Json
+if ($LASTEXITCODE -ne 0) { throw 'workloop ledger failed' }
 $prior = if (Test-Path $baselinePath) { Get-Content $baselinePath -Raw | ConvertFrom-Json } else { $null }
 $terminal = [int64]$ledger.metrics.terminal
 $abandoned = [int64]$ledger.metrics.terminal_outcomes.abandoned
 $newTerminal = if ($null -eq $prior) { $terminal } else { [Math]::Max(0, $terminal - [int64]$prior.terminal) }
 $newAbandoned = if ($null -eq $prior) { $abandoned } else { [Math]::Max(0, $abandoned - [int64]$prior.abandoned) }
-$message = "taskloop meta-loop due: $newTerminal new terminal task(s), $newAbandoned abandoned; evidence=$($ledger.integrity.evidence)"
+$message = "workloop meta-loop due: $newTerminal new terminal task(s), $newAbandoned abandoned; evidence=$($ledger.integrity.evidence)"
 New-Item -ItemType Directory -Path $stateDir -Force | Out-Null
 @{ terminal = $terminal; abandoned = $abandoned; observed_at = [DateTime]::UtcNow.ToString('o') } |
   ConvertTo-Json | Set-Content -Path $baselinePath -Encoding UTF8

@@ -1,17 +1,17 @@
 {
-  "name": "@hex1n/taskloop",
+  "name": "@hex1n/workloop",
   "version": "0.1.0",
-  "description": "Task-first runtime and composable workloop core for coding agents",
+  "description": "Work supervisor and portable loop kernel for coding agents",
   "type": "module",
   "bin": {
-    "taskloop": "bin/taskloop.mjs"
+    "workloop": "bin/workloop.mjs"
   },
   "scripts": {
-    "test": "node --test tests/taskloop.test.mjs && node --test tests/command-safety-adversarial.test.mjs tests/foreign-session-scope.test.mjs tests/host-hooks.test.mjs tests/roadmap-e2e.test.mjs tests/taskloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
-    "test:matrix": "node --test tests/command-safety-adversarial.test.mjs tests/foreign-session-scope.test.mjs tests/host-hooks.test.mjs tests/roadmap-e2e.test.mjs tests/taskloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
+    "test": "node --test tests/workloop.test.mjs && node --test tests/command-safety-adversarial.test.mjs tests/foreign-session-scope.test.mjs tests/host-hooks.test.mjs tests/roadmap-e2e.test.mjs tests/workloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
+    "test:matrix": "node --test tests/command-safety-adversarial.test.mjs tests/foreign-session-scope.test.mjs tests/host-hooks.test.mjs tests/roadmap-e2e.test.mjs tests/workloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
     "test:host-hooks": "node --test tests/host-hooks.test.mjs",
-    "test:behavioral": "node --test tests/taskloop.test.mjs",
-    "test:architecture": "node --test tests/taskloop-architecture.test.mjs",
+    "test:behavioral": "node --test tests/workloop.test.mjs",
+    "test:architecture": "node --test tests/workloop-architecture.test.mjs",
     "test:event-store": "node --test tests/event-store.test.mjs",
     "test:snapshot": "node --test tests/task-snapshot-v3.test.mjs",
     "bench:event-store": "node tests/event-store-benchmark.mjs",
@@ -23,10 +23,10 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/hex1n/taskloop.git"
+    "url": "git+https://github.com/hex1n/workloop.git"
   },
   "bugs": {
-    "url": "https://github.com/hex1n/taskloop/issues"
+    "url": "https://github.com/hex1n/workloop/issues"
   },
-  "homepage": "https://github.com/hex1n/taskloop#readme"
+  "homepage": "https://github.com/hex1n/workloop#readme"
 }

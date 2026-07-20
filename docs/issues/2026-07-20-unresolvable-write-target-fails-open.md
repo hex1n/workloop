@@ -34,7 +34,7 @@ PWNED
 ```
 
 命令替换真实改写了 `.git/config`,而同一条命令经 `controlPlaneWriteFailure`
-判定为放行。控制面(`.git/`、`.taskloop/`)可被绕过,taskloop 的全部监督随之失效。
+判定为放行。控制面(`.git/`、`.workloop/`)可被绕过,运行时的全部监督随之失效。
 
 各不确定性形态的实测判定(repo 内 `.git/config` 为目标):
 
@@ -48,14 +48,14 @@ PWNED
 | `echo x > .git/con*` | **放行** | glob 展开后命中 |
 | `echo x > $(echo .git)/config` | **放行** | **命中** |
 | ``echo x > `echo .git`/config`` | **放行** | **命中** |
-| `echo x > ~/.taskloop/outcomes.jsonl` | DENY | 命中 |
+| `echo x > ~/.workloop/outcomes.jsonl` | DENY | 命中 |
 
 `analysis.resolution`、`analysis.local.destinations.resolved` 在以上**全部**
 场景均为 `resolved` / `true`,即现有的置信度标志没有任何区分能力。
 
 ## 与 Windows 测试失败的关系
 
-`tests/taskloop.test.mjs:1182`(session-scoped PreToolUse)在 Windows 上失败,
+`tests/workloop.test.mjs:1182`(session-scoped PreToolUse)在 Windows 上失败,
 就是本问题的一个下游症状:未加引号的 Windows 绝对路径被 POSIX 词法吃掉反斜杠,
 目标变成 `C:UsershexinAppData...`,不再匹配保护根。
 
@@ -74,14 +74,14 @@ PWNED
 | 不确定性 | 形态 | 处置 |
 |---|---|---|
 | 完全不可知 | 写目标位置出现 `$(...)` / 反引号 | 无条件拒绝(目标由运行时决定,静态分析无法给出任何保证) |
-| 部分可知 | `$HOME/.git/config`、`.git/con*` | raw 含 `.git` / `.taskloop` 字面量则拒绝 |
+| 部分可知 | `$HOME/.git/config`、`.git/con*` | raw 含 `.git` / `.workloop` 字面量则拒绝 |
 | 可知 | 其余 | 维持现有精确判定 |
 
 设计要点:fail-closed 的范围限定在"命令自身提到了控制面",而非"命令存在任何
 不确定性",使误报面收缩到接近零,同时覆盖上表全部已证实的绕过——包括顺带修复
 Windows 那条测试。
 
-拒绝措辞复用既有的 "resolve the write target"(`taskloop.test.mjs:1197/1198`
+拒绝措辞复用既有的 "resolve the write target"(`workloop.test.mjs:1197/1198`
 已断言该 fragment),将 hook 接口变更压到最小。
 
 ## 未验证事项(执行前必须先查)
@@ -93,5 +93,5 @@ fail-open 模式:`lib/supervision.mjs` 的 1520、1539、1902、1939、1950、20
 ## 备选方案
 
 `canonicalWriteTarget` 全量三态化(返回 `{resolved} | {unresolvable} | null`,
-7 个调用点全改)。类型语义最干净、根治最彻底,但改动面大且误报显著上升。建议在
-taskloop→workloop 改名落地后再评估,避免与大面积机械替换同批进行。
+7 个调用点全改)。类型语义最干净、根治最彻底,但改动面大且误报显著上升。改名已于
+2026-07-20 落地,此项可独立评估。

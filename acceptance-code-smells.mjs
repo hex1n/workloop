@@ -15,7 +15,7 @@ const UNSATISFIED = 3;
 const INDETERMINATE = 2;
 
 function say(message) {
-  process.stdout.write(`TASKLOOP_CRITERION: ${message}\n`);
+  process.stdout.write(`WORKLOOP_CRITERION: ${message}\n`);
 }
 
 const LIB = [
@@ -90,7 +90,7 @@ const probes = {
   "contract-comment": () => install.includes("source checkout's contract"),
   // 16: a missing criterion file gets the friendly message, not a raw ENOENT.
   "criterion-msg": () => {
-    const probeRepo = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-smell-probe-"));
+    const probeRepo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-smell-probe-"));
     try {
       return import("./lib/criterion.mjs").then(({ resolveCriterionFile }) => {
         try { resolveCriterionFile(probeRepo, "missing-check.mjs"); return false; }

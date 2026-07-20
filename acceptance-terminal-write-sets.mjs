@@ -14,7 +14,7 @@ const UNSATISFIED = 3;
 const INDETERMINATE = 2;
 
 function say(message) {
-  process.stdout.write(`TASKLOOP_CRITERION: ${message}\n`);
+  process.stdout.write(`WORKLOOP_CRITERION: ${message}\n`);
 }
 
 const read = (file) => {
@@ -22,25 +22,25 @@ const read = (file) => {
 };
 const skill = read("skills/meta-loop/SKILL.md");
 const agents = read("AGENTS.md");
-const suite = read("tests/taskloop.test.mjs");
+const suite = read("tests/workloop.test.mjs");
 if ([skill, agents, suite].some((text) => text === null)) {
   say("sources unreadable");
   process.exit(INDETERMINATE);
 }
 
-const CLI = path.resolve("bin", "taskloop.mjs");
+const CLI = path.resolve("bin", "workloop.mjs");
 
 // Behavioral seam: drive the source CLI in a temp fixture — a terminal task
 // must project one query row with the documented shape, and corrupt authority
 // must degrade the query to "unknown" rather than an empty list.
 function ledgerProbe() {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "taskloop-tws-"));
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-tws-"));
   try {
     const repo = path.join(root, "repo");
     const home = path.join(root, "home");
     fs.mkdirSync(repo, { recursive: true });
     fs.mkdirSync(home, { recursive: true });
-    const env = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home, TASKLOOP_SESSION_ID: "", CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "" };
+    const env = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home, WORKLOOP_SESSION_ID: "", CLAUDE_CODE_SESSION_ID: "", CODEX_THREAD_ID: "" };
     const git = (args) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
     git(["init", "-q"]);
     fs.writeFileSync(path.join(repo, "check.mjs"), "process.exit(1);\n");
@@ -57,7 +57,7 @@ function ledgerProbe() {
     const row = rows[0];
     if (typeof row.task_id !== "string" || row.outcome !== "abandoned") return false;
     if (!/^\d{4}-\d{2}-\d{2}T/.test(String(row.closed_at)) || !Array.isArray(row.files)) return false;
-    fs.appendFileSync(path.join(repo, ".taskloop", "events.jsonl"), "{broken\n");
+    fs.appendFileSync(path.join(repo, ".workloop", "events.jsonl"), "{broken\n");
     let corrupt;
     try { corrupt = JSON.parse(cli(["ledger", "--json", "--repo", repo]).stdout); } catch { return false; }
     return corrupt?.queries?.terminal_write_sets === "unknown";

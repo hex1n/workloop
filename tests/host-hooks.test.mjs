@@ -11,7 +11,7 @@ test("codex-safe releases a held Stop without emitting resumable stdout", () => 
 
   assert.deepEqual(encoded, {
     stdout: "",
-    stderr: "taskloop: criterion unsatisfied; Codex safe profile cannot resume this session; continue with an external driver or run taskloop achieve explicitly\n",
+    stderr: "workloop: criterion unsatisfied; Codex safe profile cannot resume this session; continue with an external driver or run workloop achieve explicitly\n",
     exitCode: 0,
   });
 });
@@ -22,7 +22,7 @@ test("only explicit blocking profiles encode a held Stop as decision:block", () 
       invocation: { profile, event: "stop" },
       disposition: { event: "stop", action: "hold", code: "criterion_unsatisfied", reason: "criterion unsatisfied" },
     }), {
-      stdout: '{"decision":"block","reason":"taskloop: criterion unsatisfied"}\n',
+      stdout: '{"decision":"block","reason":"workloop: criterion unsatisfied"}\n',
       stderr: "",
       exitCode: 0,
     });
@@ -34,12 +34,12 @@ test("PreToolUse deny, rewrite, and pass stay byte-exact across profiles", () =>
     assert.equal(encodeHook({
       invocation: { profile, event: "pre_tool_use" },
       disposition: { event: "pre_tool_use", action: "deny", reason: "write outside envelope: outside.txt" },
-    }).stdout, '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"taskloop: write outside envelope: outside.txt"}}\n');
+    }).stdout, '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"workloop: write outside envelope: outside.txt"}}\n');
 
     assert.equal(encodeHook({
       invocation: { profile, event: "pre_tool_use" },
-      disposition: { event: "pre_tool_use", action: "rewrite", updatedInput: { command: "export TASKLOOP_SESSION_ID='owner'; taskloop status" } },
-    }).stdout, '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":"export TASKLOOP_SESSION_ID=\'owner\'; taskloop status"}}}\n');
+      disposition: { event: "pre_tool_use", action: "rewrite", updatedInput: { command: "export WORKLOOP_SESSION_ID='owner'; workloop status" } },
+    }).stdout, '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":"export WORKLOOP_SESSION_ID=\'owner\'; workloop status"}}}\n');
 
     assert.deepEqual(encodeHook({
       invocation: { profile, event: "pre_tool_use" },
@@ -61,7 +61,7 @@ test("Stop release is silent and an unknown held Stop is migration-safe", () => 
     disposition: { event: "stop", action: "hold", code: "criterion_unsatisfied", reason: "criterion unsatisfied" },
   }), {
     stdout: "",
-    stderr: "taskloop: criterion unsatisfied; legacy hook invocation cannot safely resume Stop; regenerate hooks with an explicit profile\n",
+    stderr: "workloop: criterion unsatisfied; legacy hook invocation cannot safely resume Stop; regenerate hooks with an explicit profile\n",
     exitCode: 0,
   });
 });
@@ -77,7 +77,7 @@ test("explicit profiles decode payloads and generate self-identifying recipes", 
       permission_mode: "bypassPermissions",
       transcript_path: null,
       tool_name: "Bash",
-      tool_input: { command: "taskloop status" },
+      tool_input: { command: "workloop status" },
     },
   }), {
     profile: "codex-safe",
@@ -89,18 +89,18 @@ test("explicit profiles decode payloads and generate self-identifying recipes", 
     permissionModeRaw: "bypassPermissions",
     transcriptPath: null,
     toolName: "Bash",
-    toolInput: { command: "taskloop status" },
+    toolInput: { command: "workloop status" },
   });
 
-  assert.deepEqual(buildHookRecipe({ profile: "codex-safe", command: 'node "/path/taskloop.mjs"' }), {
+  assert.deepEqual(buildHookRecipe({ profile: "codex-safe", command: 'node "/path/workloop.mjs"' }), {
     hooks: {
-        PreToolUse: [{ matcher: "Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*", hooks: [{ type: "command", command: 'node "/path/taskloop.mjs" hook --profile codex-safe --mode nudge', timeout: 20 }] }],
-        Stop: [{ matcher: "*", hooks: [{ type: "command", command: 'node "/path/taskloop.mjs" hook --profile codex-safe --mode nudge', timeout: 300 }] }],
+        PreToolUse: [{ matcher: "Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', timeout: 20 }] }],
+        Stop: [{ matcher: "*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', timeout: 300 }] }],
     },
   });
 
   assert.throws(() => decodeHook({ profile: "codex-app", payload: {} }), /unsupported hook profile: codex-app/);
-  assert.throws(() => buildHookRecipe({ profile: "unknown", command: "taskloop" }), /explicit hook profile required/);
+  assert.throws(() => buildHookRecipe({ profile: "unknown", command: "workloop" }), /explicit hook profile required/);
 });
 
 test("decodeHook passes through a host command id, preferring explicit command_id over tool_use_id", () => {

@@ -2,5 +2,5 @@
 command -v node >/dev/null 2>&1 || exit 0
 repo="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 node "$repo/install.mjs" >/dev/null 2>&1 || \
-  echo "taskloop post-commit: install failed; run: node install.mjs" >&2
+  echo "workloop post-commit: install failed; run: node install.mjs" >&2
 exit 0

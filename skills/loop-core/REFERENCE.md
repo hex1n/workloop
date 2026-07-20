@@ -1,9 +1,13 @@
 # Loop Core
 
-taskloop supervises one durable **task**. A task owns a goal, executable
-criterion, structured alignment, write envelope, budgets, evidence, reviews,
-attempts, and episodes. The runtime is `~/bin/taskloop.mjs`; task state is
-private repository state under `.taskloop/`, never project policy.
+The workloop runtime supervises one durable **task**. A task owns a goal,
+executable criterion, structured alignment, write envelope, budgets, evidence,
+reviews, attempts, and episodes. The runtime is `~/bin/workloop.mjs`; task
+state is private repository state under `.workloop/`, never project policy.
+
+The flagship skill shares the project's name, so these texts name the two
+apart: **the runtime** always means the supervising CLI, and a bare
+`workloop` always means the skill.
 
 ## Criterion observations
 
@@ -72,7 +76,7 @@ witness, attempt, or round. Steady satisfied never auto-closes on Stop.
 ## Opening a task
 
 ```text
-node ~/bin/taskloop.mjs open --repo <repo> --goal "<outcome>" \
+node ~/bin/workloop.mjs open --repo <repo> --goal "<outcome>" \
   (--criterion "<command>" | --criterion-file <repo-relative-file>) \
   --criterion-policy default \
   --alignment-because "<what the check exercises>" \
@@ -106,7 +110,7 @@ Criterion authorship uses its own `--criterion-authored-by self|user` flag and
 defaults to `self`; `--granted-by` is reserved for grant, waiver, and risk
 provenance. Authorship is an audit claim, not a gate. Failure identity is also
 explicit: binary and tri-state criteria must emit a stable
-`TASKLOOP_CRITERION: <message>` stdout line to participate in the
+`WORKLOOP_CRITERION: <message>` stdout line to participate in the
 three-identical-failures suspension. Without it the signature is null; the
 seven-attempt revision-stagnation guard and configured round budget remain.
 
@@ -125,7 +129,7 @@ This observed-use floor is intentionally conditional on an active PreToolUse
 sensor. Unknown or gapped sensor coverage remains ledger integrity metadata; it
 does not invent an authority use or silently replace the task's declared risk.
 On a Stop-only or plain CLI host, choose the declared risk and explicit review
-policy accordingly because taskloop cannot observe or mediate tool calls. An
+policy accordingly because workloop cannot observe or mediate tool calls. An
 explicit waiver may therefore waive declared risk when no authority use was
 observed; an unused grant does not raise the machine floor.
 
@@ -193,7 +197,7 @@ reviewer identity, counts — as does every quoted criterion clause, convention,
 and hunk, because a translated quotation is no longer evidence.
 
 ```text
-taskloop review --level second-model --reviewer <id> \
+workloop review --level second-model --reviewer <id> \
   --blocking-findings 0 --advisory-findings 1
 ```
 
@@ -228,13 +232,13 @@ current session; `resume --reason` continues a suspended one. Ownership stays
 bound to the host session, while episode-less authority changes such as
 `amend`, `accept-proof-gap`, and `review` record the injected acting agent when
 the host exposes one.
-`TASKLOOP_SESSION_ID` is an explicit override and must carry an identity from
+`WORKLOOP_SESSION_ID` is an explicit override and must carry an identity from
 the host hook payload's domain. Per-host binding mechanics are in
 [HOSTS.md](HOSTS.md).
 
 ## State, projection, and hard cutover
 
-Runtime contract 5 treats `.taskloop/events.jsonl` as the only repository
+Runtime contract 5 treats `.workloop/events.jsonl` as the only repository
 authority. `task.json` is a disposable schema-v3 snapshot; missing or damaged
 snapshots rebuild from the event genesis, while internal event corruption fails
 closed. Schema-2 and orphan/mixed snapshots are never interpreted or migrated.
@@ -246,11 +250,11 @@ it refuses ambiguous dual-name authority.
 Preserve an incompatible snapshot byte-for-byte with explicit authorization:
 
 ```text
-taskloop archive-incompatible-state --repo <repo> \
+workloop archive-incompatible-state --repo <repo> \
   --reason "runtime-contract-5 hard cutover" --granted-by user
 ```
 
-The runtime projects repository events to `~/.taskloop/outcomes.jsonl` on a
+The runtime projects repository events to `~/.workloop/outcomes.jsonl` on a
 best-effort basis. Task adjudication never reads that projection. Rebuild it
 with `sync-outcomes --repo`; audit repository authority with `audit --repo` and
 the HOME projection with `audit-outcomes`. A HOME failure never rolls back a

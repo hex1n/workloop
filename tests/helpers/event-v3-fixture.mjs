@@ -7,7 +7,7 @@ function deterministicId(seed, kind, index = 0) {
   return `${hex.slice(0, 8).join("")}-${hex.slice(8, 12).join("")}-${hex.slice(12, 16).join("")}-${hex.slice(16, 20).join("")}-${hex.slice(20).join("")}`;
 }
 
-function makeTaskOpenedCommand({ seed = "taskloop-v3", index = 0, atEpochMs }) {
+function makeTaskOpenedCommand({ seed = "workloop-v3", index = 0, atEpochMs }) {
   if (!Number.isSafeInteger(atEpochMs) || atEpochMs < 0) throw new Error("fixture requires non-negative integer atEpochMs");
   const at = new Date(atEpochMs).toISOString();
   const taskId = deterministicId(seed, "task", index);
@@ -78,7 +78,7 @@ function makeTaskOpenedCommand({ seed = "taskloop-v3", index = 0, atEpochMs }) {
   };
 }
 
-function* generateRecordFacts({ seed = "taskloop-v3", count, startEpochMs }) {
+function* generateRecordFacts({ seed = "workloop-v3", count, startEpochMs }) {
   if (!Number.isSafeInteger(count) || count < 1) throw new Error("record fixture count must be a positive integer");
   if (!Number.isSafeInteger(startEpochMs) || startEpochMs < 0) throw new Error("record fixture requires non-negative integer startEpochMs");
   const opened = makeTaskOpenedCommand({ seed, index: 0, atEpochMs: startEpochMs });
@@ -116,7 +116,7 @@ function* generateRecordFacts({ seed = "taskloop-v3", count, startEpochMs }) {
   }
 }
 
-function makeTranscriptBytes({ seed = "taskloop-v3", rows, lineEnding = "\n", finalPartial = false }) {
+function makeTranscriptBytes({ seed = "workloop-v3", rows, lineEnding = "\n", finalPartial = false }) {
   if (!Number.isSafeInteger(rows) || rows < 0) throw new Error("transcript fixture rows must be a non-negative integer");
   if (!new Set(["\n", "\r\n"]).has(lineEnding)) throw new Error("transcript fixture line ending must be LF or CRLF");
   const lines = [];

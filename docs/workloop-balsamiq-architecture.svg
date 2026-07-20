@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1400" viewBox="0 0 1600 1400" role="img" aria-labelledby="title desc">
-  <title id="title">taskloop 仓库架构图（Balsamiq 手绘风格）</title>
+  <title id="title">workloop 仓库架构图（Balsamiq 手绘风格）</title>
   <desc id="desc">展示 Agent 宿主、portable skills、CLI 与 hooks、application 装配层、核心叶子模块、任务状态与持久化之间的关系。</desc>
   <defs>
     <filter id="rough" x="-3%" y="-3%" width="106%" height="106%">
@@ -36,7 +36,7 @@
   </defs>
 
   <rect width="1600" height="1400" fill="#faf9f5" filter="url(#paper)"/>
-  <text x="60" y="58" class="ink title">taskloop — 工作循环内核 / Runtime Stop Gate</text>
+  <text x="60" y="58" class="ink title">workloop — 工作循环内核 / Runtime Stop Gate</text>
   <text x="62" y="88" class="ink body">依赖为零的 Node.js CLI；约束写入，执行新鲜判据，裁决任务是否具备关闭资格</text>
 
   <!-- External host -->
@@ -60,7 +60,7 @@
   <!-- Entry adapters -->
   <rect x="720" y="120" width="355" height="205" class="box blue"/>
   <text x="745" y="158" class="ink h1">入口与宿主适配</text>
-  <text x="745" y="197" class="ink h2">bin/taskloop.mjs</text>
+  <text x="745" y="197" class="ink h2">bin/workloop.mjs</text>
   <text x="765" y="222" class="ink body">薄进程入口 → main()</text>
   <text x="745" y="259" class="ink h2">PreToolUse / Stop Hooks</text>
   <text x="765" y="284" class="ink body">写入前置检查 / 停止裁决</text>
