@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { runCriterionSource } from "../lib/criterion.mjs";
 
 const ROOT = path.resolve(".");
 const INSTALLER = path.join(ROOT, "install.mjs");
@@ -47,13 +48,13 @@ function installedFixture(t) {
   return { ...fixture, shim: path.join(fixture.home, "bin", "workloop.mjs") };
 }
 
-function pidRegisteredWithin(pidFile, timeoutMs) {
+function pidsRegisteredWithin(pidFile, timeoutMs) {
   const idle = new Int32Array(new SharedArrayBuffer(4));
   const deadline = Date.now() + timeoutMs;
   for (;;) {
     try {
-      const pid = Number(fs.readFileSync(pidFile, "utf8").trim());
-      if (Number.isInteger(pid) && pid > 0) return pid;
+      const pids = JSON.parse(fs.readFileSync(pidFile, "utf8"));
+      if ([pids.parent, pids.descendant].every((pid) => Number.isInteger(pid) && pid > 0)) return pids;
     } catch { /* the child has not registered a pid yet */ }
     if (Date.now() >= deadline) return null;
     Atomics.wait(idle, 0, 0, 50);
@@ -150,8 +151,22 @@ test("Windows criterion timeout terminates the child and returns promptly", { sk
   fs.mkdirSync(repo, { recursive: true });
   assert.equal(spawnSync("git", ["init", "-q"], { cwd: repo }).status, 0);
   const pidFile = path.join(fixture.root, "criterion.pid");
-  fs.writeFileSync(path.join(repo, "slow.mjs"), `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);\n`);
+  fs.writeFileSync(path.join(repo, "slow.mjs"), [
+    'import fs from "node:fs";',
+    'import { spawn } from "node:child_process";',
+    'const descendant = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore", windowsHide: true });',
+    `fs.writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify({ parent: process.pid, descendant: descendant.pid }));`,
+    'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);',
+  ].join("\n"));
   fs.writeFileSync(path.join(repo, "work.txt"), "start\n");
+
+  let registered = null;
+  t.after(() => {
+    for (const pid of [registered?.parent, registered?.descendant]) {
+      if (!Number.isInteger(pid)) continue;
+      try { process.kill(pid, "SIGKILL"); } catch { /* expected after process-tree cleanup */ }
+    }
+  });
 
   const started = Date.now();
   const opened = runNode(fixture.shim, ["open", "--repo", repo, "--goal", "timeout", "--criterion-file", "slow.mjs", "--criterion-policy", "default", "--criterion-timeout-seconds", "5", "--alignment-because", "the checker exercises timeout handling", "--files", "work.txt", "--risk", "routine", "--risk-reason", "isolated fixture"], { cwd: repo, env: fixture.env, timeout: 30_000 });
@@ -161,9 +176,52 @@ test("Windows criterion timeout terminates the child and returns promptly", { sk
   // The child registers its pid before sleeping, so a termination that failed
   // would leave that write to land during this poll. An absent pid therefore
   // means the child died before it ran, not that a live child went unnoticed.
-  const childPid = pidRegisteredWithin(pidFile, 5_000);
-  if (childPid === null) t.diagnostic("criterion child was terminated before it registered a pid");
-  else assert.throws(() => process.kill(childPid, 0), (error) => error?.code === "ESRCH", `criterion child ${childPid} is still alive`);
+  registered = pidsRegisteredWithin(pidFile, 5_000);
+  if (registered === null) t.diagnostic("criterion process tree was terminated before it registered pids");
+  else {
+    for (const [kind, pid] of Object.entries(registered)) {
+      assert.throws(() => process.kill(pid, 0), (error) => error?.code === "ESRCH", `criterion ${kind} ${pid} is still alive`);
+    }
+  }
+});
+
+test("Windows criterion timeout fallback terminates descendants after the first tree-kill attempt fails", { skip: !WINDOWS }, (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-windows-tree-fallback-"));
+  const repo = path.join(root, "repo");
+  const pidFile = path.join(root, "criterion-pids.json");
+  fs.mkdirSync(repo);
+  let registered = null;
+  t.after(() => {
+    for (const pid of [registered?.parent, registered?.descendant]) {
+      if (!Number.isInteger(pid)) continue;
+      try { process.kill(pid, "SIGKILL"); } catch { /* expected after process-tree cleanup */ }
+    }
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+  fs.writeFileSync(path.join(repo, "slow.mjs"), [
+    'import fs from "node:fs";',
+    'import { spawn } from "node:child_process";',
+    'const descendant = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore", windowsHide: true });',
+    `fs.writeFileSync(${JSON.stringify(pidFile)}, JSON.stringify({ parent: process.pid, descendant: descendant.pid }));`,
+    'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);',
+  ].join("\n"));
+
+  const started = Date.now();
+  const observation = runCriterionSource(
+    { kind: "file", value: "slow.mjs" },
+    repo,
+    0.3,
+    "binary",
+    { deadlineEpochMs: Date.now() + 6_000, runnerFailFirstTreeKill: true },
+  );
+  assert.equal(observation.verdict, "indeterminate");
+  assert.equal(observation.execution.execution_error, "timeout");
+  assert.ok(Date.now() - started < 5_000, `fallback timeout took ${Date.now() - started}ms`);
+  registered = pidsRegisteredWithin(pidFile, 5_000);
+  assert.notEqual(registered, null, "criterion process tree did not register pids");
+  for (const [kind, pid] of Object.entries(registered)) {
+    assert.throws(() => process.kill(pid, 0), (error) => error?.code === "ESRCH", `criterion ${kind} ${pid} survived the fallback tree kill`);
+  }
 });
 
 test("[W06] Windows codex-safe Stop releases without launching a long criterion", { skip: !WINDOWS }, (t) => {

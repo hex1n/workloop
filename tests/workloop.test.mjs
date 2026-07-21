@@ -64,6 +64,39 @@ test("repository snapshots and criterion startup honor an elapsed runtime deadli
   assert.equal(observation.execution.execution_error, "timeout");
   assert.equal(fs.existsSync(sentinel), false);
   assert.ok(Date.now() - started < 500, "elapsed snapshot deadline must not start the criterion");
+
+  const nearlyElapsedStarted = Date.now();
+  const nearlyElapsed = runCriterionSource(
+    { kind: "file", value: "check.mjs" },
+    repo,
+    60,
+    "binary",
+    { deadlineEpochMs: Date.now() + 75 },
+  );
+  assert.equal(nearlyElapsed.verdict, "indeterminate");
+  assert.equal(nearlyElapsed.execution.execution_error, "timeout");
+  assert.equal(fs.existsSync(sentinel), false);
+  assert.ok(Date.now() - nearlyElapsedStarted < 500, "insufficient cleanup budget must not start the criterion");
+});
+
+test("criterion runner startup time is charged to the absolute execution deadline", (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-runner-deadline-"));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const sentinel = path.join(repo, "started");
+  fs.writeFileSync(path.join(repo, "check.mjs"), `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(sentinel)}, "started"); process.exit(0);\n`);
+
+  const started = Date.now();
+  const observation = runCriterionSource(
+    { kind: "file", value: "check.mjs" },
+    repo,
+    60,
+    "binary",
+    { deadlineEpochMs: Date.now() + 5_150, runnerStartupDelayMs: 250 },
+  );
+  assert.equal(observation.verdict, "indeterminate");
+  assert.equal(observation.execution.execution_error, "timeout");
+  assert.equal(fs.existsSync(sentinel), false);
+  assert.ok(Date.now() - started < 1_000, "runner startup must not extend the execution deadline");
 });
 
 test("locked repository revalidation detects a same-size ignored-file rewrite", (t) => {
@@ -2278,7 +2311,7 @@ test("criterion timeout hard-kills a SIGTERM-trapping parent without waiting for
     repo,
     0.3,
     "binary",
-    { deadlineEpochMs: Date.now() + 600 },
+    { deadlineEpochMs: Date.now() + 6_000 },
   );
   const duration = Date.now() - started;
   descendantPid = Number.parseInt(fs.readFileSync(pidFile, "utf8"), 10);
