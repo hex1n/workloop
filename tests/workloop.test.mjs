@@ -6,7 +6,7 @@ import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
-import { criterionFileInvocation, criterionMessage, criterionMetadata, expandWindowsGlobs, mapExecution, repoSnapshot, runCriterionSource } from "../lib/criterion.mjs";
+import { criterionFileInvocation, criterionMessage, criterionMetadata, expandWindowsGlobs, mapExecution, repoSnapshot, runCriterionSource, validateRepoSnapshot } from "../lib/criterion.mjs";
 import { POLICY_PRESETS, assertV3TaskProjection, closureProjection, constructPolicy, createTask, criterionDefinitionHash, decide, evolveAll, machineRiskFloor, policyName, projectBudgetExhaustion, projectProofAssurance, projectReviewRequirement, validatePolicy } from "../lib/task-engine.mjs";
 import { archiveIncompatibleState, loadTask } from "../lib/task-store.mjs";
 import { commandShapes, envelopeOverlap, siblingWorktreeOpenTasks } from "../lib/supervision.mjs";
@@ -48,6 +48,35 @@ test("repository snapshots cover ignored content without requiring Git and exclu
 
   fs.writeFileSync(path.join(repo, "ignored.txt"), "after!\n");
   assert.notEqual(repoSnapshot(repo, before).hash, before.hash);
+});
+
+test("repository snapshots and criterion startup honor an elapsed runtime deadline", (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-repo-deadline-"));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const sentinel = path.join(repo, "started");
+  fs.writeFileSync(path.join(repo, "check.mjs"), `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(sentinel)}, "started"); process.exit(0);\n`);
+  const snapshot = repoSnapshot(repo, null, { deadlineEpochMs: Date.now() });
+  assert.equal(snapshot.hash, null);
+  assert.equal(snapshot.error.code, "ETIMEDOUT");
+  const started = Date.now();
+  const observation = runCriterionSource({ kind: "file", value: "check.mjs" }, repo, 60, "binary", { deadlineEpochMs: Date.now() });
+  assert.equal(observation.verdict, "indeterminate");
+  assert.equal(observation.execution.execution_error, "timeout");
+  assert.equal(fs.existsSync(sentinel), false);
+  assert.ok(Date.now() - started < 500, "elapsed snapshot deadline must not start the criterion");
+});
+
+test("locked repository revalidation detects a same-size ignored-file rewrite", (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-repo-revalidate-"));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(repo, ".gitignore"), "ignored.txt\n");
+  fs.writeFileSync(path.join(repo, "ignored.txt"), "before\n");
+  const snapshot = repoSnapshot(repo);
+  fs.writeFileSync(path.join(repo, "ignored.txt"), "after!\n");
+  const validation = validateRepoSnapshot(repo, snapshot, { deadlineEpochMs: Date.now() + 50 });
+  assert.equal(validation.matches, false);
+  assert.deepEqual(validation.changed_paths, ["ignored.txt"]);
+  assert.equal(validation.error, null);
 });
 
 function run(args, { cwd = ROOT, env = process.env, input = "" } = {}) {
@@ -614,6 +643,28 @@ test("release-only Stop profiles return without starting or recording the criter
     assert.deepEqual(fs.readFileSync(eventsPath), before);
     assert.equal(loadTask(fx.repo).spent.rounds, 0);
   }
+});
+
+test("release-only Stop degrades open when the evidence lock is held", (t) => {
+  const fx = fixture(t);
+  assert.equal(open(fx).status, 0);
+  const claim = path.join(fx.repo, ".workloop", `${EVIDENCE_LOCK_DIR}.claim`);
+  fs.writeFileSync(claim, JSON.stringify({ pid: process.pid, token: "paused-live-evidence-owner" }));
+  const before = loadTask(fx.repo);
+  const started = Date.now();
+  const stopped = run(["hook", "--profile", "codex-safe"], {
+    cwd: fx.repo,
+    env: fx.env,
+    input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }),
+  });
+  const duration = Date.now() - started;
+  assert.equal(stopped.status, 0, stopped.stderr);
+  assert.equal(stopped.stdout, "");
+  assert.ok(duration < 500, `release-only Stop waited ${duration}ms for optional evidence`);
+  const after = loadTask(fx.repo);
+  assert.equal(after.task_revision, before.task_revision);
+  assert.equal(after.artifact_revision, before.artifact_revision);
+  assert.equal(after.spent.rounds, before.spent.rounds);
 });
 
 test("hard Stop refuses criteria above its inline budget without starting them", (t) => {
@@ -2122,6 +2173,40 @@ test("Stop discards a stale observation after a direct ignored-file write bypass
   assert.deepEqual(after.criterion.last_observation.changed_paths, ["ignored.txt"]);
 });
 
+test("a concurrent suspension cannot erase direct-write side-effect evidence", async (t) => {
+  const fx = fixture(t);
+  const sentinel = path.join(fx.root, "suspend-write-started");
+  const ignored = path.join(fx.repo, "ignored.txt");
+  fs.writeFileSync(path.join(fx.repo, ".gitignore"), "ignored.txt\n");
+  fs.writeFileSync(ignored, "before\n");
+  fs.writeFileSync(path.join(fx.repo, "slow.mjs"), `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(sentinel)}, "started"); Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),0,0,800); process.exit(1);\n`);
+  assert.equal(open(fx, "default", ["--criterion-timeout-seconds", "5"]).status, 0);
+  assert.equal(run(["amend", "--repo", fx.repo, "--criterion-file", "slow.mjs", "--reason", "dual-race characterization"], { env: fx.env }).status, 0);
+  const before = loadTask(fx.repo);
+  const verification = runAsync(["verify", "--record", "--repo", fx.repo], { env: fx.env });
+  await waitForPath(sentinel);
+  fs.writeFileSync(ignored, "after!\n");
+  const suspended = run([
+    "suspend", "--repo", fx.repo,
+    "--reason", "needs-input",
+    "--remaining", "finish the concurrency probe",
+    "--failure", "criterion is deliberately still running",
+    "--next-action", "inspect retained mutation evidence",
+  ], { env: fx.env });
+  const completed = await verification;
+  assert.equal(suspended.status, 0, suspended.stderr);
+  assert.equal(completed.status, 2, completed.stderr);
+  const output = JSON.parse(completed.stdout);
+  assert.equal(output.status, "criterion_observation_stale");
+  assert.equal(output.side_effect_recorded, true);
+  const after = loadTask(fx.repo);
+  assert.equal(after.lifecycle.state, "suspended");
+  assert.equal(after.artifact_revision, before.artifact_revision + 1);
+  assert.equal(after.spent.rounds, before.spent.rounds);
+  assert.equal(after.criterion.last_observation.execution.execution_error, "criterion_side_effect");
+  assert.deepEqual(after.criterion.last_observation.changed_paths, ["ignored.txt"]);
+});
+
 test("criterion lease makes hard Stop single-flight while release-only Stop remains immediate", async (t) => {
   const fx = fixture(t);
   const sentinel = path.join(fx.root, "single-flight-started");
@@ -2166,6 +2251,51 @@ test("hard Stop child timeout is runtime-bounded and releases the criterion leas
   assert.equal(fs.existsSync(path.join(fx.repo, ".workloop", ".criterion.lock")), false);
   const childPid = Number(fs.readFileSync(pidFile, "utf8"));
   assert.throws(() => process.kill(childPid, 0), (error) => error?.code === "ESRCH", `criterion child ${childPid} is still alive`);
+});
+
+test("criterion timeout hard-kills a SIGTERM-trapping parent without waiting for descendant pipes", { skip: process.platform === "win32" }, (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-hard-timeout-"));
+  const pidFile = path.join(os.tmpdir(), `workloop-hard-timeout-descendant-${process.pid}-${Date.now()}`);
+  let descendantPid = null;
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  t.after(() => {
+    if (Number.isInteger(descendantPid)) {
+      try { process.kill(descendantPid, "SIGKILL"); } catch { /* expected after process-tree cleanup */ }
+    }
+    fs.rmSync(pidFile, { force: true });
+  });
+  fs.writeFileSync(path.join(repo, "trap.mjs"), [
+    'import fs from "node:fs";',
+    'import { spawn } from "node:child_process";',
+    'process.on("SIGTERM", () => {});',
+    `const descendant = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: ["ignore", "inherit", "inherit"] });`,
+    `fs.writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));`,
+    'Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60_000);',
+  ].join("\n"));
+  const started = Date.now();
+  const observation = runCriterionSource(
+    { kind: "file", value: "trap.mjs" },
+    repo,
+    0.3,
+    "binary",
+    { deadlineEpochMs: Date.now() + 600 },
+  );
+  const duration = Date.now() - started;
+  descendantPid = Number.parseInt(fs.readFileSync(pidFile, "utf8"), 10);
+  const livenessDeadline = Date.now() + 500;
+  let descendantAlive = true;
+  while (Date.now() < livenessDeadline) {
+    try { process.kill(descendantPid, 0); }
+    catch (error) {
+      if (error?.code === "ESRCH") { descendantAlive = false; break; }
+      throw error;
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 10);
+  }
+  assert.equal(observation.verdict, "indeterminate");
+  assert.equal(observation.execution.execution_error, "timeout");
+  assert.ok(duration < 1_000, `hard timeout waited ${duration}ms for a trapped parent or descendant pipe`);
+  assert.equal(descendantAlive, false, `criterion descendant ${descendantPid} survived the process-tree timeout`);
 });
 
 test("verify --record and achieve release the task lock while criterion runs", async (t) => {
