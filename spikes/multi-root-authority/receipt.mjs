@@ -41,18 +41,53 @@ function exactKeys(value, fields) {
     && JSON.stringify(Object.keys(value).sort()) === JSON.stringify([...fields].sort());
 }
 
-function gitHead(root) {
-  const result = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
-  if (result.status !== 0) fail("GIT_HEAD_UNAVAILABLE", result.stderr.trim());
-  return result.stdout.trim();
+function runGit(root, args, code, encoding) {
+  const result = spawnSync("git", args, { cwd: root, encoding });
+  if (result.error) fail(code, result.error.message);
+  if (result.status !== 0) {
+    const stderr = result.stderr == null ? "" : String(result.stderr).trim();
+    fail(code, stderr || "git exited with status " + String(result.status));
+  }
+  return result.stdout;
 }
 
-function sourceManifest(root) {
-  const entries = SOURCE_PATHS.map((relative) => {
-    const bytes = fs.readFileSync(path.join(root, relative));
+function gitText(root, args, code) {
+  return String(runGit(root, args, code, "utf8")).trim();
+}
+
+function gitBytes(root, args, code) {
+  return runGit(root, args, code);
+}
+
+function gitHead(root) {
+  return gitText(root, ["rev-parse", "--verify", "HEAD"], "GIT_HEAD_UNAVAILABLE");
+}
+
+function sourceManifest(root, sourcePaths = SOURCE_PATHS) {
+  const entries = sourcePaths.map((relative) => {
+    const bytes = gitBytes(root, ["cat-file", "blob", "HEAD:" + relative], "SOURCE_OBJECT_UNAVAILABLE");
     return { path: relative, sha256: sha256Hex(bytes), size: bytes.length };
   });
   return { entries, manifest_digest: sha256Hex(canonicalJson(entries)) };
+}
+
+function assertPortableSourceAttributes(root, relative) {
+  const output = String(runGit(root, ["check-attr", "-z", "filter", "ident", "working-tree-encoding", "--", relative], "SOURCE_ATTRIBUTE_UNAVAILABLE", "utf8"));
+  const fields = output.split("\0");
+  for (let index = 0; index + 2 < fields.length; index += 3) {
+    const attribute = fields[index + 1];
+    const value = fields[index + 2];
+    if (value !== "unspecified" && value !== "unset") fail("UNSUPPORTED_SOURCE_ATTRIBUTE", relative + " uses unsupported " + attribute + "=" + value);
+  }
+}
+
+function assertSourceWorktreeMatchesHead(root, sourcePaths = SOURCE_PATHS) {
+  for (const relative of sourcePaths) {
+    assertPortableSourceAttributes(root, relative);
+    const committed = gitText(root, ["rev-parse", "HEAD:" + relative], "SOURCE_OBJECT_UNAVAILABLE");
+    const working = gitText(root, ["hash-object", "--path=" + relative, "--", relative], "SOURCE_WORKTREE_UNAVAILABLE");
+    if (working !== committed) fail("SOURCE_WORKTREE_MISMATCH", relative + " differs from the checked-out commit");
+  }
 }
 
 function normalizedPlatform(label) {
@@ -77,6 +112,7 @@ function buildReceipt(root, env = process.env) {
   }
   if (env.GITHUB_REPOSITORY !== TRUSTED_REPOSITORY) fail("UNTRUSTED_REPOSITORY", "receipt repository is not the canonical repository");
   if (!env.GITHUB_WORKFLOW_REF.startsWith(TRUSTED_REPOSITORY + "/" + TRUSTED_WORKFLOW_PATH + "@")) fail("UNTRUSTED_WORKFLOW", "receipt workflow is not canonical");
+  assertSourceWorktreeMatchesHead(root);
   const manifest = sourceManifest(root);
   return {
     receipt_schema_version: 1,
@@ -118,11 +154,12 @@ function validateReceipt(receipt, expected, manifestDigest) {
 function aggregateReceipts(root, inputDirectory, env = process.env) {
   if (env.GITHUB_REPOSITORY !== TRUSTED_REPOSITORY) fail("UNTRUSTED_REPOSITORY", "aggregate repository is not canonical");
   if (!String(env.GITHUB_WORKFLOW_REF).startsWith(TRUSTED_REPOSITORY + "/" + TRUSTED_WORKFLOW_PATH + "@")) fail("UNTRUSTED_WORKFLOW", "aggregate workflow is not canonical");
-  const manifest = sourceManifest(root);
   const expectedFiles = REQUIRED_CELLS.map(([platform, node]) => `receipt-${platform}-node-${node}.json`).sort();
   const actualFiles = fs.readdirSync(inputDirectory).filter((name) => name.endsWith(".json")).sort();
   if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) fail("RECEIPT_SET_MISMATCH", `expected ${expectedFiles.join(", ")}; got ${actualFiles.join(", ")}`);
   if (gitHead(root) !== env.GITHUB_SHA) fail("CHECKOUT_SHA_MISMATCH", "aggregate checkout does not equal GITHUB_SHA");
+  assertSourceWorktreeMatchesHead(root);
+  const manifest = sourceManifest(root);
   const cells = [];
   for (const [platform, nodeMajor] of REQUIRED_CELLS) {
     const receipt = JSON.parse(fs.readFileSync(path.join(inputDirectory, `receipt-${platform}-node-${nodeMajor}.json`), "utf8"));
@@ -162,6 +199,7 @@ function validateAggregateProof(root, proof) {
   if (proof.repository !== TRUSTED_REPOSITORY || !String(proof.workflow_ref).startsWith(TRUSTED_REPOSITORY + "/" + TRUSTED_WORKFLOW_PATH + "@")) fail("UNTRUSTED_PROOF", "proof repository or workflow is not canonical");
   if (proof.proof_schema_version !== 1 || proof.status !== "passed" || !/^[0-9a-f]{40}$/.test(proof.candidate_sha)) fail("INVALID_PROOF", "invalid proof header");
   if (gitHead(root) !== proof.candidate_sha) fail("CHECKOUT_SHA_MISMATCH", "current HEAD does not equal the attested candidate SHA");
+  assertSourceWorktreeMatchesHead(root);
   const manifest = sourceManifest(root);
   if (canonicalJson(proof.source_manifest) !== canonicalJson(manifest)) fail("SOURCE_MANIFEST_MISMATCH", "current spike sources differ from attested candidate");
   if (!Array.isArray(proof.cells) || proof.cells.length !== REQUIRED_CELLS.length) fail("INVALID_PROOF", "proof must contain eight cells");
@@ -190,6 +228,7 @@ export {
   REQUIRED_CELLS,
   SOURCE_PATHS,
   aggregateReceipts,
+  assertSourceWorktreeMatchesHead,
   buildReceipt,
   receiptFileName,
   sourceManifest,
