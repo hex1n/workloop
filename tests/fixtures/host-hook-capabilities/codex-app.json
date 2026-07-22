@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "capability_id": "hostcap:v1:codex-app-code-mode-2026-07-22",
+  "host": "codex-app",
+  "profile": "codex-safe",
+  "surface": "code-mode",
+  "runtime_version": "0.144.5",
+  "verification": "degraded",
+  "exhaustive_surface": false,
+  "surface_identity_reliable": false,
+  "correlation_field": "tool_use_id-when-hook-visible",
+  "receipt_semantics": "Nested shell calls can be hook-visible, while specialized nested patch calls can land changes without a matching host hook receipt.",
+  "observations": [
+    {
+      "canonical_tool": "shell_command",
+      "outcome": "success",
+      "pre_observed": true,
+      "post_observed": true,
+      "failure_observed": false,
+      "correlation": "same-id",
+      "completion_signal": "post-response-present",
+      "receipt_quality": "tool_specific"
+    },
+    {
+      "canonical_tool": "apply_patch-specialized",
+      "outcome": "success",
+      "pre_observed": false,
+      "post_observed": false,
+      "failure_observed": false,
+      "correlation": "unavailable",
+      "completion_signal": "artifact-only",
+      "receipt_quality": "reconciled"
+    }
+  ],
+  "sanitized_at": "2026-07-22T00:00:00+08:00"
+}

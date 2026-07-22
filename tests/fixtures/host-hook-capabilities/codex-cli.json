@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "capability_id": "hostcap:v1:codex-0.144.5-codex-safe-direct",
+  "host": "codex",
+  "profile": "codex-safe",
+  "surface": "direct-function-tool",
+  "runtime_version": "0.144.5",
+  "verification": "degraded",
+  "exhaustive_surface": false,
+  "surface_identity_reliable": false,
+  "correlation_field": "tool_use_id",
+  "receipt_semantics": "A correlated PostToolUse proves that the direct tool returned; repository reconciliation remains authoritative for artifact state.",
+  "observations": [
+    {
+      "canonical_tool": "apply_patch",
+      "outcome": "success",
+      "pre_observed": true,
+      "post_observed": true,
+      "failure_observed": false,
+      "correlation": "same-id",
+      "completion_signal": "post-response-present",
+      "receipt_quality": "tool_specific"
+    },
+    {
+      "canonical_tool": "apply_patch",
+      "outcome": "failure",
+      "pre_observed": true,
+      "post_observed": false,
+      "failure_observed": false,
+      "correlation": "pre-only",
+      "completion_signal": "absent",
+      "receipt_quality": "unknown"
+    }
+  ],
+  "sanitized_at": "2026-07-22T00:00:00+08:00"
+}

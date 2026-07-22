@@ -1,0 +1,46 @@
+{
+  "schema_version": 1,
+  "capability_id": "hostcap:v1:claude-2.1.216-pending-live-probe",
+  "host": "claude-code",
+  "profile": "claude",
+  "surface": "direct-tools",
+  "runtime_version": "2.1.216",
+  "verification": "unverified",
+  "exhaustive_surface": false,
+  "surface_identity_reliable": true,
+  "correlation_field": "tool_use_id-pending-verification",
+  "receipt_semantics": "No completion authority is granted until success, failure, and partial-write-before-failure are reproduced on the release candidate.",
+  "observations": [
+    {
+      "canonical_tool": "Write",
+      "outcome": "pending",
+      "pre_observed": "unknown",
+      "post_observed": "unknown",
+      "failure_observed": "unknown",
+      "correlation": "pending",
+      "completion_signal": "pending",
+      "receipt_quality": "unknown"
+    },
+    {
+      "canonical_tool": "Edit",
+      "outcome": "pending",
+      "pre_observed": "unknown",
+      "post_observed": "unknown",
+      "failure_observed": "unknown",
+      "correlation": "pending",
+      "completion_signal": "pending",
+      "receipt_quality": "unknown"
+    },
+    {
+      "canonical_tool": "Bash-partial-write-before-failure",
+      "outcome": "pending",
+      "pre_observed": "unknown",
+      "post_observed": "unknown",
+      "failure_observed": "unknown",
+      "correlation": "pending",
+      "completion_signal": "pending",
+      "receipt_quality": "unknown"
+    }
+  ],
+  "sanitized_at": "2026-07-22T00:00:00+08:00"
+}
