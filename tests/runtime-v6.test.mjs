@@ -36,9 +36,12 @@ function digest(target) {
 }
 
 const AT = "2026-07-22T00:00:00.000Z";
+const CAPTURED_AT_MS = Date.parse(AT);
+const NEXT_CAPTURED_AT_MS = CAPTURED_AT_MS + 1_000;
 const FILE_DIGEST = `sha256:${"3".repeat(64)}`;
 const EMPTY_CHECKPOINT = artifactCheckpointId([]);
-const NEXT_CHECKPOINT = artifactCheckpointId([{ path: "work.txt", hash: FILE_DIGEST }]);
+const FILE_ENTRY = Object.freeze({ kind: "file", hash: FILE_DIGEST });
+const NEXT_CHECKPOINT = artifactCheckpointId([{ path: "work.txt", ...FILE_ENTRY }]);
 
 function observation(verdict = "unsatisfied") {
   return {
@@ -68,7 +71,7 @@ function openCommand() {
     },
     budget: { rounds: 8, writes: null, wall_clock_minutes: null, output_tokens: null },
     episodes: [{ episode_id: randomUUID(), host_session_id: "sanitized", started_at: AT, ended_at: null, start_task_revision: 1, end_task_revision: null, output_tokens_estimate: 0 }],
-    artifactBaseline: { checkpoint_id: EMPTY_CHECKPOINT, entries: [] },
+    artifactBaseline: { checkpoint_id: EMPTY_CHECKPOINT, captured_at_ms: CAPTURED_AT_MS, entries: [] },
     coverageBasis: { history_requirement: "artifact_only", artifact_state: "full", mutation_history: "unknown", prewrite_enforcement: "unknown" },
   };
 }
@@ -238,8 +241,8 @@ test("Contract 6 projection separates authorization, completion, and artifact mu
 
   const reconciliation = decide(state, {
     type: "reconcile-artifacts", taskId: state.task_id, at: "2026-07-22T00:00:03.000Z",
-    checkpointId: NEXT_CHECKPOINT, fromCheckpoint: EMPTY_CHECKPOINT, toCheckpoint: NEXT_CHECKPOINT,
-    changedEntries: [{ path: "work.txt", before: null, after: FILE_DIGEST }], changedPaths: ["work.txt"],
+    checkpointId: NEXT_CHECKPOINT, capturedAtMs: NEXT_CAPTURED_AT_MS, fromCheckpoint: EMPTY_CHECKPOINT, toCheckpoint: NEXT_CHECKPOINT,
+    changedEntries: [{ path: "work.txt", before: null, after: FILE_ENTRY }], changedPaths: ["work.txt"],
     currentScopeViolations: [], coverage: "full", reason: "post-tool",
   });
   state = evolveAll(state, reconciliation.events);
@@ -257,7 +260,7 @@ test("Contract 6 projection separates authorization, completion, and artifact mu
   assert.equal(state.evidence.evidence_revision, 2);
   assert.equal(state.capability_leases[0].status, "closed");
   assert.deepEqual(state.evidence.touched_files, ["work.txt"]);
-  assert.deepEqual(state.artifact_checkpoint, { checkpoint_id: NEXT_CHECKPOINT, entries: [{ path: "work.txt", hash: FILE_DIGEST }] });
+  assert.deepEqual(state.artifact_checkpoint, { checkpoint_id: NEXT_CHECKPOINT, captured_at_ms: NEXT_CAPTURED_AT_MS, entries: [{ path: "work.txt", ...FILE_ENTRY }] });
 });
 
 test("Contract 6 rejects cross-contract event versions", () => {
@@ -279,6 +282,7 @@ test("repository snapshots become deterministic persisted checkpoints and deltas
   fs.writeFileSync(path.join(repo, "a.txt"), "stable\n");
 
   const before = artifactCheckpointFromSnapshot(repoSnapshot(repo));
+  assert.ok(Number.isSafeInteger(before.captured_at_ms));
   assert.deepEqual(before.entries.map((entry) => entry.path), ["a.txt", "b.txt"]);
   assert.match(before.checkpoint_id, /^sha256:[0-9a-f]{64}$/u);
   assert.ok(before.entries.every((entry) => /^sha256:[0-9a-f]{64}$/u.test(entry.hash)));
@@ -286,12 +290,27 @@ test("repository snapshots become deterministic persisted checkpoints and deltas
   fs.rmSync(path.join(repo, "b.txt"));
   fs.writeFileSync(path.join(repo, "c.txt"), "after\n");
   const after = artifactCheckpointFromSnapshot(repoSnapshot(repo));
+  assert.ok(after.captured_at_ms >= before.captured_at_ms);
   const delta = artifactCheckpointDelta(before, after);
   assert.deepEqual(delta.changed_paths, ["b.txt", "c.txt"]);
   assert.deepEqual(delta.changed_entries, [
-    { path: "b.txt", before: before.entries[1].hash, after: null },
-    { path: "c.txt", before: null, after: after.entries[1].hash },
+    { path: "b.txt", before: { kind: before.entries[1].kind, hash: before.entries[1].hash }, after: null },
+    { path: "c.txt", before: null, after: { kind: after.entries[1].kind, hash: after.entries[1].hash } },
   ]);
+
+  fs.writeFileSync(path.join(repo, "shape"), "link:y");
+  const regular = artifactCheckpointFromSnapshot(repoSnapshot(repo));
+  fs.rmSync(path.join(repo, "shape"));
+  fs.symlinkSync("y", path.join(repo, "shape"));
+  const linked = artifactCheckpointFromSnapshot(repoSnapshot(repo));
+  assert.notEqual(regular.checkpoint_id, linked.checkpoint_id);
+  assert.equal(regular.entries.find((entry) => entry.path === "shape").kind, "file");
+  assert.equal(linked.entries.find((entry) => entry.path === "shape").kind, "symlink");
+  assert.deepEqual(artifactCheckpointDelta(regular, linked).changed_entries, [{
+    path: "shape",
+    before: { kind: "file", hash: regular.entries.find((entry) => entry.path === "shape").hash },
+    after: { kind: "symlink", hash: linked.entries.find((entry) => entry.path === "shape").hash },
+  }]);
 });
 
 test("an unowned reconciliation records a permanent mutation-history gap", () => {
@@ -299,8 +318,8 @@ test("an unowned reconciliation records a permanent mutation-history gap", () =>
   let state = evolveAll(null, decide(null, opened).events);
   const reconciliation = decide(state, {
     type: "reconcile-artifacts", taskId: state.task_id, at: "2026-07-22T00:00:01.000Z",
-    checkpointId: NEXT_CHECKPOINT, fromCheckpoint: EMPTY_CHECKPOINT, toCheckpoint: NEXT_CHECKPOINT,
-    changedEntries: [{ path: "work.txt", before: null, after: FILE_DIGEST }], changedPaths: ["work.txt"],
+    checkpointId: NEXT_CHECKPOINT, capturedAtMs: NEXT_CAPTURED_AT_MS, fromCheckpoint: EMPTY_CHECKPOINT, toCheckpoint: NEXT_CHECKPOINT,
+    changedEntries: [{ path: "work.txt", before: null, after: FILE_ENTRY }], changedPaths: ["work.txt"],
     currentScopeViolations: [], coverage: "full", reason: "pre-criterion",
     coverageChange: {
       artifactState: "full", mutationHistory: "unknown", prewriteEnforcement: "unknown",
@@ -324,6 +343,88 @@ test("an unowned reconciliation records a permanent mutation-history gap", () =>
   assert.throws(() => evolveAll(state, attemptedUpgrade.events), /cannot upgrade degraded mutation history/);
 });
 
+test("strict Pre opens an exhaustive operation lease before authorization", () => {
+  const opened = openCommand();
+  opened.coverageBasis = { history_requirement: "complete", artifact_state: "full", mutation_history: "unknown", prewrite_enforcement: "unknown" };
+  const state = evolveAll(null, decide(null, opened).events);
+  const authorized = decide(state, {
+    type: "authorize-write", taskId: state.task_id, at: "2026-07-22T00:00:01.000Z", decision: "allow",
+    files: ["work.txt"], operationId: "strict-operation", toolFamily: "patch", hostProfile: "fixture-exhaustive",
+    targetCoverage: "exact", receiptExpectation: "post",
+    coverageChange: {
+      artifactState: "full", mutationHistory: "full", prewriteEnforcement: "full",
+      episodeId: state.episodes.at(-1).episode_id, operationId: "strict-operation", capabilityId: "hostcap:v1:fixture-exhaustive",
+      hostProfile: "fixture-exhaustive", surface: "direct", exhaustiveSurface: true,
+      effectiveFromCheckpoint: EMPTY_CHECKPOINT, intervalFromCheckpoint: EMPTY_CHECKPOINT,
+      intervalToCheckpoint: null, reason: "strict prewrite lease",
+    },
+  });
+  assert.deepEqual(authorized.events.map((event) => event.kind), ["coverage_changed", "write_authorized"]);
+  const projected = evolveAll(state, authorized.events);
+  assert.equal(projected.capability_leases[0].operation_id, "strict-operation");
+  assert.equal(projected.capability_leases[0].status, "open");
+  assert.equal(projected.evidence.mutation_history_coverage, "full");
+  assert.equal(projected.authority.prewrite_enforcement, "full");
+  assert.equal(projected.authority.write_operations_authorized, 1);
+});
+
+test("Contract 6 history requirements are monotonic domain invariants", () => {
+  const critical = openCommand();
+  critical.assurance.declared_risk = "critical";
+  assert.throws(() => decide(null, critical), /critical.*complete mutation history/);
+
+  const finite = openCommand();
+  finite.budget.writes = 1;
+  assert.throws(() => decide(null, finite), /finite write budget.*complete mutation history/);
+
+  const complete = openCommand();
+  complete.coverageBasis = { history_requirement: "complete", artifact_state: "full", mutation_history: "full", prewrite_enforcement: "full" };
+  let state = evolveAll(null, decide(null, complete).events);
+  assert.throws(() => decide(state, {
+    type: "amend", taskId: state.task_id, at: "2026-07-22T00:00:01.000Z",
+    reason: "attempt assurance downgrade", historyRequirement: "artifact_only",
+  }), /cannot relax complete mutation history/);
+
+  const artifactOnly = evolveAll(null, decide(null, openCommand()).events);
+  const forgedUpgrade = decide(artifactOnly, {
+    type: "change-coverage", taskId: artifactOnly.task_id, at: "2026-07-22T00:00:02.000Z",
+    artifactState: "full", mutationHistory: "full", prewriteEnforcement: "full",
+    episodeId: artifactOnly.episodes.at(-1).episode_id, operationId: "non-exhaustive", capabilityId: "hostcap:v1:non-exhaustive",
+    hostProfile: "fixture", surface: "direct", exhaustiveSurface: false,
+    effectiveFromCheckpoint: EMPTY_CHECKPOINT, intervalFromCheckpoint: EMPTY_CHECKPOINT,
+    intervalToCheckpoint: EMPTY_CHECKPOINT, reason: "invalid coverage promotion",
+  });
+  assert.throws(() => evolveAll(artifactOnly, forgedUpgrade.events), /full mutation history requires an exhaustive surface/);
+});
+
+test("finite write budgets are enforced in the engine while fresh satisfaction can still close", () => {
+  const bounded = openCommand();
+  bounded.budget.writes = 1;
+  bounded.coverageBasis = { history_requirement: "complete", artifact_state: "full", mutation_history: "full", prewrite_enforcement: "full" };
+  let state = evolveAll(null, decide(null, bounded).events);
+  state = evolveAll(state, decide(state, {
+    type: "authorize-write", taskId: state.task_id, at: "2026-07-22T00:00:01.000Z", decision: "allow",
+    files: ["work.txt"], operationId: "bounded-operation", toolFamily: "patch", hostProfile: "fixture-exhaustive",
+    targetCoverage: "exact", receiptExpectation: "post",
+  }).events);
+  assert.equal(state.spent.writes, 1);
+  assert.throws(() => decide(state, {
+    type: "authorize-write", taskId: state.task_id, at: "2026-07-22T00:00:02.000Z", decision: "allow",
+    files: ["work.txt"], operationId: "over-budget-operation", toolFamily: "patch", hostProfile: "fixture-exhaustive",
+    targetCoverage: "exact", receiptExpectation: "post",
+  }), /write budget exhausted/);
+
+  const closing = openCommand();
+  closing.budget.writes = 0;
+  closing.coverageBasis = { history_requirement: "complete", artifact_state: "full", mutation_history: "full", prewrite_enforcement: "full" };
+  state = evolveAll(null, decide(null, closing).events);
+  const observed = decide(state, {
+    type: "observe", taskId: state.task_id, at: "2026-07-22T00:00:01.000Z", source: "stop",
+    observation: observation("satisfied"), attemptId: null, signature: null, failureSummary: "", drift: [], actingSession: "sanitized",
+  });
+  assert.deepEqual(observed.events.map((event) => event.kind), ["criterion_observed", "task_terminal"]);
+});
+
 test("operation completion and reconciliation are exactly-once as one decision", () => {
   const opened = openCommand();
   let state = evolveAll(null, decide(null, opened).events);
@@ -336,8 +437,8 @@ test("operation completion and reconciliation are exactly-once as one decision",
     type: "complete-operation", taskId: state.task_id, at: "2026-07-22T00:00:02.000Z",
     operationId: "operation-1", toolFamily: "patch", outcome: "success", reportedTargets: ["work.txt"],
     receiptQuality: "tool_specific", hostProfile: "codex-safe",
-    checkpointId: NEXT_CHECKPOINT, fromCheckpoint: EMPTY_CHECKPOINT, toCheckpoint: NEXT_CHECKPOINT,
-    changedEntries: [{ path: "work.txt", before: null, after: FILE_DIGEST }], changedPaths: ["work.txt"],
+    checkpointId: NEXT_CHECKPOINT, capturedAtMs: NEXT_CAPTURED_AT_MS, fromCheckpoint: EMPTY_CHECKPOINT, toCheckpoint: NEXT_CHECKPOINT,
+    changedEntries: [{ path: "work.txt", before: null, after: FILE_ENTRY }], changedPaths: ["work.txt"],
     currentScopeViolations: [], coverage: "full", reason: "post-tool",
     coverageChange: {
       artifactState: "full", mutationHistory: "unknown", prewriteEnforcement: "unknown",
@@ -358,10 +459,39 @@ test("operation completion and reconciliation are exactly-once as one decision",
     fromCheckpoint: NEXT_CHECKPOINT, toCheckpoint: NEXT_CHECKPOINT, changedEntries: [], changedPaths: [],
     coverageChange: { ...command.coverageChange, effectiveFromCheckpoint: NEXT_CHECKPOINT, intervalFromCheckpoint: NEXT_CHECKPOINT, intervalToCheckpoint: NEXT_CHECKPOINT },
   });
-  assert.deepEqual(replayed.events.map((event) => event.kind), ["artifact_reconciled", "coverage_changed"]);
+  assert.deepEqual(replayed, { events: [], result: { status: "duplicate" } });
   state = evolveAll(state, replayed.events);
   assert.equal(state.evidence.tool_completions_observed, 1);
   assert.equal(state.artifact_revision, 1);
+});
+
+test("write authorization replay is exactly-once before budget and projection folds", () => {
+  let state = evolveAll(null, decide(null, openCommand()).events);
+  const command = {
+    type: "authorize-write", taskId: state.task_id, at: "2026-07-22T00:00:01.000Z", decision: "allow",
+    files: ["work.txt"], operationId: "replayed-authorization", toolFamily: "patch", hostProfile: "fixture",
+    targetCoverage: "exact", receiptExpectation: "post",
+  };
+  state = evolveAll(state, decide(state, command).events);
+  const replay = decide(state, { ...command, at: "2026-07-22T00:00:02.000Z" });
+  assert.deepEqual(replay, { events: [], result: { status: "duplicate" } });
+  assert.throws(() => decide(state, { ...command, at: "2026-07-22T00:00:03.000Z", files: ["other.txt"] }), /conflicting write authorization/);
+});
+
+test("closure binds the exact event cursor, not only checkpoint and evidence revision", () => {
+  const command = openCommand();
+  command.policyName = "steady_satisfied";
+  command.policyRationale = "explicit fixture close";
+  let state = evolveAll(null, decide(null, command).events);
+  state = evolveAll(state, decide(state, {
+    type: "observe", taskId: state.task_id, at: "2026-07-22T00:00:01.000Z", source: "stop",
+    observation: observation("satisfied"), attemptId: null, signature: null, failureSummary: "", drift: [], actingSession: "sanitized",
+  }).events);
+  assert.deepEqual(closureProjection(state), { state: "eligible" });
+  state = evolveAll(state, decide(state, {
+    type: "amend", taskId: state.task_id, at: "2026-07-22T00:00:02.000Z", reason: "change goal after observation", goal: "new goal",
+  }).events);
+  assert.deepEqual(closureProjection(state), { state: "held", reasons: ["artifact_evidence_changed"] });
 });
 
 test("orphan and conflicting completion receipts fail closed without rewriting facts", () => {
@@ -376,7 +506,7 @@ test("orphan and conflicting completion receipts fail closed without rewriting f
   const complete = {
     type: "complete-operation", taskId: state.task_id, at: "2026-07-22T00:00:02.000Z",
     operationId: "conflict-operation", toolFamily: "patch", outcome: "success", reportedTargets: ["work.txt"],
-    receiptQuality: "tool_specific", hostProfile: "fixture", checkpointId: EMPTY_CHECKPOINT,
+    receiptQuality: "tool_specific", hostProfile: "fixture", checkpointId: EMPTY_CHECKPOINT, capturedAtMs: NEXT_CAPTURED_AT_MS,
     fromCheckpoint: EMPTY_CHECKPOINT, toCheckpoint: EMPTY_CHECKPOINT, changedEntries: [], changedPaths: [],
     currentScopeViolations: [], coverage: "full", reason: "first receipt",
     coverageChange: {
@@ -406,9 +536,9 @@ test("orphan and conflicting completion receipts fail closed without rewriting f
   const orphanReceipt = decide(orphan, {
     type: "complete-operation", taskId: orphan.task_id, at: "2026-07-22T00:00:04.000Z",
     operationId: "orphan-operation", toolFamily: "patch", outcome: "unknown", reportedTargets: ["orphan.txt"],
-    receiptQuality: "unknown", hostProfile: "fixture", checkpointId: NEXT_CHECKPOINT,
+    receiptQuality: "unknown", hostProfile: "fixture", checkpointId: NEXT_CHECKPOINT, capturedAtMs: NEXT_CAPTURED_AT_MS,
     fromCheckpoint: EMPTY_CHECKPOINT, toCheckpoint: NEXT_CHECKPOINT,
-    changedEntries: [{ path: "work.txt", before: null, after: FILE_DIGEST }], changedPaths: ["work.txt"],
+    changedEntries: [{ path: "work.txt", before: null, after: FILE_ENTRY }], changedPaths: ["work.txt"],
     currentScopeViolations: [], coverage: "full", reason: "orphan receipt",
     coverageChange: {
       artifactState: "full", mutationHistory: "unknown", prewriteEnforcement: "unknown",
@@ -423,6 +553,47 @@ test("orphan and conflicting completion receipts fail closed without rewriting f
   assert.equal(orphan.evidence.tool_completions_observed, 1);
   assert.equal(orphan.operations["orphan-operation"].authorization, null);
   assert.equal(orphan.evidence.mutation_history_coverage, "unknown");
+});
+
+test("PostToolUse ignores reads and cannot inject a foreign completion", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-v6-post-ownership-"));
+  const repo = path.join(root, "repo"); const home = path.join(root, "home");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
+  const command = openCommand();
+  command.episodes[0].host_session_id = "owner-v6";
+  const event = decide(null, command).events[0];
+  const record = buildRecord({
+    transactionId: randomUUID(), repoSequence: 1, occurredAtEpochMs: Date.parse(AT),
+    actor: { kind: "cli", session_id: "owner-v6" }, previousRecordDigest: null,
+    events: [{ ...event, task_event_sequence: 1 }],
+  });
+  fs.mkdirSync(path.join(repo, ".workloop"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".workloop", "events.jsonl"), `${JSON.stringify(record)}\n`);
+  const env = { ...process.env, HOME: home, USERPROFILE: home, WORKLOOP_SESSION_ID: "owner-v6" };
+  const hook = (payload) => spawnSync(process.execPath, [CLI, "hook", "--profile", "codex-safe", "--mode", "nudge"], {
+    cwd: repo, env, input: JSON.stringify(payload), encoding: "utf8",
+  });
+
+  const read = hook({
+    hook_event_name: "PostToolUse", cwd: repo, session_id: "owner-v6", tool_use_id: "read-1",
+    tool_name: "Read", tool_input: { file_path: path.join(repo, "work.txt") }, tool_response: { success: true },
+  });
+  assert.equal(read.status, 0, read.stderr);
+  assert.deepEqual(readEventStore(repo).events.map((item) => item.kind), ["task_opened"]);
+
+  const foreign = hook({
+    hook_event_name: "PostToolUse", cwd: repo, session_id: "foreign-v6", tool_use_id: "foreign-1",
+    tool_name: "Write", tool_input: { file_path: path.join(repo, "work.txt") }, tool_response: { success: true },
+  });
+  assert.equal(foreign.status, 0, foreign.stderr);
+  const replay = readEventStore(repo);
+  assert.deepEqual(replay.events.map((item) => item.kind), ["task_opened", "artifact_reconciled", "coverage_changed"]);
+  const projection = evolveAll(null, replay.events);
+  assert.equal(projection.evidence.tool_completions_observed, 0);
+  assert.equal(Object.hasOwn(projection.operations, "foreign-1"), false);
+  assert.equal(projection.evidence.mutation_history_coverage, "unknown");
 });
 
 test("outcome schema 4 preserves terminal count basis and coverage", (t) => {
@@ -454,8 +625,8 @@ test("outcome schema 4 preserves terminal count basis and coverage", (t) => {
     type: "complete-operation", taskId: state.task_id, at: "2026-07-22T00:00:02.000Z",
     operationId: "operation-1", toolFamily: "patch", outcome: "success", reportedTargets: ["work.txt"],
     receiptQuality: "tool_specific", hostProfile: "codex-safe",
-    checkpointId: NEXT_CHECKPOINT, fromCheckpoint: EMPTY_CHECKPOINT, toCheckpoint: NEXT_CHECKPOINT,
-    changedEntries: [{ path: "work.txt", before: null, after: FILE_DIGEST }], changedPaths: ["work.txt"],
+    checkpointId: NEXT_CHECKPOINT, capturedAtMs: NEXT_CAPTURED_AT_MS, fromCheckpoint: EMPTY_CHECKPOINT, toCheckpoint: NEXT_CHECKPOINT,
+    changedEntries: [{ path: "work.txt", before: null, after: FILE_ENTRY }], changedPaths: ["work.txt"],
     currentScopeViolations: [], coverage: "full", reason: "post-tool",
     coverageChange: {
       artifactState: "full", mutationHistory: "unknown", prewriteEnforcement: "unknown",
@@ -610,6 +781,18 @@ test("failure receipts, partial writes, and scan failures degrade without losing
   assert.equal(state.artifact_revision, 1);
   assert.ok(state.evidence.touched_files.includes("partial.txt"));
 
+  assert.equal(pre("commit-failure", "commit-failure.txt").status, 0);
+  fs.writeFileSync(path.join(repo, "commit-failure.txt"), "receipt commit failed\n");
+  const degradedCommit = hook({
+    hook_event_name: "PostToolUse", cwd: repo, session_id: "owner-v6", tool_use_id: "commit-failure",
+    tool_name: "Write", tool_input: { file_path: path.join(repo, "commit-failure.txt") }, tool_response: { success: true },
+  }, { WORKLOOP_POST_COMMIT_FAILPOINT: "before-authority-commit" });
+  assert.equal(degradedCommit.status, 0, degradedCommit.stderr);
+  state = JSON.parse(fs.readFileSync(path.join(repo, ".workloop", "task.json"), "utf8")).projection;
+  assert.equal(state.operations["commit-failure"].completion, null);
+  assert.equal(state.evidence.artifact_state_coverage, "unknown");
+  assert.match(state.coverage_intervals.at(-1).reason, /PostToolUse authority commit failed/);
+
   assert.equal(pre("scan-timeout", "late.txt").status, 0);
   fs.writeFileSync(path.join(repo, "late.txt"), "not yet reconciled\n");
   const timedOut = hook({
@@ -618,7 +801,7 @@ test("failure receipts, partial writes, and scan failures degrade without losing
   }, { WORKLOOP_POST_SNAPSHOT_DEADLINE_MS: "0" });
   assert.equal(timedOut.status, 0, timedOut.stderr); assert.equal(timedOut.stdout, "");
   state = JSON.parse(fs.readFileSync(path.join(repo, ".workloop", "task.json"), "utf8")).projection;
-  assert.equal(state.operations["scan-timeout"].completion.outcome, "unknown");
+  assert.equal(state.operations["scan-timeout"].completion.outcome, "success");
   assert.equal(state.evidence.artifact_state_coverage, "unknown");
   assert.equal(state.evidence.touched_files.includes("late.txt"), false);
 
@@ -628,6 +811,14 @@ test("failure receipts, partial writes, and scan failures degrade without losing
   assert.equal(state.evidence.artifact_state_coverage, "full");
   assert.ok(state.evidence.touched_files.includes("late.txt"));
   assert.equal(state.evidence.mutation_history_coverage, "unknown");
+
+  fs.appendFileSync(path.join(repo, ".workloop", "events.jsonl"), "{broken\n");
+  const unpersistable = hook({
+    hook_event_name: "PostToolUse", cwd: repo, session_id: "owner-v6", tool_use_id: "unpersistable",
+    tool_name: "Write", tool_input: { file_path: path.join(repo, "unpersistable.txt") }, tool_response: { success: true },
+  });
+  assert.equal(unpersistable.status, 2);
+  assert.match(unpersistable.stderr, /completion receipt degradation could not be persisted/);
 });
 
 test("achieved and not-needed share Contract 6 artifact assurance", () => {
@@ -638,6 +829,29 @@ test("achieved and not-needed share Contract 6 artifact assurance", () => {
     type: "not-needed", taskId: state.task_id, at: "2026-07-22T00:00:01.000Z", evidence: "baseline already satisfies the need",
   });
   assert.equal(evolveAll(state, notNeeded.events).lifecycle.outcome, "not_needed");
+
+  let reverted = evolveAll(state, decide(state, {
+    type: "authorize-write", taskId: state.task_id, at: "2026-07-22T00:00:01.000Z", decision: "allow",
+    files: ["work.txt"], operationId: "reverted-success", toolFamily: "patch", hostProfile: "codex-safe",
+    targetCoverage: "exact", receiptExpectation: "post",
+  }).events);
+  reverted = evolveAll(reverted, decide(reverted, {
+    type: "complete-operation", taskId: reverted.task_id, at: "2026-07-22T00:00:02.000Z",
+    operationId: "reverted-success", toolFamily: "patch", outcome: "success", reportedTargets: ["work.txt"],
+    receiptQuality: "tool_specific", hostProfile: "codex-safe",
+    checkpointId: EMPTY_CHECKPOINT, capturedAtMs: NEXT_CAPTURED_AT_MS, fromCheckpoint: EMPTY_CHECKPOINT, toCheckpoint: EMPTY_CHECKPOINT,
+    changedEntries: [], changedPaths: [], currentScopeViolations: [], coverage: "full", reason: "write reverted before reconciliation",
+    coverageChange: {
+      artifactState: "full", mutationHistory: "unknown", prewriteEnforcement: "unknown",
+      episodeId: reverted.episodes.at(-1).episode_id, operationId: "reverted-success", capabilityId: "hostcap:v1:codex",
+      hostProfile: "codex-safe", surface: "direct", exhaustiveSurface: false,
+      effectiveFromCheckpoint: EMPTY_CHECKPOINT, intervalFromCheckpoint: EMPTY_CHECKPOINT,
+      intervalToCheckpoint: EMPTY_CHECKPOINT, reason: "successful operation returned to baseline",
+    },
+  }).events);
+  assert.throws(() => decide(reverted, {
+    type: "not-needed", taskId: reverted.task_id, at: "2026-07-22T00:00:03.000Z", evidence: "bytes match baseline",
+  }), /successful_completion_receipt_observed/);
 
   const strictCommand = openCommand();
   strictCommand.coverageBasis.history_requirement = "complete";

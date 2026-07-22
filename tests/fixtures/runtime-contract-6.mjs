@@ -33,14 +33,17 @@ const RUNTIME6_EVENT_PAYLOAD_FIELDS = Object.freeze({
     2: Object.freeze(["observation", "checkpoint_id", "evidence_revision", "event_cursor"]),
   }),
   output_tokens_tallied: Object.freeze({ 1: Object.freeze(["source_id", "source_generation_id", "episode_id", "from_offset", "to_offset", "range_sha256", "end_anchor_sha256", "output_tokens_delta", "mode"]) }),
-  task_amended: Object.freeze({ 1: Object.freeze(["reason", "goal", "alignment", "envelope", "grants", "rounds", "writes", "wall_clock_minutes", "output_tokens", "assurance", "criterion", "policy", "policy_rationale", "generation_id", "artifact_revision"]) }),
+  task_amended: Object.freeze({
+    1: Object.freeze(["reason", "goal", "alignment", "envelope", "grants", "rounds", "writes", "wall_clock_minutes", "output_tokens", "assurance", "criterion", "policy", "policy_rationale", "generation_id", "artifact_revision"]),
+    2: Object.freeze(["reason", "goal", "alignment", "envelope", "grants", "rounds", "writes", "wall_clock_minutes", "output_tokens", "assurance", "criterion", "policy", "policy_rationale", "generation_id", "artifact_revision", "history_requirement"]),
+  }),
   review_recorded: Object.freeze({
     1: Object.freeze(["record"]),
     2: Object.freeze(["record"]),
   }),
   proof_gap_accepted: Object.freeze({ 1: Object.freeze(["record"]) }),
   tool_completed: Object.freeze({ 1: Object.freeze(["operation_id", "tool_family", "outcome", "reported_targets", "receipt_quality", "host_profile"]) }),
-  artifact_reconciled: Object.freeze({ 1: Object.freeze(["checkpoint_id", "from_checkpoint", "to_checkpoint", "changed_entries", "changed_paths", "current_scope_violations", "coverage", "reason"]) }),
+  artifact_reconciled: Object.freeze({ 1: Object.freeze(["checkpoint_id", "from_checkpoint", "to_checkpoint", "captured_at_ms", "changed_entries", "changed_paths", "current_scope_violations", "coverage", "reason"]) }),
   coverage_changed: Object.freeze({ 1: Object.freeze(["artifact_state", "mutation_history", "prewrite_enforcement", "episode_id", "operation_id", "capability_id", "host_profile", "surface", "exhaustive_surface", "effective_from_checkpoint", "interval_from_checkpoint", "interval_to_checkpoint", "reason"]) }),
 });
 

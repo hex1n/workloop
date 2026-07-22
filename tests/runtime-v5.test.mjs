@@ -495,7 +495,7 @@ test("HOME projection and cursor failures never roll back repository authority",
 test("[W05] twenty concurrent mutations serialize without sequence gaps or lost writes", async (t) => {
   const concurrency = Number.parseInt(process.env.WORKLOOP_W05_CONCURRENCY ?? "20", 10);
   assert.ok(Number.isSafeInteger(concurrency) && concurrency > 0);
-  const fx = fixture(t); assert.equal(open(fx, ["--writes", String(concurrency)]).status, 0);
+  const fx = fixture(t); assert.equal(open(fx).status, 0);
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v5", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
   const invoke = () => new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI], { cwd: fx.repo, env: fx.env, stdio: ["pipe", "pipe", "pipe"] });
@@ -514,7 +514,7 @@ test("[W05] twenty concurrent mutations serialize without sequence gaps or lost 
 });
 
 test("[W05] hook payload reading waits through a temporarily empty nonblocking stdin pipe", async (t) => {
-  const fx = fixture(t); assert.equal(open(fx, ["--writes", "1"]).status, 0);
+  const fx = fixture(t); assert.equal(open(fx).status, 0);
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v5", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
   const result = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI], { cwd: fx.repo, env: fx.env, stdio: ["pipe", "pipe", "pipe"] });
@@ -533,7 +533,7 @@ test("[W05] hook payload reading waits through a temporarily empty nonblocking s
 });
 
 test("[W05] hook payload reading accepts one complete JSON object without waiting for EOF", async (t) => {
-  const fx = fixture(t); assert.equal(open(fx, ["--writes", "1"]).status, 0);
+  const fx = fixture(t); assert.equal(open(fx).status, 0);
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v5", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
   const result = await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [CLI], { cwd: fx.repo, env: fx.env, stdio: ["pipe", "pipe", "pipe"] });
@@ -550,7 +550,7 @@ test("[W05] hook payload reading accepts one complete JSON object without waitin
 });
 
 test("[W05] hook payload reading waits when an intermediate chunk ends with a closing brace", async (t) => {
-  const fx = fixture(t); assert.equal(open(fx, ["--writes", "1"]).status, 0);
+  const fx = fixture(t); assert.equal(open(fx).status, 0);
   const prefix = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "owner-v5", tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } }).slice(0, -1);
   const payload = `${prefix},"ignored_tail":true}`;
   const splitAt = prefix.length;

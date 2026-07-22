@@ -13,7 +13,7 @@ import { directoryLockBackoff, localTimestamp, withOwnedDirectoryLock } from "./
 const __filename = fileURLToPath(import.meta.url);
 const SOURCE = path.resolve(process.env.WORKLOOP_INSTALL_REPO ?? path.dirname(__filename));
 const HOME = path.resolve(process.env.WORKLOOP_INSTALL_HOME ?? os.homedir());
-const INSTALL_HOME_EXPLICIT = Boolean(process.env.WORKLOOP_INSTALL_HOME);
+const ISOLATED_INSTALL = process.env.WORKLOOP_INSTALL_ISOLATED === "1";
 // Read the source checkout's contract from its prims.mjs text instead of
 // importing it: WORKLOOP_INSTALL_REPO may point at a different checkout than
 // the one this installer file (and its ./lib import) was loaded from, and the
@@ -369,6 +369,103 @@ function writeTextAtomicIfChanged(target, value, dry, { newMode } = {}) {
     }
     throw error;
   }
+}
+
+function captureActivationFile(target) {
+  try {
+    const stat = fs.lstatSync(target);
+    if (!stat.isFile()) throw new Error(`cannot preserve non-file activation target: ${target}`);
+    return { target, present: true, bytes: fs.readFileSync(target), mode: stat.mode & 0o777 };
+  } catch (error) {
+    if (error?.code === "ENOENT") return { target, present: false };
+    throw error;
+  }
+}
+
+function restoreActivationFile(snapshot) {
+  const { target } = snapshot;
+  if (!snapshot.present) {
+    fs.rmSync(target, { force: true });
+    return;
+  }
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const temporary = path.join(
+    path.dirname(target),
+    `.${path.basename(target)}.${process.pid}.${process.hrtime.bigint().toString(36)}.rollback.tmp`,
+  );
+  try {
+    fs.writeFileSync(temporary, snapshot.bytes, { mode: snapshot.mode });
+    fs.renameSync(temporary, target);
+    fs.chmodSync(target, snapshot.mode);
+  } catch (error) {
+    try {
+      fs.rmSync(temporary, { force: true });
+    } catch {
+      // Preserve the rollback failure.
+    }
+    throw error;
+  }
+}
+
+function restoreActivationFiles(snapshots) {
+  const failures = [];
+  for (const snapshot of snapshots) {
+    try {
+      restoreActivationFile(snapshot);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length) throw new AggregateError(failures, "failed to restore the previous Workloop activation");
+}
+
+function captureManagedPath(target) {
+  const capture = (current) => {
+    const stat = fs.lstatSync(current);
+    if (stat.isFile()) return { kind: "file", mode: stat.mode & 0o777, bytes: fs.readFileSync(current) };
+    if (stat.isSymbolicLink()) return { kind: "symlink", target: fs.readlinkSync(current) };
+    if (!stat.isDirectory()) throw new Error(`cannot preserve unsupported managed activation target: ${current}`);
+    return {
+      kind: "directory", mode: stat.mode & 0o777,
+      entries: fs.readdirSync(current).sort().map((name) => ({ name, entry: capture(path.join(current, name)) })),
+    };
+  };
+  try {
+    return { target, present: true, entry: capture(target) };
+  } catch (error) {
+    if (error?.code === "ENOENT") return { target, present: false };
+    throw error;
+  }
+}
+
+function materializeManagedEntry(target, entry) {
+  if (entry.kind === "file") {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, entry.bytes, { mode: entry.mode });
+    fs.chmodSync(target, entry.mode);
+    return;
+  }
+  if (entry.kind === "symlink") {
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.symlinkSync(entry.target, target);
+    return;
+  }
+  fs.mkdirSync(target, { recursive: true, mode: entry.mode });
+  fs.chmodSync(target, entry.mode);
+  for (const child of entry.entries) materializeManagedEntry(path.join(target, child.name), child.entry);
+}
+
+function restoreManagedPaths(snapshots) {
+  const failures = [];
+  for (const snapshot of snapshots) {
+    try {
+      fs.rmSync(snapshot.target, { recursive: true, force: true });
+      if (snapshot.present) materializeManagedEntry(snapshot.target, snapshot.entry);
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length) throw new AggregateError(failures, "failed to restore the previous Workloop managed skills");
 }
 
 function tomlTableRange(text, table) {
@@ -870,6 +967,20 @@ function readManagedSkills(file) {
   }
 }
 
+function managedSkillActivationTargets(repo, home) {
+  const manifest = path.join(home, "bin", ".workloop-managed-skills.json");
+  const previous = readManagedSkills(manifest);
+  const names = new Set(sourceSkillNames(repo));
+  for (const runtime of [".claude", ".codex"]) {
+    for (const name of Object.keys(previous.runtimes[runtime] ?? {})) names.add(name);
+  }
+  const targets = [manifest];
+  for (const { root } of skillRootGroups(home).values()) {
+    for (const name of [...names].sort()) targets.push(path.join(root, name));
+  }
+  return targets;
+}
+
 // Byte-exact source trees from the last asdf-owned core at
 // 9c6dbdb957b530997c17a80bd4d2bdf3d3c02fd8, plus the unpublished name-only
 // workloop installer used during this extraction. They permit a one-time safe
@@ -1015,7 +1126,7 @@ const CONTROL_FILE_SHAPES = {
     && parsed.journal_version === 1
     && typeof parsed.release_id === "string" && RUNTIME_HASH_SHAPE.test(parsed.release_id)
     && Number.isInteger(parsed.runtime_contract) && parsed.runtime_contract > 0
-    && ["activating", "committed", "needs_manual_intervention"].includes(parsed.status)
+    && ["activating", "committed", "needs_manual_intervention", "rolled_back"].includes(parsed.status)
     && isPlainObject(parsed.steps)
     && Object.keys(parsed.steps).sort().join(",") === JOURNAL_STEP_KEYS
     && Object.values(parsed.steps).every((step) => typeof step === "boolean"),
@@ -1177,7 +1288,7 @@ export function installWorkloopAssets(repo, home, dry = false) {
 export function installWorkloop(repo, home, dry = false) {
   ACTIONS.length = 0;
   const install = () => {
-    if (RUNTIME_CONTRACT === 6 && !INSTALL_HOME_EXPLICIT) assertSourceActivationCompatible(repo);
+    if (RUNTIME_CONTRACT === 6 && !ISOLATED_INSTALL) assertSourceActivationCompatible(repo);
     const compatibilityContract5 = contract5CompatibilityPin(home);
     const runtime = installWorkloopRuntimeUnlocked(repo, home, dry, { activate: false });
     const releaseId = runtime.hash;
@@ -1192,35 +1303,72 @@ export function installWorkloop(repo, home, dry = false) {
     };
     writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
     installFailpoint("runtime-staged");
-    installWorkloopAssetsUnlocked(repo, home, dry);
-    if (ACTIONS.some(([kind]) => kind === "error")) {
-      journalRow.status = "needs_manual_intervention";
+    const managedSnapshots = managedSkillActivationTargets(repo, home).map(captureManagedPath);
+    const activationSnapshots = [
+      path.join(home, "bin", "workloop.mjs"),
+      path.join(home, "bin", "workloop.cmd"),
+      path.join(home, "bin", "workloop.ps1"),
+      releaseManifest,
+    ].map(captureActivationFile);
+    let skillsStarted = false; let activationStarted = false;
+    try {
+      skillsStarted = true;
+      installWorkloopAssetsUnlocked(repo, home, dry);
+      if (ACTIONS.some(([kind]) => kind === "error")) {
+        if (!dry) restoreManagedPaths(managedSnapshots);
+        journalRow.status = "needs_manual_intervention";
+        journalRow.steps.skills_activated = false;
+        writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
+        return runtime;
+      }
+      journalRow.steps.skills_activated = true;
       writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
-      return runtime;
+      installFailpoint("skills-activated");
+      activationStarted = true;
+      activateRuntimeShims(home, runtime.hash, dry);
+      journalRow.steps.shim_activated = true;
+      writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
+      installFailpoint("shim-activated");
+      const skillManifest = path.join(home, "bin", ".workloop-managed-skills.json");
+      const manifestRow = {
+        release_manifest_version: 2,
+        release_id: releaseId,
+        runtime_contract: RUNTIME_CONTRACT,
+        runtime_digest: runtime.hash,
+        managed_skills_manifest_digest: dry || !exists(skillManifest) ? null : createHash("sha256").update(fs.readFileSync(skillManifest)).digest("hex"),
+        compatibility_runtimes: { contract_5: compatibilityContract5 },
+      };
+      writeTextAtomicIfChanged(releaseManifest, JSON.stringify(manifestRow, null, 2) + "\n", dry);
+      journalRow.steps.manifest_committed = true;
+      journalRow.status = "committed";
+      writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
+      installFailpoint("manifest-committed");
+      if (!dry) fs.rmSync(journal, { force: true });
+      installFailpoint("journal-cleaned");
+    } catch (error) {
+      const rollbackFailures = [];
+      if (!dry && activationStarted) {
+        try { restoreActivationFiles(activationSnapshots); }
+        catch (rollbackError) { rollbackFailures.push(rollbackError); }
+      }
+      if (!dry && skillsStarted) {
+        try { restoreManagedPaths(managedSnapshots); }
+        catch (rollbackError) { rollbackFailures.push(rollbackError); }
+      }
+      if (!dry) {
+        journalRow.steps.skills_activated = false;
+        journalRow.steps.shim_activated = false;
+        journalRow.steps.manifest_committed = false;
+        journalRow.status = "rolled_back";
+        try {
+          if (exists(journal)) writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", false);
+        } catch (rollbackError) {
+          rollbackFailures.push(rollbackError);
+        }
+      }
+      if (rollbackFailures.length) throw new AggregateError([error, ...rollbackFailures], "Workloop activation failed and rollback was incomplete");
+      throw error;
     }
-    journalRow.steps.skills_activated = true;
-    writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
-    installFailpoint("skills-activated");
-    activateRuntimeShims(home, runtime.hash, dry);
-    journalRow.steps.shim_activated = true;
-    writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
-    installFailpoint("shim-activated");
-    const skillManifest = path.join(home, "bin", ".workloop-managed-skills.json");
-    const manifestRow = {
-      release_manifest_version: 2,
-      release_id: releaseId,
-      runtime_contract: RUNTIME_CONTRACT,
-      runtime_digest: runtime.hash,
-      managed_skills_manifest_digest: dry || !exists(skillManifest) ? null : createHash("sha256").update(fs.readFileSync(skillManifest)).digest("hex"),
-      compatibility_runtimes: { contract_5: compatibilityContract5 },
-    };
-    writeTextAtomicIfChanged(releaseManifest, JSON.stringify(manifestRow, null, 2) + "\n", dry);
-    journalRow.steps.manifest_committed = true;
-    journalRow.status = "committed";
-    writeTextAtomicIfChanged(journal, JSON.stringify(journalRow, null, 2) + "\n", dry);
-    installFailpoint("manifest-committed");
-    if (!dry) fs.rmSync(journal, { force: true });
-    installFailpoint("journal-cleaned");
     pruneRuntimes(path.join(home, "bin", ".workloop-runtime"), runtime.hash, dry, [compatibilityContract5]);
     return runtime;
   };

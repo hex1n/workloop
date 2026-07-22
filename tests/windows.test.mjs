@@ -9,6 +9,7 @@ import { runCriterionSource } from "../lib/criterion.mjs";
 const ROOT = path.resolve(".");
 const INSTALLER = path.join(ROOT, "install.mjs");
 const WINDOWS = process.platform === "win32";
+process.env.WORKLOOP_INSTALL_ISOLATED = "1";
 
 function runNode(script, args = [], { cwd = ROOT, env = process.env, input = "", timeout = 30_000 } = {}) {
   return spawnSync(process.execPath, [script, ...args], { cwd, env, input, encoding: "utf8", timeout });

@@ -139,8 +139,8 @@ test("explicit profiles decode payloads and generate self-identifying recipes", 
 
   assert.deepEqual(buildHookRecipe({ profile: "codex-safe", command: 'node "/path/workloop.mjs"' }), {
     hooks: {
-      PreToolUse: [{ matcher: "Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', statusMessage: "Checking workloop envelope", timeout: PRE_TOOL_USE_RECIPE_TIMEOUT_SECONDS }] }],
-      PostToolUse: [{ matcher: "Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', statusMessage: "Recording workloop tool receipt", timeout: POST_TOOL_USE_RECIPE_TIMEOUT_SECONDS }] }],
+      PreToolUse: [{ matcher: "apply_patch|Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', statusMessage: "Checking workloop envelope", timeout: PRE_TOOL_USE_RECIPE_TIMEOUT_SECONDS }] }],
+      PostToolUse: [{ matcher: "apply_patch|Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', statusMessage: "Recording workloop tool receipt", timeout: POST_TOOL_USE_RECIPE_TIMEOUT_SECONDS }] }],
       Stop: [{ matcher: "*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', statusMessage: "Checking workloop completion state", timeout: STOP_RECIPE_TIMEOUT_SECONDS }] }],
     },
   });
@@ -170,6 +170,12 @@ test("PostToolUse adapters preserve correlation and emit silent acknowledgements
   assert.equal(codex.completionOutcome, "success");
   assert.equal(codex.receiptQuality, "tool_specific");
   assert.deepEqual(encodeHook({ invocation: codex, disposition: { event: "post_tool_use", action: "record" } }), { stdout: "", stderr: "", exitCode: 0 });
+
+  const codexAmbiguous = decodeHook({ profile: "codex-safe", payload: {
+    hook_event_name: "PostToolUse", cwd: "/repo", tool_use_id: "operation-ambiguous",
+    tool_name: "apply_patch", tool_input: { command: "sanitized" }, tool_response: {},
+  } });
+  assert.equal(codexAmbiguous.completionOutcome, "unknown");
 
   const claudeFailure = decodeHook({ profile: "claude", payload: {
     hook_event_name: "PostToolUseFailure", cwd: "/repo", tool_use_id: "operation-2",

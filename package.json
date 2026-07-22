@@ -19,6 +19,7 @@
     "test:event-store": "node --test tests/event-store.test.mjs",
     "test:snapshot": "node --test tests/task-snapshot-v3.test.mjs",
     "bench:event-store": "node tests/event-store-benchmark.mjs",
+    "bench:artifact-checkpoint": "node tests/artifact-checkpoint-benchmark.mjs",
     "test:installer": "node --test tests/installer.test.mjs",
     "test:skills": "node --test tests/skills.test.mjs",
     "test:windows": "node --test tests/windows.test.mjs",

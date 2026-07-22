@@ -12,6 +12,7 @@ import { archiveIncompatibleState, loadTask } from "../lib/task-store.mjs";
 import { commandShapes, envelopeOverlap, siblingWorktreeOpenTasks } from "../lib/supervision.mjs";
 import { artifactTimestamp, localTimestamp, outputTail } from "../lib/prims.mjs";
 import { EVIDENCE_LOCK_DIR, EVIDENCE_LOSS_DIR, EVIDENCE_MAX_BYTES, EVIDENCE_SEQUENCE_FILE, appendEvidence, evidencePath, foldEvidence, pretooluseEvidenceState, readEvidence } from "../lib/evidence-ledger.mjs";
+import { readEventStore } from "../lib/event-store.mjs";
 
 const ROOT = path.resolve(".");
 const CLI = path.join(ROOT, "bin", "workloop.mjs");
@@ -164,7 +165,7 @@ function fixture(t) {
 }
 
 function open(fx, policy = "default", extra = []) {
-  return run(["open", "--repo", fx.repo, "--goal", "finish", "--criterion-file", "check.mjs", "--criterion-policy", policy, ...(policy === "default" ? [] : ["--reason", "policy reason"]), "--criterion-timeout-seconds", "5", "--alignment-because", "the checker exercises the result", "--not-covered", "deployment", "--files", "work.txt", "--files", "done", "--risk", "routine", "--risk-reason", "isolated reversible fixture", "--history-requirement", "artifact-only", ...extra], { env: fx.env });
+  return run(["open", "--repo", fx.repo, "--goal", "finish", "--criterion-file", "check.mjs", "--criterion-policy", policy, ...(policy === "default" ? [] : ["--reason", "policy reason"]), "--criterion-timeout-seconds", "5", "--alignment-because", "the checker exercises the result", "--not-covered", "deployment", "--files", "work.txt", "--files", "done", "--risk", "routine", "--risk-reason", "isolated reversible fixture", ...extra], { env: fx.env });
 }
 
 function observation(verdict, generation = "g1", artifact = 0) {
@@ -597,9 +598,41 @@ test("CLI review maps kebab enums and enforces finding counts", (t) => {
   assert.notEqual(run(["review", "--repo", fx.repo, "--level", "fresh-context", "--reviewer", "peer", "--blocking-findings", "-1", "--advisory-findings", "0"], { env: fx.env }).status, 0);
 });
 
-test("CLI critical strong criterion requires a current second-model review", (t) => {
+test("CLI critical risk cannot downgrade complete mutation history", (t) => {
+  const fx = fixture(t);
+  const opened = run(["open", "--repo", fx.repo, "--goal", "critical contract", "--criterion-file", "check.mjs", "--criterion-policy", "steady-satisfied", "--reason", "guard", "--alignment-because", "probe", "--files", "work.txt", "--history-requirement", "artifact-only", "--risk", "critical", "--risk-reason", "public API", "--change-class", "public-contract"], { env: fx.env });
+  assert.equal(opened.status, 2);
+  assert.match(opened.stderr, /critical risk requires complete mutation history/);
+  assert.equal(fs.existsSync(path.join(fx.repo, ".workloop", "events.jsonl")), false);
+});
+
+test("CLI finite write budget cannot downgrade complete mutation history", (t) => {
+  const fx = fixture(t);
+  const opened = run(["open", "--repo", fx.repo, "--goal", "bounded writes", "--criterion-file", "check.mjs", "--criterion-policy", "steady-satisfied", "--reason", "guard", "--alignment-because", "probe", "--files", "work.txt", "--history-requirement", "artifact-only", "--writes", "1", "--risk", "routine", "--risk-reason", "bounded operation"], { env: fx.env });
+  assert.equal(opened.status, 2);
+  assert.match(opened.stderr, /finite write budget requires complete mutation history/);
+  assert.equal(fs.existsSync(path.join(fx.repo, ".workloop", "events.jsonl")), false);
+});
+
+test("CLI amend can strengthen mutation history but cannot relax it", (t) => {
+  const routine = fixture(t);
+  assert.equal(open(routine).status, 0);
+  const strengthened = run(["amend", "--repo", routine.repo, "--history-requirement", "complete", "--reason", "stronger audit requested"], { env: routine.env });
+  assert.equal(strengthened.status, 0, strengthened.stderr);
+  assert.equal(JSON.parse(run(["status", "--repo", routine.repo], { env: routine.env }).stdout).write_evidence.history_requirement, "complete");
+
+  const critical = fixture(t);
+  const opened = run(["open", "--repo", critical.repo, "--goal", "critical contract", "--criterion-file", "check.mjs", "--criterion-policy", "default", "--alignment-because", "probe", "--files", "work.txt", "--risk", "critical", "--risk-reason", "public API", "--change-class", "public-contract"], { env: critical.env });
+  assert.equal(opened.status, 0, opened.stderr);
+  const relaxed = run(["amend", "--repo", critical.repo, "--history-requirement", "artifact-only", "--reason", "attempted relaxation"], { env: critical.env });
+  assert.equal(relaxed.status, 2);
+  assert.match(relaxed.stderr, /cannot relax complete mutation history/);
+  assert.equal(JSON.parse(run(["status", "--repo", critical.repo], { env: critical.env }).stdout).write_evidence.history_requirement, "complete");
+});
+
+test("CLI required second-model review must be current", (t) => {
   const fx = fixture(t); fs.writeFileSync(path.join(fx.repo, "done"), "yes\n");
-  const opened = run(["open", "--repo", fx.repo, "--goal", "critical contract", "--criterion-file", "check.mjs", "--criterion-policy", "steady-satisfied", "--reason", "guard", "--alignment-because", "probe", "--files", "work.txt", "--files", "done", "--history-requirement", "artifact-only", "--risk", "critical", "--risk-reason", "public API", "--change-class", "public-contract"], { env: fx.env });
+  const opened = run(["open", "--repo", fx.repo, "--goal", "reviewed contract", "--criterion-file", "check.mjs", "--criterion-policy", "steady-satisfied", "--reason", "guard", "--alignment-because", "probe", "--files", "work.txt", "--files", "done", "--history-requirement", "artifact-only", "--risk", "routine", "--risk-reason", "public API", "--change-class", "public-contract", "--review-policy", "required", "--required-review-level", "second-model"], { env: fx.env });
   assert.equal(opened.status, 0, opened.stderr);
   let status = JSON.parse(run(["status", "--repo", fx.repo], { env: fx.env }).stdout);
   assert.equal(status.assurance.risk_declared_by, "self");
@@ -1109,7 +1142,7 @@ test("ledger exposes user authority claims as unanchored", (t) => {
     "open", "--repo", fx.repo, "--goal", "authority claims", "--criterion-file", "check.mjs", "--criterion-policy", "default",
     "--alignment-because", "the checker exercises the result", "--files", "work.txt",
     "--history-requirement", "artifact-only",
-    "--risk", "critical", "--risk-reason", "user declared public impact",
+    "--risk", "substantial", "--risk-reason", "user declared public impact",
     "--review-policy", "waived", "--review-waiver-reason", "user accepts review residual",
     "--criterion-authored-by", "user", "--network-allowed", "--granted-by", "user", "--reason", "user approved network authority",
   ], { env: agentEnv });
@@ -1439,7 +1472,7 @@ test("control-plane denial recognizes linked-worktree .git files", (t) => {
   const denied = run(["hook", "--profile", "claude"], { cwd: sibling, env: fx.env, input: payload }); assert.match(denied.stdout, /permissionDecision.*deny/); assert.match(denied.stdout, /control state/);
 });
 
-test("round and write budgets deny further writes while reads remain free", (t) => {
+test("round budgets deny writes and finite-write tasks fail closed on non-exhaustive hosts", (t) => {
   const rounds = fixture(t); assert.equal(open(rounds, "default", ["--rounds", "1"]).status, 0);
   run(["hook", "--profile", "claude"], { cwd: rounds.repo, env: rounds.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: rounds.repo }) });
   const roundDenied = run(["hook", "--profile", "claude"], { cwd: rounds.repo, env: rounds.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: rounds.repo, tool_name: "Write", tool_input: { file_path: path.join(rounds.repo, "work.txt") } }) });
@@ -1449,9 +1482,11 @@ test("round and write budgets deny further writes while reads remain free", (t) 
 
   const writes = fixture(t); assert.equal(open(writes, "default", ["--writes", "1"]).status, 0);
   const payload = (name) => JSON.stringify({ hook_event_name: "PreToolUse", cwd: writes.repo, tool_name: "Write", tool_input: { file_path: path.join(writes.repo, name) } });
-  assert.equal(run(["hook", "--profile", "claude"], { cwd: writes.repo, env: writes.env, input: payload("work.txt") }).stdout, "");
   const writeDenied = run(["hook", "--profile", "claude"], { cwd: writes.repo, env: writes.env, input: payload("work.txt") });
-  assert.match(writeDenied.stdout, /write budget exhausted/);
+  assert.match(writeDenied.stdout, /complete mutation history is unavailable/);
+  assert.equal(loadTask(writes.repo).spent.writes, 0);
+  const writeRead = run(["hook", "--profile", "claude"], { cwd: writes.repo, env: writes.env, input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: writes.repo, tool_name: "Read", tool_input: {} }) });
+  assert.equal(writeRead.stdout, "");
 });
 
 test("single-dimension PreToolUse budget denials remain byte-exact", (t) => {
@@ -1545,20 +1580,6 @@ test("CLI resume remains suspended until every exhausted budget is raised", (t) 
   assert.equal(run(["amend", "--repo", fx.repo, "--writes", "1", "--wall-clock-minutes", "1", "--token-budget", "1", "--reason", "raise remaining budgets"], { env: fx.env }).status, 0);
   assert.equal(run(["resume", "--repo", fx.repo, "--reason", "continue"], { env: fx.env }).status, 0);
   assert.equal(loadTask(fx.repo).lifecycle.state, "active");
-});
-
-test("a fresh satisfied closure succeeds after the write budget is exhausted", (t) => {
-  for (const entry of ["Stop", "achieve"]) {
-    const fx = fixture(t); assert.equal(open(fx, "default", ["--writes", "1"]).status, 0);
-    const writePayload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: fx.repo, tool_name: "Write", tool_input: { file_path: path.join(fx.repo, "work.txt") } });
-    assert.equal(run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: writePayload }).stdout, "");
-    fs.writeFileSync(path.join(fx.repo, "done"), "yes\n");
-    const closed = entry === "Stop"
-      ? run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) })
-      : run(["achieve", "--repo", fx.repo], { env: fx.env });
-    assert.equal(closed.status, 0, `${entry}: ${closed.stderr}`);
-    assert.equal(loadTask(fx.repo).lifecycle.outcome, "achieved", entry);
-  }
 });
 
 test("transcript output tokens are counted once and enforce the token budget", (t) => {
@@ -2429,10 +2450,17 @@ test("CLI side-effect criteria are recorded without accepting stale closure obse
   assert.equal(run(["amend", "--repo", fx.repo, "--criterion-file", "side.mjs", "--reason", "exercise side effect"], { env: fx.env }).status, 0);
   const verified = run(["verify", "--repo", fx.repo], { env: fx.env }); assert.equal(verified.status, 2); assert.equal(loadTask(fx.repo).artifact_revision, 1);
   const verifiedPayload = JSON.parse(verified.stdout); assert.equal(verifiedPayload.persisted, true); assert.equal(verifiedPayload.stale, true); assert.deepEqual(verifiedPayload.observation.changed_paths, ["mutation"]); assert.equal(verifiedPayload.artifact_revision_before, 0); assert.equal(verifiedPayload.artifact_revision_after, 1);
+  let sideState = loadTask(fx.repo);
+  assert.ok(sideState.artifact_checkpoint.entries.some((entry) => entry.path === "mutation"));
+  assert.ok(Number.isSafeInteger(sideState.artifact_checkpoint.captured_at_ms));
+  const sideEvents = readEventStore(fx.repo).records.at(-1).events.map((event) => event.kind);
+  assert.deepEqual(sideEvents.slice(-3), ["artifact_reconciled", "coverage_changed", "criterion_side_effect_recorded"]);
   fs.rmSync(path.join(fx.repo, "mutation"));
-  const achieved = run(["achieve", "--repo", fx.repo], { env: fx.env }); assert.equal(achieved.status, 2); assert.match(achieved.stderr, /criterion_observation_stale.*side-effect evidence recorded.*changed paths: mutation/); assert.equal(loadTask(fx.repo).artifact_revision, 2); assert.equal(loadTask(fx.repo).lifecycle.state, "active");
+  const beforeAchieveRevision = loadTask(fx.repo).artifact_revision;
+  const achieved = run(["achieve", "--repo", fx.repo], { env: fx.env }); assert.equal(achieved.status, 2); assert.match(achieved.stderr, /criterion_observation_stale.*side-effect evidence recorded.*changed paths: mutation/); assert.equal(loadTask(fx.repo).artifact_revision, beforeAchieveRevision + 2); assert.equal(loadTask(fx.repo).lifecycle.state, "active");
   fs.rmSync(path.join(fx.repo, "mutation"));
-  const stopped = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) }); assert.match(stopped.stdout, /criterion_observation_stale.*side-effect evidence recorded.*changed paths: mutation/); assert.equal(loadTask(fx.repo).artifact_revision, 3); assert.equal(loadTask(fx.repo).lifecycle.state, "active");
+  const beforeStopRevision = loadTask(fx.repo).artifact_revision;
+  const stopped = run(["hook", "--profile", "claude"], { cwd: fx.repo, env: fx.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: fx.repo }) }); assert.match(stopped.stdout, /criterion_observation_stale.*side-effect evidence recorded.*changed paths: mutation/); assert.equal(loadTask(fx.repo).artifact_revision, beforeStopRevision + 2); assert.equal(loadTask(fx.repo).lifecycle.state, "active");
 });
 
 test("CLI suspend uses kebab enums while storage uses snake case and Stop releases", (t) => {

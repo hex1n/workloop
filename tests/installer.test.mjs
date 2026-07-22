@@ -9,6 +9,7 @@ import test from "node:test";
 import { assertSourceActivationCompatible } from "../install.mjs";
 
 const ROOT = path.resolve(".");
+process.env.WORKLOOP_INSTALL_ISOLATED = "1";
 
 function run(script, args = [], options = {}) { return spawnSync(process.execPath, [script, ...args], { cwd: options.cwd ?? ROOT, env: options.env ?? process.env, input: options.input ?? "", encoding: "utf8" }); }
 
@@ -63,11 +64,11 @@ test("installer warns about legacy Codex Stop hooks without editing user configu
   safeConfig.hooks.Stop[0].hooks[0].timeout = 45;
   safeConfig.hooks.Stop[0].matcher = "*";
   safeConfig.hooks.PreToolUse = [{
-    matcher: "Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*",
+    matcher: "apply_patch|Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*",
     hooks: [{ type: "command", command: 'node "/installed/workloop.mjs" hook --profile codex-safe', timeout: 20 }],
   }];
   safeConfig.hooks.PostToolUse = [{
-    matcher: "Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*",
+    matcher: "apply_patch|Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*",
     hooks: [{ type: "command", command: 'node "/installed/workloop.mjs" hook --profile codex-safe', timeout: 30 }],
   }];
   const safe = Buffer.from(JSON.stringify(safeConfig, null, 2) + "\n");
@@ -103,13 +104,13 @@ test("installer diagnoses Codex PreToolUse profile, timeout, and matcher drift",
     {
       name: "profile",
       handler: { type: "command", command: 'node "/installed/workloop.mjs" hook --profile codex-cli-legacy --mode nudge', timeout: 20 },
-      matcher: "Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*",
+      matcher: "apply_patch|Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*",
       expected: /experimental Codex CLI legacy PreToolUse hook/,
     },
     {
       name: "timeout",
       handler: { type: "command", command: 'node "/installed/workloop.mjs" hook --profile codex-safe --mode nudge', timeout: 45 },
-      matcher: "Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*",
+      matcher: "apply_patch|Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*",
       expected: /Codex workloop PreToolUse hook uses a stale or missing timeout/,
     },
     {
@@ -315,6 +316,18 @@ test("Contract 5 compatibility runtime remains pinned across Contract 6 upgrades
   const runtimeRoot = path.join(home, "bin", ".workloop-runtime");
   fs.mkdirSync(runtimeRoot, { recursive: true });
   fs.cpSync(legacySource, path.join(runtimeRoot, legacyHash), { recursive: true });
+  const legacyCli = path.join(runtimeRoot, legacyHash, "bin", "workloop.mjs");
+  const legacyTaskRepo = (name) => {
+    const repo = path.join(root, name);
+    fs.mkdirSync(repo, { recursive: true });
+    fs.writeFileSync(path.join(repo, "check.mjs"), "import fs from 'node:fs'; process.exit(fs.existsSync('done') ? 0 : 1);\n");
+    fs.writeFileSync(path.join(repo, "work.txt"), "legacy active task\n");
+    const opened = run(legacyCli, ["open", "--repo", repo, "--goal", name, "--criterion-file", "check.mjs", "--criterion-policy", "default", "--alignment-because", "compatibility seal", "--files", "work.txt", "--files", "done", "--risk", "routine", "--risk-reason", "compatibility fixture", "--history-requirement", "artifact-only"], { env: { ...process.env, HOME: home, USERPROFILE: home } });
+    assert.equal(opened.status, 0, opened.stderr);
+    return repo;
+  };
+  const finishRepo = legacyTaskRepo("legacy-finish");
+  const abandonRepo = legacyTaskRepo("legacy-abandon");
   fs.writeFileSync(path.join(home, "bin", ".workloop-active-release.json"), `${JSON.stringify({
     release_manifest_version: 1, release_id: legacyHash, runtime_contract: 5, runtime_digest: legacyHash,
     managed_skills_manifest_digest: null,
@@ -336,6 +349,16 @@ test("Contract 5 compatibility runtime remains pinned across Contract 6 upgrades
   assert.ok(fs.existsSync(path.join(runtimeRoot, legacyHash)));
   assert.notEqual(second.runtime_digest, first.runtime_digest);
   assert.equal(fs.existsSync(path.join(runtimeRoot, first.runtime_digest)), false);
+
+  fs.writeFileSync(path.join(finishRepo, "done"), "yes\n");
+  const finished = run(legacyCli, ["achieve", "--repo", finishRepo], { env: { ...process.env, HOME: home, USERPROFILE: home } });
+  assert.equal(finished.status, 0, finished.stderr);
+  const finishedStatus = JSON.parse(run(legacyCli, ["status", "--repo", finishRepo], { env: { ...process.env, HOME: home, USERPROFILE: home } }).stdout);
+  assert.equal(finishedStatus.lifecycle.outcome, "achieved");
+  const abandoned = run(legacyCli, ["abandon", "--repo", abandonRepo, "--reason", "compatibility abandon seal"], { env: { ...process.env, HOME: home, USERPROFILE: home } });
+  assert.equal(abandoned.status, 0, abandoned.stderr);
+  const abandonedStatus = JSON.parse(run(legacyCli, ["status", "--repo", abandonRepo], { env: { ...process.env, HOME: home, USERPROFILE: home } }).stdout);
+  assert.equal(abandonedStatus.lifecycle.outcome, "abandoned");
 });
 
 test("installed runtime exercises the assurance matrix", (t) => {
@@ -382,6 +405,33 @@ test("every installer activation interruption leaves a journal and rerun converg
     const info = JSON.parse(run(path.join(home, "bin", "workloop.mjs"), ["info"], { env: base }).stdout); assert.equal(info.runtime_contract, 6);
     assert.equal(fs.existsSync(path.join(home, "bin", ".workloop-activation-journal.json")), false);
   }
+});
+
+test("activation failure after a shim switch restores the previous release", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-install-shim-rollback-"));
+  const home = path.join(root, "home"); const source = path.join(root, "source");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(source, { recursive: true });
+  for (const name of ["bin", "lib", "skills"]) fs.cpSync(path.join(ROOT, name), path.join(source, name), { recursive: true });
+  for (const name of ["install.mjs", "uninstall.mjs", "package.json"]) fs.copyFileSync(path.join(ROOT, name), path.join(source, name));
+  const base = { ...process.env, HOME: home, USERPROFILE: home, WORKLOOP_INSTALL_HOME: home, WORKLOOP_INSTALL_REPO: ROOT };
+  assert.equal(run(path.join(ROOT, "install.mjs"), [], { env: base }).status, 0);
+  const shimPaths = ["workloop.mjs", "workloop.cmd", "workloop.ps1"].map((name) => path.join(home, "bin", name));
+  const before = shimPaths.map((target) => fs.readFileSync(target));
+  const managedManifest = path.join(home, "bin", ".workloop-managed-skills.json");
+  const managedSkillPaths = [".claude", ".codex"].map((runtime) => path.join(home, runtime, "skills", "workloop", "SKILL.md"));
+  const managedBefore = [managedManifest, ...managedSkillPaths].map((target) => fs.readFileSync(target));
+
+  fs.appendFileSync(path.join(source, "lib", "prims.mjs"), "\n// rollback fixture release\n");
+  fs.appendFileSync(path.join(source, "skills", "workloop", "SKILL.md"), "\nrollback fixture skill release\n");
+  const upgraded = run(path.join(source, "install.mjs"), [], { env: {
+    ...base, WORKLOOP_INSTALL_REPO: source, WORKLOOP_INSTALL_FAILPOINT: "shim-activated",
+  } });
+  assert.notEqual(upgraded.status, 0);
+  assert.deepEqual(shimPaths.map((target) => fs.readFileSync(target)), before);
+  assert.deepEqual([managedManifest, ...managedSkillPaths].map((target) => fs.readFileSync(target)), managedBefore);
+  const info = JSON.parse(run(shimPaths[0], ["info"], { env: base }).stdout);
+  assert.equal(info.runtime_contract, 6);
 });
 
 test("uninstall removes what it installed and preserves what it cannot prove is its own", (t) => {
