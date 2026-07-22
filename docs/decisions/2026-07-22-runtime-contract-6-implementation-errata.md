@@ -1,7 +1,9 @@
 # Runtime Contract 6 implementation errata
 
-Date: 2026-07-22  
-Applies to: `docs/plans/2026-07-22-host-adaptive-write-evidence-implementation.md`  
+Date: 2026-07-22
+
+Applies to: `docs/plans/2026-07-22-host-adaptive-write-evidence-implementation.md`
+
 Reviewed plan revision: `7fb3acc8e27a3f44a32d7aca58f1b48e5140cad7bf98ed3be222bc03a3efa21f`
 
 This erratum records two implementation-time corrections discovered by fault injection and independent review. It does not weaken any evidence or closure requirement.
