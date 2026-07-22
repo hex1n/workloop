@@ -41,12 +41,43 @@ test("installer warns about legacy Codex Stop hooks without editing user configu
 
   const safeConfig = JSON.parse(original.toString("utf8"));
   safeConfig.hooks.Stop[0].hooks[0].command += " hook --profile codex-safe";
+  safeConfig.hooks.Stop[0].hooks[0].timeout = 45;
   const safe = Buffer.from(JSON.stringify(safeConfig, null, 2) + "\n");
   fs.writeFileSync(config, safe);
   const checked = run(path.join(ROOT, "install.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, WORKLOOP_INSTALL_HOME: home, WORKLOOP_INSTALL_REPO: ROOT } });
   assert.equal(checked.status, 0, checked.stderr || checked.stdout);
   assert.doesNotMatch(checked.stdout, /legacy Codex workloop Stop hook found/);
   assert.deepEqual(fs.readFileSync(config), safe);
+});
+
+test("installer diagnoses a stale codex-safe Stop timeout without editing configuration", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-install-hook-timeout-")); const home = path.join(root, "home");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(home, ".codex", "hooks.json");
+  fs.mkdirSync(path.dirname(config), { recursive: true });
+  const original = Buffer.from(JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: 'node "/installed/workloop.mjs" hook --profile codex-safe --mode nudge', timeout: 300 }] }] } }, null, 2) + "\n");
+  fs.writeFileSync(config, original);
+
+  const installed = run(path.join(ROOT, "install.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, WORKLOOP_INSTALL_HOME: home, WORKLOOP_INSTALL_REPO: ROOT } });
+
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  assert.match(installed.stdout, /stale or missing timeout.*hooks --profile codex-safe/);
+  assert.deepEqual(fs.readFileSync(config), original);
+});
+
+test("installer diagnoses a stale Claude hard-Stop timeout without editing configuration", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-install-claude-timeout-")); const home = path.join(root, "home");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const config = path.join(home, ".claude", "settings.json");
+  fs.mkdirSync(path.dirname(config), { recursive: true });
+  const original = Buffer.from(JSON.stringify({ hooks: { Stop: [{ hooks: [{ type: "command", command: 'node "/installed/workloop.mjs" hook --profile claude --mode nudge', timeout: 300 }] }] } }, null, 2) + "\n");
+  fs.writeFileSync(config, original);
+
+  const installed = run(path.join(ROOT, "install.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, WORKLOOP_INSTALL_HOME: home, WORKLOOP_INSTALL_REPO: ROOT } });
+
+  assert.equal(installed.status, 0, installed.stderr || installed.stdout);
+  assert.match(installed.stdout, /Claude workloop Stop hook uses a stale or missing timeout.*hooks --profile claude/);
+  assert.deepEqual(fs.readFileSync(config), original);
 });
 
 test("installer does not confuse a workloop PreToolUse hook with another tool's Stop hook", (t) => {

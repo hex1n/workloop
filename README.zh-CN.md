@@ -143,7 +143,9 @@ workloop hooks --profile codex-safe --mode nudge
 workloop hooks --profile claude --mode nudge
 ```
 
-`codex-safe` 保留 PreToolUse deny/rewrite 行为，但 held Stop 会输出零 stdout，并在 stderr 给出解释；继续下一轮要依靠外部 driver 或显式运行 `workloop achieve`。`claude` 保留 Claude Code session 内部的 `decision:block` continuation。`codex-cli-legacy` 只用于固定版本实验，不能用于 Codex App。
+`codex-safe` 保留 PreToolUse deny/rewrite，但 Stop 是 release-only：不读取 task authority、不取 task lock、不执行 criterion，也不改变 round/lifecycle。自动策略在最后一次写入后显式运行 `workloop verify --record`，显式策略运行 `workloop achieve`。`claude` 保留 session 内部的 `decision:block` continuation，但只内联执行 timeout 不超过 30 秒的 criterion；更长的 criterion 不会启动，hold 会给出显式验证命令。`codex-cli-legacy` 仅标识固定版本实验，在 continuation 契约重新实测前同样 release-only，不能用于 Codex App。
+
+所有 criterion 都在独立 single-flight lease 下、`.workloop/.task.lock` 之外执行。事务令牌绑定 intent、task/source cursor/revision/generation/owner episode，并用包含 ignored files、排除 `.git`/`.workloop` 的完整仓库内容指纹兜底。运行前后任一权威或内容发生变化时，旧 observation 以 `criterion_observation_stale` 丢弃，不计 round、不关闭任务；已识别的内容变化仍记录 side-effect evidence，使 artifact revision 推进并让旧 review 过期。PreToolUse、status 和 suspend 仍可立即取得 task lock。Runtime 的 Stop deadline 小于生成 recipe 的 timeout，Host timeout 只是第二道回收保险。
 
 最新 episode 在其 `host_session_id` 被绑定时拥有 Stop adjudication 和 write envelope。Foreign session 可以自由读取和验证，但不能写 envelope 或 task/git control state；继续 active task 用 `join --reason` 转移所有权，并行工作用单独 worktree。
 
@@ -169,6 +171,6 @@ npm run bench:event-store -- --json
 node bin/workloop.mjs help
 ```
 
-手动安装测试使用 `WORKLOOP_INSTALL_HOME`。Installer 会保护未归属、本地修改、symlink 或外部接管的 skill tree，并对 Claude/Codex skill root 指向同一目录的情况去重。它只读取用户级 Codex Hook 配置来提示 legacy workloop Stop command；除非显式传入 `--configure-codex`，否则不会改写 Hook 配置。该 flag 也只用于 outcome projection writable root。
+手动安装测试使用 `WORKLOOP_INSTALL_HOME`。Installer 会保护未归属、本地修改、symlink 或外部接管的 skill tree，并对 Claude/Codex skill root 指向同一目录的情况去重。它只读取用户级 Codex Hook 配置来提示 legacy workloop Stop command 或旧 recipe timeout；除非显式传入 `--configure-codex`，否则不会改写 Hook 配置。该 flag 也只用于 outcome projection writable root。
 
 Windows release gate 在 Windows 2022/2025 和 Node 22/24 上运行 W01-W08。完整契约见 [loop-core reference](skills/loop-core/REFERENCE.md)、[host binding recipes](skills/loop-core/HOSTS.md) 和 [adapter contract](skills/loop-core/ADAPTERS.md)。

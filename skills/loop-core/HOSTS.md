@@ -35,6 +35,11 @@ profile because Codex App and Codex CLI cannot be treated as one wire surface.
   for evidence and review provenance; it never replaces ownership identity.
 - Session-internal continuation needs nothing beyond hook wiring: the Stop
   hook's block feedback is the resume prompt.
+- The `claude` profile is the hard Stop capability. It executes only criteria
+  whose configured timeout fits the runtime's 30-second inline budget. The
+  child deadline is runtime-owned and shorter than the generated recipe's
+  timeout; an over-budget criterion is not started and the hold points to
+  `workloop verify --record` or `workloop achieve`.
 - Recurring goals (`/goal`, `/loop`): use the stop condition above. Claude Code
   force-releases a Stop hook after 8 consecutive blocks — the same constant as
   the default rounds budget — so a goal condition blind to suspension spends
@@ -47,9 +52,10 @@ profile because Codex App and Codex CLI cannot be treated as one wire surface.
 ## Codex CLI
 
 - Generate the supported recipe with `workloop hooks --profile codex-safe`.
-  A held Stop records the normal workloop observation but returns zero stdout
-  plus a warning: Codex gets no injected resume prompt. Continue through an
-  external driver or invoke `workloop achieve` explicitly.
+  This is a release-only Stop capability: it returns without reading task
+  authority, taking the task lock, executing the criterion, or changing rounds
+  and lifecycle. Run `workloop verify --record` after the final write for an
+  automatic policy, or `workloop achieve` for an explicit policy.
 
 - Hook payloads carry `session_id`, while exec shells export
   `CODEX_THREAD_ID`, and the two values differ; workloop binds only from the
@@ -79,10 +85,10 @@ profile because Codex App and Codex CLI cannot be treated as one wire surface.
   CLI calls: matching hooks run concurrently, so independent command rewriters
   have no reliable composition order. PreToolUse remains a policy guardrail,
   not an OS security boundary.
-- `workloop hooks --profile codex-cli-legacy` retains the historical
-  `decision:block` behavior only for explicit, version-pinned CLI experiments.
-  It was observed on Codex CLI 0.144.1, is not part of the supported Codex
-  contract, and must never be copied into Codex App configuration.
+- `workloop hooks --profile codex-cli-legacy` is retained only to identify old,
+  version-pinned CLI experiments. It is release-only until a stable live
+  continuation contract is separately proven, is not part of the supported
+  Codex contract, and must never be copied into Codex App configuration.
 - The default workspace-write sandbox does not cover the projection home:
   agent-run CLI verbs inside the sandbox may defer their projection rows. Pair sessions
   with `--add-dir ~/.workloop` (or grant the home). `node install.mjs` detects a
@@ -106,15 +112,15 @@ profile because Codex App and Codex CLI cannot be treated as one wire surface.
   persisted as a user-shaped hook prompt with a UUID message id; later API
   replay rejected that id because API message ids require the `msg` prefix.
   workloop supplies the Stop reason, while Codex App creates the message id.
-- `codex-safe` therefore emits no Stop stdout while held. PreToolUse remains a
-  policy guardrail, but session-internal continuation is unavailable until
+- `codex-safe` therefore performs a silent release-only Stop. PreToolUse remains
+  a policy guardrail, but session-internal continuation is unavailable until
   Codex exposes and workloop verifies a stable continuation contract.
 - Never infer App versus CLI from `session_id`, model name, executable path, or
   environment variables. Current Hook payloads expose no stable surface field;
   the generated command must carry the profile.
 - A no-argument legacy workloop Hook invocation is migration-only: PreToolUse
-  remains active, held Stop releases with a stderr warning, and the user should
-  regenerate an explicit recipe.
+  remains active, Stop is release-only, and the user should regenerate an
+  explicit recipe.
 
 ## What stays out
 

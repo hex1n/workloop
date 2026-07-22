@@ -1,7 +1,31 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { buildHookRecipe, decodeHook, encodeHook } from "../lib/host-hooks.mjs";
+import {
+  STOP_INLINE_CRITERION_SECONDS,
+  STOP_RECIPE_TIMEOUT_SECONDS,
+  STOP_RUNTIME_DEADLINE_SECONDS,
+  buildHookRecipe,
+  decodeHook,
+  encodeHook,
+  hostProfileCapability,
+} from "../lib/host-hooks.mjs";
+
+test("Stop capabilities separate release-only profiles from the hard gate", () => {
+  assert.deepEqual(hostProfileCapability("claude"), {
+    stop_control: "hard",
+    inline_criterion_budget_seconds: STOP_INLINE_CRITERION_SECONDS,
+  });
+  for (const profile of ["codex-safe", "codex-cli-legacy", "unknown"]) {
+    assert.deepEqual(hostProfileCapability(profile), {
+      stop_control: "release_only",
+      inline_criterion_budget_seconds: 0,
+    });
+  }
+  assert.ok(STOP_INLINE_CRITERION_SECONDS > 0);
+  assert.ok(STOP_INLINE_CRITERION_SECONDS < STOP_RUNTIME_DEADLINE_SECONDS);
+  assert.ok(STOP_RUNTIME_DEADLINE_SECONDS < STOP_RECIPE_TIMEOUT_SECONDS);
+});
 
 test("codex-safe releases a held Stop without emitting resumable stdout", () => {
   const encoded = encodeHook({
@@ -16,17 +40,24 @@ test("codex-safe releases a held Stop without emitting resumable stdout", () => 
   });
 });
 
-test("only explicit blocking profiles encode a held Stop as decision:block", () => {
-  for (const profile of ["claude", "codex-cli-legacy"]) {
-    assert.deepEqual(encodeHook({
-      invocation: { profile, event: "stop" },
-      disposition: { event: "stop", action: "hold", code: "criterion_unsatisfied", reason: "criterion unsatisfied" },
-    }), {
-      stdout: '{"decision":"block","reason":"workloop: criterion unsatisfied"}\n',
-      stderr: "",
-      exitCode: 0,
-    });
-  }
+test("only hard profiles encode a held Stop as decision:block", () => {
+  assert.deepEqual(encodeHook({
+    invocation: { profile: "claude", event: "stop" },
+    disposition: { event: "stop", action: "hold", code: "criterion_unsatisfied", reason: "criterion unsatisfied" },
+  }), {
+    stdout: '{"decision":"block","reason":"workloop: criterion unsatisfied"}\n',
+    stderr: "",
+    exitCode: 0,
+  });
+
+  assert.deepEqual(encodeHook({
+    invocation: { profile: "codex-cli-legacy", event: "stop" },
+    disposition: { event: "stop", action: "hold", code: "criterion_unsatisfied", reason: "criterion unsatisfied" },
+  }), {
+    stdout: "",
+    stderr: "workloop: criterion unsatisfied; Codex legacy profile is release-only; regenerate hooks with codex-safe or run explicit verification\n",
+    exitCode: 0,
+  });
 });
 
 test("PreToolUse deny, rewrite, and pass stay byte-exact across profiles", () => {
@@ -95,7 +126,7 @@ test("explicit profiles decode payloads and generate self-identifying recipes", 
   assert.deepEqual(buildHookRecipe({ profile: "codex-safe", command: 'node "/path/workloop.mjs"' }), {
     hooks: {
         PreToolUse: [{ matcher: "Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', timeout: 20 }] }],
-        Stop: [{ matcher: "*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', timeout: 300 }] }],
+        Stop: [{ matcher: "*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', timeout: STOP_RECIPE_TIMEOUT_SECONDS }] }],
     },
   });
 

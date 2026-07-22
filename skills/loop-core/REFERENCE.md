@@ -27,11 +27,26 @@ non-reusable `criterion_generation_id`. Any criterion, policy, declared-input,
 or trust-exemption amendment creates a new generation. Witnesses and reviews
 bind to the generation and never carry across that boundary.
 
-Criterion execution is read-only. The runtime snapshots tracked and untracked
-repository content before and after every open, Stop, `verify`, and `achieve`
-run. A changed path makes the observation indeterminate with
-`criterion_side_effect`; on an existing task it also advances artifact and
-substantive revision so old reviews expire.
+Criterion execution is read-only. The runtime snapshots all repository file
+and symlink content — including ignored files, excluding only Git metadata and
+`.workloop/` control state — before and after every open, Stop, `verify`, and
+`achieve` run. A changed path makes the execution indeterminate with
+`criterion_side_effect`. On an existing task the runtime records side-effect
+evidence to advance artifact and substantive revision so old reviews expire,
+but does not accept that execution as a closure observation.
+
+External criterion processes never run while `.workloop/.task.lock` is held.
+The runtime prepares an authority/content token under that lock, executes under
+the independent single-flight criterion lease, then reacquires the task lock
+and commits only if intent, task id, source cursor, revisions, criterion
+generation/hash, owner episode, and repository fingerprint still match. A
+concurrent state or content change makes the closure observation
+`criterion_observation_stale`: it is discarded without a round, attempt, or
+closure transition. If the content snapshot identifies changed paths, the
+separate side-effect evidence still invalidates old reviews. Status,
+PreToolUse, suspend, and other control commands do not wait for the external
+process. A crashed criterion lease is reclaimable only after its declared
+deadline plus cleanup margin and only when its owner process is gone.
 
 ## Lifecycle and closure
 
@@ -56,6 +71,12 @@ criterion again and still sees satisfied. Explicit policy closes only through
 `achieve`, which also runs the criterion again. `not-needed --evidence` and
 `abandon --reason` are separate terminal paths; not-needed is allowed only
 before any witnessed write.
+
+That automatic Stop path exists only on a hard-Stop host profile and only when
+the configured criterion timeout fits the runtime's portable inline budget.
+Release-only profiles never run or record a Stop criterion. Long criteria use
+`verify --record` for automatic policies and `achieve` for explicit policies;
+both keep the task lock free while they run.
 
 ## Criterion policies
 

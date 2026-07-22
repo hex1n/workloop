@@ -135,7 +135,7 @@ test("Stop preserves the task-state failure protocol for unclassified lock error
   const safe = run(["hook", "--profile", "codex-safe"], { cwd: fx.repo, env, input: payload });
   assert.equal(safe.status, 0);
   assert.equal(safe.stdout, "");
-  assert.match(safe.stderr, /^synthetic task lock failure\nworkloop: task state unavailable \(EACCES\); refusing to adjudicate Stop; Codex safe profile cannot resume this session;/);
+  assert.equal(safe.stderr, "");
 });
 
 test("authority guard rejects legacy, orphan, mixed, and corrupt state without overwriting events", (t) => {

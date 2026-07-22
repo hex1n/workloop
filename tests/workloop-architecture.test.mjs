@@ -6,8 +6,9 @@ import { spawn, spawnSync } from "node:child_process";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
 
+import { withOwnedDirectoryLock } from "../lib/prims.mjs";
 import { decide, evolve } from "../lib/task-engine.mjs";
-import { withTaskLock } from "../lib/task-store.mjs";
+import { criterionLeasePath, withCriterionLease, withTaskLock } from "../lib/task-store.mjs";
 import { makeTaskOpenedCommand } from "./helpers/event-v3-fixture.mjs";
 
 const ROOT = path.resolve(".");
@@ -84,6 +85,27 @@ test("production assembly has no direct authoritative task writer", () => {
   assert.match(source, /saveTaskSnapshot\s*\(/);
 });
 
+test("criterion execution is never nested in a task-lock transaction", () => {
+  const source = fs.readFileSync(path.join(ROOT, "lib", "application.mjs"), "utf8");
+  for (const callback of source.matchAll(/withTaskLock\(repo, \(\) => \{([\s\S]*?)\n  \}\);/g)) {
+    assert.doesNotMatch(callback[1], /runObservation\s*\(|runCriterionSource\s*\(/);
+  }
+});
+
+test("observation compare-and-commit binds intent, hashes outside locks, and revalidates inside", () => {
+  const application = fs.readFileSync(path.join(ROOT, "lib", "application.mjs"), "utf8");
+  const criterion = fs.readFileSync(path.join(ROOT, "lib", "criterion.mjs"), "utf8");
+  assert.match(application, /function observationAuthorityToken\(authority, task, intent\)[\s\S]*?return \{\s*intent,/);
+  assert.match(application, /prepared\.intent !== intent \|\| prepared\.token\?\.intent !== intent/);
+  assert.match(application, /const currentSnapshot = repoSnapshot\([\s\S]*?return withTaskLock\(repo,/);
+  for (const callback of application.matchAll(/withTaskLock\(repo, \(\) => \{([\s\S]*?)\n  \}\);/g)) assert.doesNotMatch(callback[1], /repoSnapshot\s*\(/);
+  assert.match(application, /return withTaskLock\(repo,[\s\S]*?validateRepoSnapshot\(repo, currentSnapshot,/);
+  assert.match(application, /OBSERVATION_COMMIT_VALIDATION_MS = 50/);
+  assert.match(application, /execution_error = "criterion_side_effect"/);
+  assert.match(criterion, /including ignored files/);
+  assert.doesNotMatch(criterion, /git", \["ls-files"/);
+});
+
 test("host wire protocol is localized behind the Host Hook seam", () => {
   const application = fs.readFileSync(path.join(ROOT, "lib", "application.mjs"), "utf8");
   const hostHooks = fs.readFileSync(path.join(ROOT, "lib", "host-hooks.mjs"), "utf8");
@@ -119,6 +141,119 @@ test("task lock serializes concurrent updates and fails closed on timeout", asyn
   });
   assert.throws(() => withTaskLock(repo, () => assert.fail("must not run"), { timeoutMs: 20 }), /lock unavailable/);
   await new Promise((resolve) => child.once("close", resolve));
+});
+
+test("criterion lease is non-blocking and preserves a live owner's declared deadline", (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-criterion-lease-"));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const lock = criterionLeasePath(repo);
+  fs.mkdirSync(lock, { recursive: true });
+  const now = Date.now();
+  fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify({
+    pid: process.pid,
+    token: "live-owner",
+    intent: "verify_record",
+    started_at_epoch_ms: now - 60_000,
+    deadline_epoch_ms: now - 30_000,
+  }));
+  const old = new Date(now - 60_000);
+  fs.utimesSync(lock, old, old);
+  const started = Date.now();
+  const result = withCriterionLease(repo, {
+    intent: "stop",
+    started_at_epoch_ms: now,
+    deadline_epoch_ms: now + 1_000,
+  }, () => assert.fail("must not steal a live lease"));
+  assert.equal(result.status, "busy");
+  assert.equal(result.lease.intent, "verify_record");
+  assert.ok(Date.now() - started < 250);
+  assert.equal(fs.existsSync(lock), true);
+});
+
+test("criterion lease does not steal an owner paused after atomic claim publication", (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-criterion-claim-"));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const lock = criterionLeasePath(repo);
+  fs.mkdirSync(path.dirname(lock), { recursive: true });
+  const now = Date.now();
+  const owner = {
+    pid: process.pid,
+    token: "paused-live-owner",
+    intent: "verify_record",
+    started_at_epoch_ms: now - 60_000,
+    deadline_epoch_ms: now + 60_000,
+  };
+  fs.writeFileSync(`${lock}.claim`, JSON.stringify(owner));
+  const old = new Date(now - 60_000);
+  fs.utimesSync(`${lock}.claim`, old, old);
+  const started = Date.now();
+  const result = withCriterionLease(repo, {
+    intent: "stop",
+    started_at_epoch_ms: now,
+    deadline_epoch_ms: now + 1_000,
+  }, () => assert.fail("must not steal a published live claim"));
+  assert.equal(result.status, "busy");
+  assert.equal(result.lease, null);
+  assert.ok(Date.now() - started < 250);
+  assert.equal(fs.existsSync(`${lock}.claim`), true);
+  assert.equal(fs.existsSync(lock), false);
+});
+
+test("owned directory locks fall back safely when hard-link claims are unsupported", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-lock-copy-claim-"));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const lock = path.join(root, "lock");
+  const fsOps = {
+    ...fs,
+    linkSync() { throw Object.assign(new Error("hard links unsupported"), { code: "EOPNOTSUPP" }); },
+  };
+  const result = withOwnedDirectoryLock(lock, () => {
+    assert.equal(fs.existsSync(lock), true);
+    assert.equal(fs.existsSync(`${lock}.claim`), true);
+    return "held";
+  }, {
+    timeoutMs: 100,
+    staleMs: 100,
+    fsOps,
+  });
+  assert.equal(result, "held");
+  assert.equal(fs.existsSync(lock), false);
+  assert.equal(fs.existsSync(`${lock}.claim`), false);
+});
+
+test("criterion lease reaps a dead owner only after its deadline and cleanup margin", (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-criterion-reap-"));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const lock = criterionLeasePath(repo);
+  fs.mkdirSync(lock, { recursive: true });
+  const exited = spawnSync(process.execPath, ["-e", "process.stdout.write(String(process.pid))"], { encoding: "utf8" });
+  assert.equal(exited.status, 0, exited.stderr);
+  const now = Date.now();
+  const owner = { pid: Number(exited.stdout), token: "dead-owner", intent: "achieve", started_at_epoch_ms: now - 60_000, deadline_epoch_ms: now + 60_000 };
+  fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify(owner));
+  const old = new Date(now - 60_000);
+  fs.utimesSync(lock, old, old);
+  let result = withCriterionLease(repo, { intent: "stop", started_at_epoch_ms: now, deadline_epoch_ms: now + 1_000 }, () => "stolen");
+  assert.equal(result.status, "busy");
+  owner.deadline_epoch_ms = now - 20_000;
+  fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify(owner));
+  fs.utimesSync(lock, old, old);
+  result = withCriterionLease(repo, { intent: "stop", started_at_epoch_ms: now, deadline_epoch_ms: now + 1_000 }, () => "recovered");
+  assert.deepEqual(result, { status: "acquired", value: "recovered" });
+  assert.equal(fs.existsSync(lock), false);
+});
+
+test("criterion lease recovers a partial acquisition that never wrote owner metadata", (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-criterion-partial-"));
+  t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
+  const lock = criterionLeasePath(repo);
+  fs.mkdirSync(lock, { recursive: true });
+  const old = new Date(Date.now() - 10_000);
+  fs.utimesSync(lock, old, old);
+  const now = Date.now();
+  const result = withCriterionLease(repo, { intent: "verify", started_at_epoch_ms: now, deadline_epoch_ms: now + 1_000 }, () => "recovered");
+  assert.deepEqual(result, { status: "acquired", value: "recovered" });
+  assert.equal(fs.existsSync(lock), false);
 });
 
 test("ledger serializes snapshot reads behind the task lock", async (t) => {

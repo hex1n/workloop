@@ -83,6 +83,16 @@ after each meaningful write. Criterion unsatisfied guides the next round;
 criterion indeterminate means repair evidence or environment, not product work.
 Never weaken or mutate the criterion to obtain satisfied.
 
+After the final substantive write, choose the proof path from the installed
+Host profile. A release-only Stop (including `codex-safe`) never executes or
+records the criterion, so run `workloop verify --record` for an automatic
+policy or `workloop achieve` for an explicit policy. A hard Stop runs only a
+criterion whose configured timeout fits its portable inline budget; an
+over-budget hold names the same explicit command instead of starting the child.
+Criterion execution is single-flight but does not hold the task-control lock,
+so a concurrent state change discards the stale observation and the proof verb
+must be retried against current authority.
+
 A command-safety deny mid-loop is an authority gap: the message names the
 `amend` flag that lifts it. Either drop the effect — prefer leaving transient
 files in place over deleting them — or record the narrowest grant that covers
@@ -116,12 +126,12 @@ opens a new one. Queueing later work belongs to the driver, not the loop.
 
 ## 4. Close without drift
 
-Automatic policy closes on a fresh satisfied Stop only when closure is
-eligible. Explicit policy uses `achieve`. Otherwise choose exactly one honest
-path: `not-needed --evidence` before writes, or `abandon --reason`. Suspension
-is a pause, not a terminal outcome, and requires a complete judgment snapshot.
-A `needs_input` suspension must carry instructions the human can execute
-verbatim.
+Automatic policy closes on a fresh satisfied hard Stop or `verify --record`
+only when closure is eligible. Explicit policy uses `achieve`. Otherwise
+choose exactly one honest path: `not-needed --evidence` before writes, or
+`abandon --reason`. Suspension is a pause, not a terminal outcome, and requires
+a complete judgment snapshot. A `needs_input` suspension must carry
+instructions the human can execute verbatim.
 
 ## 5. Report
 

@@ -23,6 +23,12 @@ const RUNTIME_CONTRACT = (() => {
   if (value !== 5) throw new Error(`workloop installer requires runtime contract 5 source; refusing contract ${Number.isFinite(value) ? value : "unknown"}`);
   return value;
 })();
+const STOP_RECIPE_TIMEOUT_SECONDS = (() => {
+  const source = fs.readFileSync(path.join(SOURCE, "lib", "host-hooks.mjs"), "utf8");
+  const value = Number(source.match(/const STOP_RECIPE_TIMEOUT_SECONDS = (\d+);/)?.[1]);
+  if (!Number.isSafeInteger(value) || value <= 0) throw new Error("workloop installer cannot read the Stop recipe timeout contract");
+  return value;
+})();
 // Module-level plan log. Every exported entry point resets it so a library
 // caller never inherits a previous invocation's rows; main() aggregates the
 // rows appended by everything it runs after the one entry-point reset.
@@ -523,8 +529,8 @@ function codexStopCommands(config, text) {
     const groups = parsed?.hooks?.Stop;
     if (!Array.isArray(groups)) return [];
     return groups.flatMap((group) => Array.isArray(group?.hooks) ? group.hooks : [])
-      .map((handler) => handler?.command)
-      .filter((command) => typeof command === "string");
+      .filter((handler) => typeof handler?.command === "string")
+      .map((handler) => ({ command: handler.command, timeout: handler.timeout }));
   }
   const sections = [];
   const unparsedHookLines = [];
@@ -562,7 +568,11 @@ function codexStopCommands(config, text) {
       }
     }
   }
-  const commands = sections.filter((section) => section.event === "Stop").map((section) => section.lines.join("\n"));
+  const commands = sections.filter((section) => section.event === "Stop").map((section) => {
+    const body = section.lines.join("\n");
+    const timeout = Number(body.match(/^\s*timeout\s*=\s*(\d+)\s*(?:#.*)?$/m)?.[1]);
+    return { command: body, timeout: Number.isSafeInteger(timeout) ? timeout : null };
+  });
   if (unparsedHookLines.some((line) => /workloop(?:\.mjs)?/i.test(line))) {
     throw new Error("workloop hook uses unsupported TOML syntax");
   }
@@ -580,14 +590,18 @@ function inspectCodexHookProfiles(home) {
     }
     let commands;
     try {
-      commands = codexStopCommands(config, text).filter((command) => /workloop(?:\.mjs)?/i.test(command));
+      commands = codexStopCommands(config, text).filter((handler) => /workloop(?:\.mjs)?/i.test(handler.command));
     } catch (error) {
       plan("warning", `cannot inspect Codex Hook configuration ${config}: ${error?.message ?? error}; preserved ${config}`);
       continue;
     }
     if (!commands.length) continue;
-    const joined = commands.join("\n");
-    if (/\bhook\s+--profile\s+codex-safe\b/.test(joined) && !commands.some((command) => !/\bhook\s+--profile\s+codex-safe\b/.test(command))) {
+    const joined = commands.map((handler) => handler.command).join("\n");
+    if (/\bhook\s+--profile\s+codex-safe\b/.test(joined) && !commands.some((handler) => !/\bhook\s+--profile\s+codex-safe\b/.test(handler.command))) {
+      if (commands.some((handler) => handler.timeout !== STOP_RECIPE_TIMEOUT_SECONDS)) {
+        plan("warning", `Codex workloop Stop hook uses a stale or missing timeout in ${config}; generate workloop hooks --profile codex-safe --mode nudge and merge it manually; configuration preserved`);
+        continue;
+      }
       plan("ok", `Codex workloop Stop hook uses codex-safe: ${config}`);
       continue;
     }
@@ -597,6 +611,35 @@ function inspectCodexHookProfiles(home) {
     }
     plan("warning", `legacy Codex workloop Stop hook found in ${config}; generate a safe recipe with workloop hooks --profile codex-safe --mode nudge and merge it manually; configuration preserved`);
   }
+}
+
+function inspectClaudeHookProfile(home) {
+  const config = path.join(home, ".claude", "settings.json");
+  let text;
+  try { text = fs.readFileSync(config, "utf8"); }
+  catch (error) {
+    if (error?.code !== "ENOENT") plan("warning", `cannot inspect Claude Hook configuration ${config}: ${error?.message ?? error}; preserved ${config}`);
+    return;
+  }
+  let parsed;
+  try { parsed = JSON.parse(text); }
+  catch (error) {
+    plan("warning", `cannot inspect Claude Hook configuration ${config}: ${error?.message ?? error}; preserved ${config}`);
+    return;
+  }
+  const handlers = (Array.isArray(parsed?.hooks?.Stop) ? parsed.hooks.Stop : [])
+    .flatMap((group) => Array.isArray(group?.hooks) ? group.hooks : [])
+    .filter((handler) => typeof handler?.command === "string" && /workloop(?:\.mjs)?/i.test(handler.command));
+  if (!handlers.length) return;
+  if (handlers.every((handler) => /\bhook\s+--profile\s+claude\b/.test(handler.command))) {
+    if (handlers.some((handler) => handler.timeout !== STOP_RECIPE_TIMEOUT_SECONDS)) {
+      plan("warning", `Claude workloop Stop hook uses a stale or missing timeout in ${config}; generate workloop hooks --profile claude --mode nudge and merge it manually; configuration preserved`);
+      return;
+    }
+    plan("ok", `Claude workloop Stop hook uses the hard profile: ${config}`);
+    return;
+  }
+  plan("warning", `legacy Claude workloop Stop hook found in ${config}; generate workloop hooks --profile claude --mode nudge and merge it manually; configuration preserved`);
 }
 
 function pruneRuntimes(runtimeRoot, activeHash, dry) {
@@ -1095,6 +1138,7 @@ function main() {
   if (configureCodex && !dry) withInstallLock(HOME, bindCodex);
   else bindCodex();
   inspectCodexHookProfiles(HOME);
+  inspectClaudeHookProfile(HOME);
   return reportActions(`workloop install ${dry ? "(dry run) " : ""}from ${SOURCE}`, `runtime: ${installed.hash}\n`);
 }
 
