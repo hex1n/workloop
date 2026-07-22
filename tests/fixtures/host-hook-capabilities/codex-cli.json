@@ -30,7 +30,27 @@
       "correlation": "pre-only",
       "completion_signal": "absent",
       "receipt_quality": "unknown"
+    },
+    {
+      "canonical_tool": "Bash",
+      "outcome": "success",
+      "pre_observed": true,
+      "post_observed": true,
+      "failure_observed": false,
+      "correlation": "same-id",
+      "completion_signal": "post-response-present",
+      "receipt_quality": "tool_specific"
+    },
+    {
+      "canonical_tool": "Bash",
+      "outcome": "nonzero",
+      "pre_observed": true,
+      "post_observed": false,
+      "failure_observed": false,
+      "correlation": "pre-only",
+      "completion_signal": "absent",
+      "receipt_quality": "unknown"
     }
   ],
-  "sanitized_at": "2026-07-22T00:00:00+08:00"
+  "sanitized_at": "2026-07-22T15:16:00+08:00"
 }
