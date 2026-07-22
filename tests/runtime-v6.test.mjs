@@ -39,9 +39,15 @@ const AT = "2026-07-22T00:00:00.000Z";
 const CAPTURED_AT_MS = Date.parse(AT);
 const NEXT_CAPTURED_AT_MS = CAPTURED_AT_MS + 1_000;
 const FILE_DIGEST = `sha256:${"3".repeat(64)}`;
+const SECOND_FILE_DIGEST = `sha256:${"5".repeat(64)}`;
 const EMPTY_CHECKPOINT = artifactCheckpointId([]);
 const FILE_ENTRY = Object.freeze({ kind: "file", hash: FILE_DIGEST });
+const SECOND_FILE_ENTRY = Object.freeze({ kind: "file", hash: SECOND_FILE_DIGEST });
 const NEXT_CHECKPOINT = artifactCheckpointId([{ path: "work.txt", ...FILE_ENTRY }]);
+const SECOND_CHECKPOINT = artifactCheckpointId([
+  { path: "other.txt", ...SECOND_FILE_ENTRY },
+  { path: "work.txt", ...FILE_ENTRY },
+]);
 
 function observation(verdict = "unsatisfied") {
   return {
@@ -257,7 +263,7 @@ test("Contract 6 projection separates authorization, completion, and artifact mu
   state = evolveAll(state, leaseClosed.events);
   assertV3TaskProjection(state);
   assert.equal(state.artifact_revision, 1);
-  assert.equal(state.evidence.evidence_revision, 2);
+  assert.equal(state.evidence.evidence_revision, 3);
   assert.equal(state.capability_leases[0].status, "closed");
   assert.deepEqual(state.evidence.touched_files, ["work.txt"]);
   assert.deepEqual(state.artifact_checkpoint, { checkpoint_id: NEXT_CHECKPOINT, captured_at_ms: NEXT_CAPTURED_AT_MS, entries: [{ path: "work.txt", ...FILE_ENTRY }] });
@@ -389,6 +395,107 @@ test("strict Pre opens an exhaustive operation lease before authorization", () =
   assert.equal(projected.evidence.mutation_history_coverage, "full");
   assert.equal(projected.authority.prewrite_enforcement, "full");
   assert.equal(projected.authority.write_operations_authorized, 1);
+});
+
+test("full mutation history is a continuous lease chain through the current checkpoint", () => {
+  const opened = openCommand();
+  opened.coverageBasis = { history_requirement: "complete", artifact_state: "full", mutation_history: "unknown", prewrite_enforcement: "unknown" };
+  let state = evolveAll(null, decide(null, opened).events);
+  state = evolveAll(state, decide(state, {
+    type: "authorize-write", taskId: state.task_id, at: "2026-07-22T00:00:01.000Z", decision: "allow",
+    files: ["work.txt"], operationId: "covered-a-b", toolFamily: "patch", hostProfile: "fixture-exhaustive",
+    targetCoverage: "exact", receiptExpectation: "post",
+    coverageChange: {
+      artifactState: "full", mutationHistory: "full", prewriteEnforcement: "full",
+      episodeId: state.episodes.at(-1).episode_id, operationId: "covered-a-b", capabilityId: "hostcap:v1:fixture-exhaustive",
+      hostProfile: "fixture-exhaustive", surface: "direct", exhaustiveSurface: true,
+      effectiveFromCheckpoint: EMPTY_CHECKPOINT, intervalFromCheckpoint: EMPTY_CHECKPOINT,
+      intervalToCheckpoint: null, reason: "covered A to B lease",
+    },
+  }).events);
+  state = evolveAll(state, decide(state, {
+    type: "complete-operation", taskId: state.task_id, at: "2026-07-22T00:00:02.000Z",
+    operationId: "covered-a-b", toolFamily: "patch", outcome: "success", reportedTargets: ["work.txt"],
+    receiptQuality: "tool_specific", hostProfile: "fixture-exhaustive",
+    checkpointId: NEXT_CHECKPOINT, capturedAtMs: NEXT_CAPTURED_AT_MS,
+    fromCheckpoint: EMPTY_CHECKPOINT, toCheckpoint: NEXT_CHECKPOINT,
+    changedEntries: [{ path: "work.txt", before: null, after: FILE_ENTRY }], changedPaths: ["work.txt"],
+    currentScopeViolations: [], coverage: "full", reason: "covered A to B receipt",
+    coverageChange: {
+      artifactState: "full", mutationHistory: "full", prewriteEnforcement: "full",
+      episodeId: state.episodes.at(-1).episode_id, operationId: "covered-a-b", capabilityId: "hostcap:v1:fixture-exhaustive",
+      hostProfile: "fixture-exhaustive", surface: "direct", exhaustiveSurface: true,
+      effectiveFromCheckpoint: EMPTY_CHECKPOINT, intervalFromCheckpoint: EMPTY_CHECKPOINT,
+      intervalToCheckpoint: NEXT_CHECKPOINT, reason: "covered A to B receipt",
+    },
+  }).events);
+  assert.equal(state.evidence.mutation_history_coverage, "full");
+  assert.deepEqual(artifactAssuranceHolds(state), []);
+  assertV3TaskProjection(state);
+
+  let chained = state;
+  chained = evolveAll(chained, decide(chained, {
+    type: "authorize-write", taskId: chained.task_id, at: "2026-07-22T00:00:03.000Z", decision: "allow",
+    files: ["other.txt"], operationId: "covered-b-c", toolFamily: "patch", hostProfile: "fixture-exhaustive",
+    targetCoverage: "exact", receiptExpectation: "post",
+    coverageChange: {
+      artifactState: "full", mutationHistory: "full", prewriteEnforcement: "full",
+      episodeId: chained.episodes.at(-1).episode_id, operationId: "covered-b-c", capabilityId: "hostcap:v1:fixture-exhaustive",
+      hostProfile: "fixture-exhaustive", surface: "direct", exhaustiveSurface: true,
+      effectiveFromCheckpoint: NEXT_CHECKPOINT, intervalFromCheckpoint: NEXT_CHECKPOINT,
+      intervalToCheckpoint: null, reason: "covered B to C lease",
+    },
+  }).events);
+  chained = evolveAll(chained, decide(chained, {
+    type: "complete-operation", taskId: chained.task_id, at: "2026-07-22T00:00:04.000Z",
+    operationId: "covered-b-c", toolFamily: "patch", outcome: "success", reportedTargets: ["other.txt"],
+    receiptQuality: "tool_specific", hostProfile: "fixture-exhaustive",
+    checkpointId: SECOND_CHECKPOINT, capturedAtMs: NEXT_CAPTURED_AT_MS + 1_000,
+    fromCheckpoint: NEXT_CHECKPOINT, toCheckpoint: SECOND_CHECKPOINT,
+    changedEntries: [{ path: "other.txt", before: null, after: SECOND_FILE_ENTRY }], changedPaths: ["other.txt"],
+    currentScopeViolations: [], coverage: "full", reason: "covered B to C receipt",
+    coverageChange: {
+      artifactState: "full", mutationHistory: "full", prewriteEnforcement: "full",
+      episodeId: chained.episodes.at(-1).episode_id, operationId: "covered-b-c", capabilityId: "hostcap:v1:fixture-exhaustive",
+      hostProfile: "fixture-exhaustive", surface: "direct", exhaustiveSurface: true,
+      effectiveFromCheckpoint: NEXT_CHECKPOINT, intervalFromCheckpoint: NEXT_CHECKPOINT,
+      intervalToCheckpoint: SECOND_CHECKPOINT, reason: "covered B to C receipt",
+    },
+  }).events);
+  assert.equal(chained.evidence.mutation_history_coverage, "full");
+  assert.equal(chained.artifact_checkpoint.checkpoint_id, SECOND_CHECKPOINT);
+  assert.deepEqual(artifactAssuranceHolds(chained), []);
+  assertV3TaskProjection(chained);
+
+  let rotated = evolveAll(chained, decide(chained, {
+    type: "join", taskId: chained.task_id, at: "2026-07-22T00:00:05.000Z", reason: "host episode changed", actingSession: "next-host",
+    episode: {
+      episode_id: randomUUID(), host_session_id: "next-host", started_at: "2026-07-22T00:00:05.000Z", ended_at: null,
+      start_task_revision: chained.task_revision + 1, end_task_revision: null, output_tokens_estimate: 0,
+    },
+  }).events);
+  assert.equal(rotated.evidence.mutation_history_coverage, "unknown");
+  assert.equal(rotated.authority.prewrite_enforcement, "unknown");
+  const episodeBoundaryUpgrade = decide(rotated, {
+    type: "change-coverage", taskId: rotated.task_id, at: "2026-07-22T00:00:06.000Z",
+    artifactState: "full", mutationHistory: "full", prewriteEnforcement: "full",
+    episodeId: rotated.episodes.at(-1).episode_id, operationId: "post-boundary", capabilityId: "hostcap:v1:fixture-exhaustive",
+    hostProfile: "fixture-exhaustive", surface: "direct", exhaustiveSurface: true,
+    effectiveFromCheckpoint: SECOND_CHECKPOINT, intervalFromCheckpoint: SECOND_CHECKPOINT,
+    intervalToCheckpoint: null, reason: "must not heal an episode boundary",
+  });
+  assert.throws(() => evolveAll(rotated, episodeBoundaryUpgrade.events), /cannot span an episode boundary/);
+
+  state = evolveAll(state, decide(state, {
+    type: "reconcile-artifacts", taskId: state.task_id, at: "2026-07-22T00:00:03.000Z",
+    checkpointId: SECOND_CHECKPOINT, capturedAtMs: NEXT_CAPTURED_AT_MS + 1_000,
+    fromCheckpoint: NEXT_CHECKPOINT, toCheckpoint: SECOND_CHECKPOINT,
+    changedEntries: [{ path: "other.txt", before: null, after: SECOND_FILE_ENTRY }], changedPaths: ["other.txt"],
+    currentScopeViolations: [], coverage: "full", reason: "unowned B to C delta without coverage",
+  }).events);
+  assert.equal(state.evidence.mutation_history_coverage, "unknown");
+  assert.ok(artifactAssuranceHolds(state).includes("mutation_history_incomplete"));
+  assertV3TaskProjection(state);
 });
 
 test("Contract 6 history requirements are monotonic domain invariants", () => {
