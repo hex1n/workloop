@@ -21,7 +21,7 @@ const ISOLATED_INSTALL = process.env.WORKLOOP_INSTALL_ISOLATED === "1";
 const RUNTIME_CONTRACT = (() => {
   const source = fs.readFileSync(path.join(SOURCE, "lib", "prims.mjs"), "utf8");
   const value = Number(source.match(/const RUNTIME_CONTRACT = (\d+);/)?.[1]);
-  if (value !== 6) throw new Error(`workloop installer requires runtime contract 6 source; refusing contract ${Number.isFinite(value) ? value : "unknown"}`);
+  if (value !== 7) throw new Error(`workloop installer requires runtime contract 7 source; refusing contract ${Number.isFinite(value) ? value : "unknown"}`);
   return value;
 })();
 const HOST_HOOKS_SOURCE = fs.readFileSync(path.join(SOURCE, "lib", "host-hooks.mjs"), "utf8");
@@ -85,7 +85,7 @@ function inspectSourceTaskState(repo, fsOps = fs) {
       for (const event of record.events) {
         if (event.kind === "task_opened") current = {
           task_id: event.task_id,
-          runtime_contract: event.payload_version === 2 && event.payload?.runtime_contract === 6 ? 6 : 5,
+          runtime_contract: event.payload_version >= 2 && new Set([6, 7]).has(event.payload?.runtime_contract) ? event.payload.runtime_contract : 5,
           lifecycle: "active",
         };
         else if (current && event.task_id === current.task_id && event.kind === "task_suspended") current.lifecycle = "suspended";
@@ -104,15 +104,15 @@ function inspectSourceTaskState(repo, fsOps = fs) {
   if (!isPlainObject(projection) || !isPlainObject(projection.lifecycle)) throw new Error(`cannot verify active task contract from malformed snapshot: ${snapshot}`);
   return {
     task_id: projection.task_id ?? null,
-    runtime_contract: projection.runtime_contract === 6 ? 6 : 5,
+    runtime_contract: new Set([6, 7]).has(projection.runtime_contract) ? projection.runtime_contract : 5,
     lifecycle: projection.lifecycle.state,
   };
 }
 
 function assertSourceActivationCompatible(repo, fsOps = fs) {
   const task = inspectSourceTaskState(repo, fsOps);
-  if (task?.runtime_contract === 5 && task.lifecycle !== "terminal") {
-    throw new Error("active Contract 5 task blocks Contract 6 activation; finish or abandon it with the existing Contract 5 runtime first");
+  if (task?.runtime_contract < RUNTIME_CONTRACT && task.lifecycle !== "terminal") {
+    throw new Error(`active Contract ${task.runtime_contract} task blocks Contract ${RUNTIME_CONTRACT} activation; finish or abandon it with the compatible runtime first`);
   }
   return task;
 }
@@ -851,16 +851,21 @@ function readReleaseManifest(home) {
   }
 }
 
-function contract5CompatibilityPin(home) {
+function compatibilityRuntimePins(home) {
   const manifest = readReleaseManifest(home);
-  const candidate = manifest?.runtime_contract === 5
-    ? manifest.runtime_digest
-    : manifest?.compatibility_runtimes?.contract_5 ?? null;
-  if (candidate === null || candidate === undefined) return null;
-  if (typeof candidate !== "string" || !RUNTIME_HASH_SHAPE.test(candidate)) throw new Error("invalid Contract 5 compatibility runtime pin");
-  const target = path.join(home, "bin", ".workloop-runtime", candidate);
-  if (!installedRuntimeVersionProvable(target, candidate)) throw new Error(`Contract 5 compatibility runtime is missing or corrupt: ${target}`);
-  return candidate;
+  const pins = {};
+  for (const contract of [5, 6]) {
+    const key = `contract_${contract}`;
+    const candidate = manifest?.runtime_contract === contract
+      ? manifest.runtime_digest
+      : manifest?.compatibility_runtimes?.[key] ?? null;
+    if (candidate === null || candidate === undefined) { pins[key] = null; continue; }
+    if (typeof candidate !== "string" || !RUNTIME_HASH_SHAPE.test(candidate)) throw new Error(`invalid Contract ${contract} compatibility runtime pin`);
+    const target = path.join(home, "bin", ".workloop-runtime", candidate);
+    if (!installedRuntimeVersionProvable(target, candidate)) throw new Error(`Contract ${contract} compatibility runtime is missing or corrupt: ${target}`);
+    pins[key] = candidate;
+  }
+  return pins;
 }
 
 function pruneRuntimes(runtimeRoot, activeHash, dry, preservedHashes = []) {
@@ -925,7 +930,7 @@ function installWorkloopRuntimeUnlocked(repo, home, dry, { activate = true } = {
     if (activate) {
       // Activation is last, so every process sees one complete pinned runtime.
       activateRuntimeShims(home, hash, dry);
-      pruneRuntimes(runtimeRoot, hash, dry, [contract5CompatibilityPin(home)]);
+      pruneRuntimes(runtimeRoot, hash, dry, Object.values(compatibilityRuntimePins(home)));
     }
     return { hash, versionRoot };
   };
@@ -1118,9 +1123,9 @@ const CONTROL_FILE_SHAPES = {
       || (typeof parsed.managed_skills_manifest_digest === "string" && TREE_DIGEST_SHAPE.test(parsed.managed_skills_manifest_digest)))
     && (parsed.release_manifest_version === 1 || (
       isPlainObject(parsed.compatibility_runtimes)
-      && Object.keys(parsed.compatibility_runtimes).join(",") === "contract_5"
-      && (parsed.compatibility_runtimes.contract_5 === null
-        || (typeof parsed.compatibility_runtimes.contract_5 === "string" && RUNTIME_HASH_SHAPE.test(parsed.compatibility_runtimes.contract_5)))
+      && new Set(["contract_5", "contract_5,contract_6"]).has(Object.keys(parsed.compatibility_runtimes).join(","))
+      && Object.values(parsed.compatibility_runtimes).every((digest) => digest === null
+        || (typeof digest === "string" && RUNTIME_HASH_SHAPE.test(digest)))
     )),
   ".workloop-activation-journal.json": (parsed) => isPlainObject(parsed)
     && parsed.journal_version === 1
@@ -1288,8 +1293,8 @@ export function installWorkloopAssets(repo, home, dry = false) {
 export function installWorkloop(repo, home, dry = false) {
   ACTIONS.length = 0;
   const install = () => {
-    if (RUNTIME_CONTRACT === 6 && !ISOLATED_INSTALL) assertSourceActivationCompatible(repo);
-    const compatibilityContract5 = contract5CompatibilityPin(home);
+    if (RUNTIME_CONTRACT >= 6 && !ISOLATED_INSTALL) assertSourceActivationCompatible(repo);
+    const compatibilityRuntimes = compatibilityRuntimePins(home);
     const runtime = installWorkloopRuntimeUnlocked(repo, home, dry, { activate: false });
     const releaseId = runtime.hash;
     const journal = path.join(home, "bin", ".workloop-activation-journal.json");
@@ -1336,7 +1341,7 @@ export function installWorkloop(repo, home, dry = false) {
         runtime_contract: RUNTIME_CONTRACT,
         runtime_digest: runtime.hash,
         managed_skills_manifest_digest: dry || !exists(skillManifest) ? null : createHash("sha256").update(fs.readFileSync(skillManifest)).digest("hex"),
-        compatibility_runtimes: { contract_5: compatibilityContract5 },
+        compatibility_runtimes: compatibilityRuntimes,
       };
       writeTextAtomicIfChanged(releaseManifest, JSON.stringify(manifestRow, null, 2) + "\n", dry);
       journalRow.steps.manifest_committed = true;
@@ -1369,7 +1374,7 @@ export function installWorkloop(repo, home, dry = false) {
       if (rollbackFailures.length) throw new AggregateError([error, ...rollbackFailures], "Workloop activation failed and rollback was incomplete");
       throw error;
     }
-    pruneRuntimes(path.join(home, "bin", ".workloop-runtime"), runtime.hash, dry, [compatibilityContract5]);
+    pruneRuntimes(path.join(home, "bin", ".workloop-runtime"), runtime.hash, dry, Object.values(compatibilityRuntimes));
     return runtime;
   };
   return dry ? install() : withInstallLock(home, install);

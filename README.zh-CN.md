@@ -2,7 +2,7 @@
 
 [English README](README.md)
 
-workloop 是一个零依赖 Node.js CLI，也是面向 coding agent 的可移植循环内核。它一次监督一个 durable task：运行时授予有边界的写入权限、在写入发生时实时管束、重新执行新鲜的 done-when 判据、记录可审计证据，并裁决任务是否可以关闭。下一轮调度、定时器和 OS 级 sandbox 不在本仓库内。
+workloop 是一个零依赖 Node.js CLI，也是面向 coding agent 的可移植循环内核。它一次监督一个 durable task：宿主独占工具执行与审批权，运行时记录操作意图和完成回执、核对真正落地的 artifact、重新执行新鲜的 done-when 判据，并认证任务是否可以关闭。下一轮调度、宿主权限系统和 OS 级 sandbox 不在本仓库内。
 
 本仓库随 runtime 一起发布四个 kernel skills。旗舰 skill 与仓库同名，就像 `webpack` 同时是项目名和核心包名：`workloop` 这个 CLI 监督 task，`skills/workloop` 是跑在它上面的循环。
 
@@ -25,9 +25,9 @@ workloop 是一个零依赖 Node.js CLI，也是面向 coding agent 的可移植
 - `lib/task-engine.mjs` 拥有生命周期转移、策略决策、closure、assurance、budget、stuck 检测和 review requirement。
 - `lib/event-store.mjs` 拥有 hash-chained `.workloop/events.jsonl` 权威日志。
 - `lib/task-store.mjs` 拥有 digest 校验的 schema-v3 snapshot wrapper 和跨进程 task lock。
-- `lib/supervision.mjs`、`lib/host-hooks.mjs`、`lib/evidence-ledger.mjs`、`lib/untracked.mjs` 分别承载 hook 写入仲裁、宿主协议编码、有界证据遥测和无任务写入提示。
+- `lib/supervision.mjs`、`lib/host-hooks.mjs`、`lib/evidence-ledger.mjs`、`lib/untracked.mjs` 分别承载 hook policy 分类、宿主协议编码、有界证据遥测和无任务写入提示。
 - `install.mjs` 在当前用户 home 下安装版本化 runtime、稳定 shim 和四个 managed skills。
-- `tests/` 覆盖行为、架构、hook 协议、runtime contract 5 兼容性、runtime contract 6、事件存储、snapshot、installer、skill closure 和 Windows gates。
+- `tests/` 覆盖行为、架构、hook 协议、runtime contract 5–7、事件存储、snapshot、installer、skill closure 和 Windows gates。
 
 ## 核心模型
 
@@ -82,9 +82,9 @@ workloop abandon --repo . --reason "superseded"
 
 ## 运行时权威
 
-Runtime contract 6 把 `.workloop/events.jsonl` 作为仓库内唯一权威。`.workloop/task.json` 是 schema-v3 snapshot wrapper，可以删除并从事件重建，永远不会被提升为权威。Contract 6 projection 使用 persisted task runtime contract 5；event record framing 仍是 schema 2。每个公开 mutation 都先提交一条 hash-chained transaction，再刷新 snapshot。
+Runtime contract 7 把 `.workloop/events.jsonl` 作为仓库内唯一权威。`.workloop/task.json` 是 schema-v3 snapshot wrapper，可以删除并从事件重建，永远不会被提升为权威。Contract 7 projection 使用 persisted task runtime contract 6；event record framing 仍是 schema 2。每个公开 mutation 都先提交一条 hash-chained transaction，再刷新 snapshot。
 
-写入证据分成四类：PreToolUse 只记录授权，PostToolUse/PostToolUseFailure 记录相关联的完成回执，仓库 checkpoint reconciliation 记录真正落地的 artifact 变化，coverage 则说明历史是否完整。没有稳定宿主回执时，Workloop 会保持 `partial`/`unknown`，不会把授权次数伪报成实际写入次数。`--history-requirement complete` 会在当前非穷尽宿主能力上 fail closed；接受路径感知但不完整的操作历史时，显式使用 `--history-requirement artifact-only`。
+执行权只属于宿主。PreToolUse 写入 `operation_intent_recorded` 和 policy deviation，不再声称 Workloop 授权了操作；PostToolUse/PostToolUseFailure 记录相关联的完成回执，仓库 checkpoint reconciliation 记录真正落地的 artifact 变化，coverage 则说明未知范围。意图数量永远不会伪报成 artifact mutation。
 
 `~/.workloop/outcomes.jsonl` 是 home 下的 best-effort projection，不是 task authority。可以幂等重建和审计：
 
@@ -94,7 +94,7 @@ workloop audit --repo .
 workloop audit-outcomes
 ```
 
-Contract 5 已经移除了活动产物文件名中的 schema 版本；Contract 6 继续使用稳定文件名。如果仓库仍使用更旧的带版本文件名，普通命令会 fail closed，直到用户显式授权一次性改名：
+Contract 5 已经移除了活动产物文件名中的 schema 版本；Contract 7 继续使用稳定文件名。如果仓库仍使用更旧的带版本文件名，普通命令会 fail closed，直到用户显式授权一次性改名：
 
 ```sh
 workloop migrate-artifact-names --repo . \
@@ -107,22 +107,24 @@ Schema-2 task 和 orphan/mixed snapshot 都 fail closed。只有带显式 user p
 
 ```sh
 workloop archive-incompatible-state --repo . \
-  --reason "runtime-contract-6 hard cutover" --granted-by user
+  --reason "runtime-contract-7 hard cutover" --granted-by user
 ```
 
 `workloop info` 暴露当前版本：
 
-- `runtime_contract: 6`
+- `runtime_contract: 7`
 - `criterion_adapter_protocol_version: 2`
 - `task_snapshot_schema_version: 3`
 - `event_record_schema_version: 2`
-- `outcome_projection_schema_version: 4`
+- `outcome_projection_schema_version: 5`
 
 ## Budget 与安全
 
-Round 默认有上限。Write、wall-clock 和 output-token budget 可以作为独立上限叠加。任何配置过的 budget 耗尽后都会拒绝继续写入，但读取和验证仍可用。新鲜 unsatisfied Stop 或显式 `achieve` 会以 `out_of_budget` 挂起；新鲜 satisfied criterion 仍然可以关闭任务。重复等价失败会以 `stuck` 挂起。
+Round 默认有上限。Intent、wall-clock 和 output-token budget 是独立的终态认证上限。在默认 `nudge` recipe 下，超预算意图仍交给宿主审批，只记录 deviation；closure 会被 hold，unsatisfied 的显式 adjudication 会以 `out_of_budget` 挂起。重复等价失败会以 `stuck` 挂起。
 
-Command safety 默认拒绝。Git mutation 和权限扩张必须显式 grant，并记录 provenance：
+Git、network、destructive、install、publish 和 command-safety finding 都是带 provenance 的 task policy。在 `observe`/`nudge` 下，它们只影响证据、风险、review 和终态认证，不覆盖宿主审批。只有显式安装 `--mode deny` 才把这些 finding 变成执行拒绝：
+
+省略 `--mode` 等价于 `nudge`，不会隐式进入强制模式。Contract 7 还会把未知 MCP action 保守地视为可能具有副作用的 operation，从而为远端变更关联 Pre/Post 回执；以 `get`、`list`、`read`、`search` 等明确读取动词开头的 MCP tool 不计入 operation budget。
 
 ```sh
 workloop amend --repo . --git-allowed add \
@@ -130,9 +132,9 @@ workloop amend --repo . --git-allowed add \
   --granted-by user --reason "user requested staging"
 ```
 
-Network、destructive、install-script 和 publish-shaped command 都需要对应 grant。远程下载后直接 pipe 到 shell 需要同时具备 network 和 destructive grant。Secret dump 始终默认拒绝。
+Network、destructive、install-script 和 publish-shaped command 需要对应 grant 才能得到干净认证。远程下载后直接 pipe 到 shell 需要同时具备 network 和 destructive grant。Secret dump 始终是 policy deviation；显式强制模式会拒绝它。
 
-这道闸门读的是命令形状而非意图，覆盖面比上述类名听起来要窄。Network 指 `curl`、`wget`、`Invoke-WebRequest`；secret dump 指常见读取工具读取已知凭据路径。其他出口（`git clone`、`ssh`、`scp`）、读取同一批文件的其他工具，以及任何通过 shell 变量拼装工具名的命令，都会放行。请把它当作对付显而易见的危险写法的摩擦力：真正的安全边界仍然是宿主权限系统与操作系统沙箱。
+这个分类器读的是命令形状而非意图，覆盖面比上述类名听起来要窄。Network 指 `curl`、`wget`、`Invoke-WebRequest`；secret dump 指常见读取工具读取已知凭据路径。其他出口（`git clone`、`ssh`、`scp`）、读取同一批文件的其他工具，以及任何通过 shell 变量拼装工具名的命令，都可能无法识别。请把它当作证据与风险分类器：真正的安全边界仍然是宿主权限系统与操作系统沙箱。
 
 结构化命令解析会为每个可执行视图只生成一次带宿主方言的中间结构：chain separator、invocation、嵌套命令体与 ambiguity 都在这里确定，git 授权、owner 安全检查、风险形状和 foreign-session 检查再从同一结构投影效果。已知选项按精确语法解析；已知工具或 wrapper 上的未知选项会同时按 boolean 和 value-taking 两种合法情况解析，结果标为 ambiguous，并保留所有可能的危险效果。嵌套的 `cmd`、PowerShell 与 POSIX shell 命令体会切换到各自方言；闭合 heredoc 会成为嵌套输入结构。无法静态还原、且不是已识别远程来源的解释器 stdin，以及 CMD `FOR /F` substitution，统一归类为 `dynamic_exec` 并拒绝；已识别的远程 pipe 仍使用可单独授权的 `remote_exec`。完全未识别的 wrapper，以及通过 shell 变量拼装的工具名，仍不在这个结构模型内。
 
@@ -145,7 +147,7 @@ workloop hooks --profile codex-safe --mode nudge
 workloop hooks --profile claude --mode nudge
 ```
 
-`codex-safe` 保留 PreToolUse deny/rewrite，但 Stop 是 release-only：不读取 task authority、不取 task lock、不执行 criterion，也不改变 round/lifecycle。自动策略在最后一次写入后显式运行 `workloop verify --record`，显式策略运行 `workloop achieve`。`claude` 保留 session 内部的 `decision:block` continuation，但只内联执行 timeout 不超过 30 秒的 criterion；更长的 criterion 不会启动，hold 会给出显式验证命令。`codex-cli-legacy` 仅标识固定版本实验，在 continuation 契约重新实测前同样 release-only，不能用于 Codex App。
+生成的 recipe 默认使用 `nudge`：Pre 记录意图与 deviation，Post 记录回执，Stop 记录 census；三者故障时都 fail open，不返回执行拒绝或完成阻塞。`observe` 是静默版本。`deny` 是显式强制模式：Pre 可以返回宿主 deny，Claude profile 可以使用 `decision:block`；Codex profile 的 Stop 仍是 release-only。Workloop 命令改写仍可返回 `updatedInput`，但非强制响应不携带 `permissionDecision`，审批权继续留在宿主。
 
 所有 criterion 都在独立 single-flight lease 下、`.workloop/.task.lock` 之外执行。事务令牌绑定 intent、task/source cursor/revision/generation/owner episode，并用包含 ignored files、排除 `.git`/`.workloop` 的完整仓库内容指纹兜底。运行前后任一权威或内容发生变化时，旧 observation 以 `criterion_observation_stale` 丢弃，不计 round、不关闭任务；已识别的内容变化仍记录 side-effect evidence，使 artifact revision 推进并让旧 review 过期。PreToolUse、status 和 suspend 仍可立即取得 task lock。Runtime 的 Stop deadline 小于生成 recipe 的 timeout，Host timeout 只是第二道回收保险。
 

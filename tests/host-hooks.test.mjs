@@ -43,7 +43,7 @@ test("Stop capabilities separate release-only profiles from the hard gate", () =
 
 test("codex-safe releases a held Stop without emitting resumable stdout", () => {
   const encoded = encodeHook({
-    invocation: { profile: "codex-safe", event: "stop" },
+    invocation: { profile: "codex-safe", mode: "deny", event: "stop" },
     disposition: { event: "stop", action: "hold", code: "criterion_unsatisfied", reason: "criterion unsatisfied" },
   });
 
@@ -56,7 +56,7 @@ test("codex-safe releases a held Stop without emitting resumable stdout", () => 
 
 test("only hard profiles encode a held Stop as decision:block", () => {
   assert.deepEqual(encodeHook({
-    invocation: { profile: "claude", event: "stop" },
+    invocation: { profile: "claude", mode: "deny", event: "stop" },
     disposition: { event: "stop", action: "hold", code: "criterion_unsatisfied", reason: "criterion unsatisfied" },
   }), {
     stdout: '{"decision":"block","reason":"workloop: criterion unsatisfied"}\n',
@@ -65,7 +65,7 @@ test("only hard profiles encode a held Stop as decision:block", () => {
   });
 
   assert.deepEqual(encodeHook({
-    invocation: { profile: "codex-cli-legacy", event: "stop" },
+    invocation: { profile: "codex-cli-legacy", mode: "deny", event: "stop" },
     disposition: { event: "stop", action: "hold", code: "criterion_unsatisfied", reason: "criterion unsatisfied" },
   }), {
     stdout: "",
@@ -77,12 +77,12 @@ test("only hard profiles encode a held Stop as decision:block", () => {
 test("PreToolUse deny, rewrite, and pass stay byte-exact across profiles", () => {
   for (const profile of ["claude", "codex-safe", "codex-cli-legacy", "unknown"]) {
     assert.equal(encodeHook({
-      invocation: { profile, event: "pre_tool_use" },
+      invocation: { profile, mode: "deny", event: "pre_tool_use" },
       disposition: { event: "pre_tool_use", action: "deny", reason: "write outside envelope: outside.txt" },
     }).stdout, '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":"workloop: write outside envelope: outside.txt"}}\n');
 
     assert.equal(encodeHook({
-      invocation: { profile, event: "pre_tool_use" },
+      invocation: { profile, mode: "deny", event: "pre_tool_use" },
       disposition: { event: "pre_tool_use", action: "rewrite", updatedInput: { command: "export WORKLOOP_SESSION_ID='owner'; workloop status" } },
     }).stdout, '{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"allow","updatedInput":{"command":"export WORKLOOP_SESSION_ID=\'owner\'; workloop status"}}}\n');
 
@@ -91,6 +91,34 @@ test("PreToolUse deny, rewrite, and pass stay byte-exact across profiles", () =>
       disposition: { event: "pre_tool_use", action: "pass" },
     }), { stdout: "", stderr: "", exitCode: 0 });
   }
+});
+
+test("non-enforcement modes never exercise host permission or Stop authority", () => {
+  for (const mode of ["observe", "nudge"]) {
+    assert.deepEqual(encodeHook({
+      invocation: { profile: "claude", mode, event: "pre_tool_use" },
+      disposition: { event: "pre_tool_use", action: "deny", reason: "policy deviation" },
+    }), { stdout: "", stderr: "", exitCode: 0 });
+    assert.equal(encodeHook({
+      invocation: { profile: "codex-safe", mode, event: "pre_tool_use" },
+      disposition: { event: "pre_tool_use", action: "rewrite", updatedInput: { command: "workloop status" } },
+    }).stdout, '{"hookSpecificOutput":{"hookEventName":"PreToolUse","updatedInput":{"command":"workloop status"}}}\n');
+    assert.deepEqual(encodeHook({
+      invocation: { profile: "claude", mode, event: "stop" },
+      disposition: { event: "stop", action: "hold", code: "criterion_unsatisfied", reason: "criterion unsatisfied" },
+    }), { stdout: "", stderr: "", exitCode: 0 });
+  }
+});
+
+test("omitting mode defaults the wire encoder to passive host authority", () => {
+  assert.deepEqual(encodeHook({
+    invocation: { profile: "claude", event: "pre_tool_use" },
+    disposition: { event: "pre_tool_use", action: "deny", reason: "policy deviation" },
+  }), { stdout: "", stderr: "", exitCode: 0 });
+  assert.deepEqual(encodeHook({
+    invocation: { profile: "claude", event: "stop" },
+    disposition: { event: "stop", action: "hold", code: "criterion_unsatisfied", reason: "criterion unsatisfied" },
+  }), { stdout: "", stderr: "", exitCode: 0 });
 });
 
 test("Stop release is silent and an unknown held Stop is migration-safe", () => {
@@ -102,7 +130,7 @@ test("Stop release is silent and an unknown held Stop is migration-safe", () => 
   }
 
   assert.deepEqual(encodeHook({
-    invocation: { profile: "unknown", event: "stop" },
+    invocation: { profile: "unknown", mode: "deny", event: "stop" },
     disposition: { event: "stop", action: "hold", code: "criterion_unsatisfied", reason: "criterion unsatisfied" },
   }), {
     stdout: "",
@@ -139,9 +167,9 @@ test("explicit profiles decode payloads and generate self-identifying recipes", 
 
   assert.deepEqual(buildHookRecipe({ profile: "codex-safe", command: 'node "/path/workloop.mjs"' }), {
     hooks: {
-      PreToolUse: [{ matcher: "apply_patch|Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', statusMessage: "Checking workloop envelope", timeout: PRE_TOOL_USE_RECIPE_TIMEOUT_SECONDS }] }],
+      PreToolUse: [{ matcher: "apply_patch|Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', statusMessage: "Observing workloop operation intent", timeout: PRE_TOOL_USE_RECIPE_TIMEOUT_SECONDS }] }],
       PostToolUse: [{ matcher: "apply_patch|Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', statusMessage: "Recording workloop tool receipt", timeout: POST_TOOL_USE_RECIPE_TIMEOUT_SECONDS }] }],
-      Stop: [{ matcher: "*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', statusMessage: "Checking workloop completion state", timeout: STOP_RECIPE_TIMEOUT_SECONDS }] }],
+      Stop: [{ matcher: "*", hooks: [{ type: "command", command: 'node "/path/workloop.mjs" hook --profile codex-safe --mode nudge', statusMessage: "Recording workloop stop census", timeout: STOP_RECIPE_TIMEOUT_SECONDS }] }],
     },
   });
 
@@ -152,9 +180,9 @@ test("explicit profiles decode payloads and generate self-identifying recipes", 
   assert.equal("statusMessage" in claudeRecipe.hooks.Stop[0].hooks[0], false);
 
   const legacyCodexRecipe = buildHookRecipe({ profile: "codex-cli-legacy", command: "workloop" });
-  assert.equal(legacyCodexRecipe.hooks.PreToolUse[0].hooks[0].statusMessage, "Checking workloop envelope");
+  assert.equal(legacyCodexRecipe.hooks.PreToolUse[0].hooks[0].statusMessage, "Observing workloop operation intent");
   assert.equal(legacyCodexRecipe.hooks.PostToolUse[0].hooks[0].statusMessage, "Recording workloop tool receipt");
-  assert.equal(legacyCodexRecipe.hooks.Stop[0].hooks[0].statusMessage, "Checking workloop completion state");
+  assert.equal(legacyCodexRecipe.hooks.Stop[0].hooks[0].statusMessage, "Recording workloop stop census");
 
   assert.throws(() => decodeHook({ profile: "codex-app", payload: {} }), /unsupported hook profile: codex-app/);
   assert.throws(() => buildHookRecipe({ profile: "unknown", command: "workloop" }), /explicit hook profile required/);

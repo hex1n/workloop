@@ -70,11 +70,12 @@ eligible
 criterion again and still sees satisfied. Explicit policy closes only through
 `achieve`, which also runs the criterion again. `not-needed --evidence` and
 `abandon --reason` are separate terminal paths; not-needed is allowed only
-before any witnessed write.
+before any observed operation intent.
 
-That automatic Stop path exists only on a hard-Stop host profile and only when
-the configured criterion timeout fits the runtime's portable inline budget.
-Release-only profiles never run or record a Stop criterion. Long criteria use
+That automatic Stop path exists only for the Claude profile in explicit
+`--mode deny`, and only when the configured criterion timeout fits the runtime's
+portable inline budget. `observe`/`nudge` Stop is release-only on every profile
+and never runs or records a criterion. Long criteria use
 `verify --record` for automatic policies and `achieve` for explicit policies;
 both keep the task lock free while they run.
 
@@ -241,9 +242,10 @@ one file disappeared is not sufficient.
 
 The latest episode owns the active task and its envelope when its
 `host_session_id` is a real host identity. A foreign session reads and
-verifies freely; its Stop hooks release without criterion execution or
-telemetry mutation, and its writes to the envelope or runtime/git control
-state are refused. Provably outside-envelope work follows the untracked path;
+verifies freely; its non-enforcing Stop hooks release without criterion
+execution, and its write intents are recorded with foreign-session provenance.
+Explicit `deny` mode refuses conflicts with the envelope or runtime/git control
+state. Provably outside-envelope work follows the untracked path;
 parallel work belongs in a separate worktree. Empty, missing, whitespace, or
 `cli` episode
 identities are unbound and retain gate-all compatibility.
@@ -259,22 +261,23 @@ the host hook payload's domain. Per-host binding mechanics are in
 
 ## State, projection, and hard cutover
 
-Runtime contract 6 treats `.workloop/events.jsonl` as the only repository
+Runtime contract 7 treats `.workloop/events.jsonl` as the only repository
 authority. `task.json` is a disposable schema-v3 snapshot; missing or damaged
 snapshots rebuild from the event genesis, while internal event corruption fails
-closed. Contract 6 task projections use persisted task runtime contract 5 and
+closed. Contract 7 task projections use persisted task runtime contract 6 and
 event record framing remains schema 2. Schema-2 and orphan/mixed snapshots are
 never interpreted or migrated.
 
-Write evidence is intentionally split: PreToolUse records authorization,
+Write evidence is intentionally split: PreToolUse records host-owned operation intent,
 PostToolUse/PostToolUseFailure records a correlated completion receipt,
 repository reconciliation records landed artifact changes, and coverage states
 how complete the history is. Never infer an artifact mutation from an
-authorization count. With `history_requirement=complete`, incomplete host
-surfaces fail closed; `artifact_only` permits closure from full current artifact
-state while reporting mutation history as partial or unknown.
+intent count. Policy deviations and incomplete host surfaces hold or raise the
+risk/review requirement at certification time; they do not override host tool
+approval in `observe`/`nudge`. `artifact_only` permits closure from full current
+artifact state while reporting mutation history as partial or unknown.
 
-Contract 5 removed schema versions from active artifact names; Contract 6 keeps
+Contract 5 removed schema versions from active artifact names; Contract 7 keeps
 those stable names. If the runtime reports legacy versioned names, preserve both names and
 run `migrate-artifact-names --repo <repo> --reason <reason> --granted-by user`;
 it refuses ambiguous dual-name authority.
@@ -282,7 +285,7 @@ Preserve an incompatible snapshot byte-for-byte with explicit authorization:
 
 ```text
 workloop archive-incompatible-state --repo <repo> \
-  --reason "runtime-contract-6 hard cutover" --granted-by user
+  --reason "runtime-contract-7 hard cutover" --granted-by user
 ```
 
 The runtime projects repository events to `~/.workloop/outcomes.jsonl` on a
@@ -292,7 +295,7 @@ the HOME projection with `audit-outcomes`. A HOME failure never rolls back a
 committed repository event. Runtime contract 3 is not a rollback target.
 
 Old `outcomes-v2.jsonl`, `transcript-cursors.json`, and `history/` artifacts are
-non-authoritative diagnostics: runtime 6 ignores them and never auto-deletes
+non-authoritative diagnostics: runtime 7 ignores them and never auto-deletes
 them.
 
 Git mutations still require explicit user intent and an envelope grant.

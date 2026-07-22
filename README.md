@@ -4,9 +4,10 @@
 
 workloop is a dependency-free Node.js CLI and portable loop kernel for
 machine-verifiable agent work. It supervises one durable task at a time: the
-runtime grants scoped write authority, polices writes as they happen, re-runs
-a fresh done-when criterion, records auditable evidence, and decides whether
-the task can close. Drivers, schedulers, and OS sandboxes stay outside this
+host retains tool-execution and approval authority, while the runtime observes
+operation intent and completion receipts, reconciles landed artifacts, re-runs
+a fresh done-when criterion, and certifies whether the task can close. Drivers,
+schedulers, host permission systems, and OS sandboxes stay outside this
 repository.
 
 This repository ships four kernel skills with the runtime. The flagship skill
@@ -43,13 +44,12 @@ loop you run on it.
 - `lib/task-store.mjs` owns the digest-checked schema-v3 snapshot wrapper and
   cross-process task lock.
 - `lib/supervision.mjs`, `lib/host-hooks.mjs`, `lib/evidence-ledger.mjs`, and
-  `lib/untracked.mjs` make hook-time write mediation, host protocol encoding,
+  `lib/untracked.mjs` make hook-time policy classification, host protocol encoding,
   bounded telemetry, and no-task nudges explicit.
 - `install.mjs` installs a versioned runtime, stable shims, and managed copies
   of the four skills under the current user's home.
-- `tests/` covers behavior, architecture, hook protocol, runtime contract 5,
-  event storage, snapshots, installer behavior, skill closure, and Windows
-  gates.
+- `tests/` covers behavior, architecture, hook protocol, runtime contracts 5–7,
+  event storage, snapshots, installer behavior, skill closure, and Windows gates.
 
 ## Core Model
 
@@ -115,11 +115,19 @@ workloop abandon --repo . --reason "superseded"
 
 ## Runtime Authority
 
-Runtime contract 5 uses `.workloop/events.jsonl` as the only repository
+Runtime contract 7 uses `.workloop/events.jsonl` as the only repository
 authority. `.workloop/task.json` is a schema-v3 snapshot wrapper that may be
 deleted and rebuilt from events; it is never promoted to authority. Every
 public mutation commits one hash-chained transaction before refreshing the
-snapshot.
+snapshot. Contract 7 projections persist task runtime contract 6 while event
+record framing remains schema 2.
+
+Execution authority belongs exclusively to the host. PreToolUse records an
+`operation_intent_recorded` fact and policy deviations; it does not claim that
+Workloop authorized the operation. PostToolUse/PostToolUseFailure records the
+correlated completion receipt, repository reconciliation records what actually
+landed, and coverage records what remains unknown. Intent counts are never
+reported as artifact mutations.
 
 `~/.workloop/outcomes.jsonl` is a best-effort HOME projection, not task
 authority. Rebuild it idempotently with:
@@ -130,8 +138,8 @@ workloop audit --repo .
 workloop audit-outcomes
 ```
 
-Runtime contract 5 removes schema versions from active artifact names while
-leaving the versions inside their JSON/JSONL content unchanged. If a repository
+Runtime contract 5 removed schema versions from active artifact names; Contract
+7 keeps those stable names and leaves versions inside JSON/JSONL content. If a repository
 still has legacy versioned artifact names, normal commands fail closed until the
 user authorizes the one-time rename:
 
@@ -149,27 +157,36 @@ state byte-for-byte only with explicit user provenance:
 
 ```sh
 workloop archive-incompatible-state --repo . \
-  --reason "runtime-contract-5 hard cutover" --granted-by user
+  --reason "runtime-contract-7 hard cutover" --granted-by user
 ```
 
 `workloop info` exposes the active versions:
 
-- `runtime_contract: 5`
+- `runtime_contract: 7`
 - `criterion_adapter_protocol_version: 2`
 - `task_snapshot_schema_version: 3`
 - `event_record_schema_version: 2`
-- `outcome_projection_schema_version: 3`
+- `outcome_projection_schema_version: 5`
 
 ## Budgets and Safety
 
-Rounds are bounded by default. Optional write, wall-clock, and output-token
-budgets add independent bounds. Exhausting any configured budget denies further
-writes while reads and verification remain available. A fresh unsatisfied Stop
-or explicit `achieve` suspends as `out_of_budget`; a fresh satisfied criterion
-can still close the task. Repeated equivalent failures suspend as `stuck`.
+Rounds are bounded by default. Optional intent, wall-clock, and output-token
+budgets add independent certification bounds. Under the generated `nudge`
+recipe, an over-budget intent is still left to host approval and is recorded as
+a deviation; closure is then held or an unsatisfied explicit adjudication
+suspends as `out_of_budget`. Repeated equivalent failures suspend as `stuck`.
 
-Command safety is deny-by-default. Git mutations and authority expansions are
-explicit grants with provenance:
+Git, network, destructive, install, publish, and command-safety findings are
+task policy with explicit grant provenance. In `observe`/`nudge` they change
+evidence, risk, review, and terminal certification without overriding the host.
+Only an explicitly installed `--mode deny` recipe turns them into execution
+rejections:
+
+Omitting `--mode` is equivalent to `nudge`; it never opts into enforcement.
+Contract 7 also records unknown MCP actions as potentially side-effecting
+operations so remote mutations receive correlated Pre/Post receipts. MCP tools
+whose action begins with an explicit read verb such as `get`, `list`, `read`,
+or `search` remain outside the operation budget.
 
 ```sh
 workloop amend --repo . --git-allowed add \
@@ -178,10 +195,11 @@ workloop amend --repo . --git-allowed add \
 ```
 
 Network, destructive, install-script, and publish-shaped commands require
-their matching grants. Remote download-to-shell execution requires both
-network and destructive grants. Secret dumps remain denied.
+their matching grants for clean certification. Remote download-to-shell
+execution requires both network and destructive grants. Secret dumps remain a
+policy deviation; explicit enforcement rejects them.
 
-The gate reads command shape, not intent, and its reach is narrower than
+The classifier reads command shape, not intent, and its reach is narrower than
 those class names suggest. Network means `curl`, `wget`, and
 `Invoke-WebRequest`; secret dumps mean the common readers over well-known
 credential paths. Other egress such as `git clone`, `ssh`, and `scp`, other
@@ -214,11 +232,13 @@ workloop hooks --profile codex-safe --mode nudge
 workloop hooks --profile claude --mode nudge
 ```
 
-`codex-safe` preserves PreToolUse deny/rewrite behavior but releases a held
-Stop with zero stdout and an explanatory stderr warning; continue through an
-external driver or run `workloop achieve` explicitly. `claude` preserves Claude
-Code's session-internal `decision:block` continuation. `codex-cli-legacy` is
-only a version-pinned experiment and must not be used in Codex App.
+Generated recipes default to `nudge`: Pre records intent and deviations, Post
+records receipts, and Stop records a census; all three fail open and never
+return an execution denial or completion block. `observe` is the silent form.
+`deny` is an explicit enforcement opt-in: Pre may return a host denial and the
+Claude profile may use `decision:block`; Codex profiles remain release-only at
+Stop. Workloop command rewrites may still return `updatedInput`, but non-enforcing
+responses omit `permissionDecision`, leaving approval to the host.
 
 The latest episode owns Stop adjudication and the write envelope when its
 `host_session_id` is bound. Foreign sessions read and verify freely, but cannot

@@ -240,7 +240,7 @@ test("[W06] Windows codex-safe Stop releases without launching a long criterion"
   assert.equal(amended.status, 0, amended.stderr || amended.stdout);
 
   const started = Date.now();
-  const stopped = runNode(fixture.shim, ["hook", "--profile", "codex-safe"], { cwd: repo, env: fixture.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: repo }), timeout: 5_000 });
+  const stopped = runNode(fixture.shim, ["hook", "--profile", "codex-safe", "--mode", "deny"], { cwd: repo, env: fixture.env, input: JSON.stringify({ hook_event_name: "Stop", cwd: repo }), timeout: 5_000 });
   assert.equal(stopped.status, 0, stopped.stderr || stopped.stdout);
   assert.equal(stopped.stdout, "");
   assert.ok(Date.now() - started < 2_000, `release-only Stop took ${Date.now() - started}ms`);
@@ -270,7 +270,7 @@ test("[W06] Windows criterion lease waits for a dead owner's declared deadline b
   const old = new Date(now - 60_000);
   fs.utimesSync(lock, old, old);
   const payload = JSON.stringify({ hook_event_name: "Stop", cwd: repo });
-  let stopped = runNode(fixture.shim, ["hook", "--profile", "claude"], { cwd: repo, env: fixture.env, input: payload });
+  let stopped = runNode(fixture.shim, ["hook", "--profile", "claude", "--mode", "deny"], { cwd: repo, env: fixture.env, input: payload });
   assert.equal(stopped.status, 0, stopped.stderr || stopped.stdout);
   assert.match(stopped.stdout, /criterion_in_progress/);
   assert.equal(fs.existsSync(lock), true);
@@ -278,7 +278,7 @@ test("[W06] Windows criterion lease waits for a dead owner's declared deadline b
   owner.deadline_epoch_ms = now - 20_000;
   fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify(owner));
   fs.utimesSync(lock, old, old);
-  stopped = runNode(fixture.shim, ["hook", "--profile", "claude"], { cwd: repo, env: fixture.env, input: payload });
+  stopped = runNode(fixture.shim, ["hook", "--profile", "claude", "--mode", "deny"], { cwd: repo, env: fixture.env, input: payload });
   assert.equal(stopped.status, 0, stopped.stderr || stopped.stdout);
   assert.match(stopped.stdout, /criterion unsatisfied/);
   assert.equal(fs.existsSync(lock), false);

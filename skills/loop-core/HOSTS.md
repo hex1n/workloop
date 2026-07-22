@@ -1,9 +1,11 @@
 # Host Binding Recipes
 
 workloop supervises the work; it never drives it: something else asks for
-another round (a human, a recurring goal, a scheduler), and the host decides
-what a session may touch (sandbox). These recipes bind the runtime's gates —
-write policing and the Stop gate — to specific hosts.
+another round (a human, a recurring goal, a scheduler), and the host alone
+decides whether a tool may execute. These recipes bind Workloop's intent,
+receipt, policy-deviation, and Stop-census sensors to specific hosts. They do
+not create a second approval authority unless the user explicitly selects
+`--mode deny`.
 The original binding mechanics were earned in a live dual-host spike (Claude
 Code 2.1.207, Codex CLI 0.144.1). Hook output support is now explicit per host
 profile because Codex App and Codex CLI cannot be treated as one wire surface.
@@ -33,9 +35,10 @@ profile because Codex App and Codex CLI cannot be treated as one wire surface.
   subagent payloads share that session identity, so they intentionally share
   one envelope. Optional `agent_id` identifies the acting subagent separately
   for evidence and review provenance; it never replaces ownership identity.
-- Session-internal continuation needs nothing beyond hook wiring: the Stop
-  hook's block feedback is the resume prompt.
-- The `claude` profile is the hard Stop capability. It executes only criteria
+- Session-internal continuation requires a `--mode deny` recipe: the Stop
+  hook's block feedback is then the resume prompt. Default `nudge` Stop is
+  release-only.
+- The `claude` profile can provide hard Stop only in `deny` mode. It executes only criteria
   whose configured timeout fits the runtime's 30-second inline budget. The
   child deadline is runtime-owned and shorter than the generated recipe's
   timeout; an over-budget criterion is not started and the hold points to
@@ -79,12 +82,13 @@ profile because Codex App and Codex CLI cannot be treated as one wire surface.
   This is a capability floor rather than a guessed numeric host-version floor:
   a host that omits `permission_mode` is unsupported for those calls and gets
   a capability-specific denial; `bypassPermissions` gets a distinct bypass
-  denial. The gate remains active in `observe` mode. Foreign-session publication is denied by the ownership guard;
+  denial. The finding remains observable in `observe` mode, but only `deny`
+  returns a host rejection. Foreign-session publication is priced by the ownership policy;
   no-task and terminal calls are outside task authority mediation.
   Keep workloop as the only matching hook that rewrites `updatedInput` for its
   CLI calls: matching hooks run concurrently, so independent command rewriters
-  have no reliable composition order. PreToolUse remains a policy guardrail,
-  not an OS security boundary.
+  have no reliable composition order. PreToolUse remains a policy sensor by
+  default and an opt-in guardrail in `deny`; it is never an OS security boundary.
 - `workloop hooks --profile codex-cli-legacy` is retained only to identify old,
   version-pinned CLI experiments. It is release-only until a stable live
   continuation contract is separately proven, is not part of the supported
@@ -113,7 +117,7 @@ profile because Codex App and Codex CLI cannot be treated as one wire surface.
   replay rejected that id because API message ids require the `msg` prefix.
   workloop supplies the Stop reason, while Codex App creates the message id.
 - `codex-safe` therefore performs a silent release-only Stop. PreToolUse remains
-  a policy guardrail, but session-internal continuation is unavailable until
+  a policy sensor by default, but session-internal continuation is unavailable until
   Codex exposes and workloop verifies a stable continuation contract.
 - Never infer App versus CLI from `session_id`, model name, executable path, or
   environment variables. Current Hook payloads expose no stable surface field;
@@ -131,9 +135,13 @@ close". With no driver at all, the loop degrades to a single supervised pass
 
 ## PreToolUse modes
 
-Generated recipes default to `--mode nudge`. Every invoked mode writes the repo-local
-evidence stream: `observe` records without messaging, `nudge` records and
-prompts without denying, and `deny` may reject wider untracked work. The
+Generated recipes default to `--mode nudge`. On a Contract 7 task,
+PreToolUse records `operation_intent_recorded` plus any policy deviations,
+PostToolUse records completion receipts, and Stop records a live census.
+`observe` records silently; `nudge` records and prompts without denying; both
+fail open when their telemetry path is unavailable and never block Stop.
+`deny` is the explicit enforcement mode: it may reject policy violations,
+fails closed on authority failures, and lets the Claude profile block Stop. The
 `hooks` command prints a recipe and does not claim it was installed. After the
 host configuration is actually changed, record that human-confirmed transition
 with `--action record-install|record-mode|record-uninstall`; a later live Stop
@@ -155,7 +163,7 @@ reads do not wait for a future same-session gap. A lock timeout cannot safely
 reserve through the contested counter and uses the same sidecar. Readers count
 these markers and report coverage as `gapped` rather than complete.
 Legacy hook commands that omit `--mode` retain the conservative `deny` default;
-regenerated recipes move intentionally to `nudge`.
+regenerated recipes move intentionally to host-authoritative `nudge`.
 
 ## Overnight interactive recipe
 

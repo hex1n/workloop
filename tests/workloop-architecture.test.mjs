@@ -24,9 +24,9 @@ test("assembly remains the only cross-leaf seam", () => {
   for (const name of MODULES.filter((x) => !new Set(["application.mjs", "prims.mjs"]).has(x))) assert.ok(imports(path.join(ROOT, "lib", name)).every((x) => x === "./prims.mjs"), name);
 });
 
-test("integration handshake exposes runtime-contract-6 independent schemas", () => {
+test("integration handshake exposes runtime-contract-7 independent schemas", () => {
   const info = JSON.parse(run(CLI, ["info"]).stdout);
-  assert.deepEqual({ runtime: info.runtime_contract, task: info.task_snapshot_schema_version, record: info.event_record_schema_version, outcome: info.outcome_projection_schema_version }, { runtime: 6, task: 3, record: 2, outcome: 4 });
+  assert.deepEqual({ runtime: info.runtime_contract, task: info.task_snapshot_schema_version, record: info.event_record_schema_version, outcome: info.outcome_projection_schema_version }, { runtime: 7, task: 3, record: 2, outcome: 5 });
   assert.equal(info.criterion_adapter_protocol_version, 2);
   assert.equal(info.event_store, ".workloop/events.jsonl");
   assert.equal(info.outcome_projection, "~/.workloop/outcomes.jsonl");
@@ -45,9 +45,9 @@ test("Stop hooks exit zero with no task and with incompatible task state", (t) =
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-stop-exit-v2-")); const repo = path.join(root, "repo"); const home = path.join(root, "home");
   fs.mkdirSync(repo, { recursive: true }); fs.mkdirSync(home, { recursive: true }); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const env = { ...process.env, TZ: "UTC", HOME: home, USERPROFILE: home }; const payload = JSON.stringify({ hook_event_name: "Stop", cwd: repo });
-  let stopped = run(CLI, ["hook", "--profile", "claude"], { cwd: repo, env, input: payload }); assert.equal(stopped.status, 0); assert.equal(stopped.stdout, "");
+  let stopped = run(CLI, ["hook", "--profile", "claude", "--mode", "deny"], { cwd: repo, env, input: payload }); assert.equal(stopped.status, 0); assert.equal(stopped.stdout, "");
   fs.mkdirSync(path.join(repo, ".workloop"), { recursive: true }); fs.writeFileSync(path.join(repo, ".workloop", "task.json"), '{"schema_version":1}\n');
-  stopped = run(CLI, ["hook", "--profile", "claude"], { cwd: repo, env, input: payload });
+  stopped = run(CLI, ["hook", "--profile", "claude", "--mode", "deny"], { cwd: repo, env, input: payload });
   assert.equal(stopped.status, 0);
   assert.equal(stopped.stderr, "task snapshot exists without a valid schema-v3 event authority; archive it with explicit user authorization\n");
   assert.equal(stopped.stdout, '{"decision":"block","reason":"workloop: task state unavailable (ORPHAN_V3_SNAPSHOT); refusing to adjudicate Stop"}\n');
@@ -59,7 +59,7 @@ test("command-shaped authority fails closed when task authority is corrupt", (t)
   fs.mkdirSync(path.join(repo, ".workloop"), { recursive: true });
   fs.writeFileSync(path.join(repo, ".workloop", "task.json"), '{"schema_version":1}\n');
   const command = ["npm", "pub", "lish"].join(" ").replace("pub lish", "publish");
-  const result = run(CLI, ["hook", "--profile", "claude"], {
+  const result = run(CLI, ["hook", "--profile", "claude", "--mode", "deny"], {
     cwd: repo,
     input: JSON.stringify({ hook_event_name: "PreToolUse", cwd: repo, session_id: "owner", tool_name: "Bash", tool_input: { command } }),
   });
@@ -103,7 +103,7 @@ test("observation compare-and-commit binds intent, hashes outside locks, and rev
   assert.match(application, /function observationAuthorityToken\(authority, task, intent\)[\s\S]*?return \{\s*intent,/);
   assert.match(application, /prepared\.intent !== intent \|\| prepared\.token\?\.intent !== intent/);
   assert.match(application, /const currentSnapshot = repoSnapshot\([\s\S]*?return withTaskLock\(repo,/);
-  assert.match(application, /function terminalNotNeededContract6[\s\S]*?const repositorySnapshot = repoSnapshot\([\s\S]*?const committed = withTaskLock\(repo,/);
+  assert.match(application, /function terminalNotNeededArtifactEvidence[\s\S]*?const repositorySnapshot = repoSnapshot\([\s\S]*?const committed = withTaskLock\(repo,/);
   assert.match(application, /return withTaskLock\(repo,[\s\S]*?validateRepoSnapshot\(repo, currentSnapshot,/);
   assert.match(application, /OBSERVATION_COMMIT_VALIDATION_MS = 50/);
   assert.match(application, /execution_error = "criterion_side_effect"/);
@@ -343,7 +343,7 @@ test("[W06] task lock recovers a crashed owner and crashed reaper without double
   assert.equal(fs.existsSync(reaper), false);
 });
 
-test("PreToolUse lock timeout denies the write instead of preserving stale proof", (t) => {
+test("PreToolUse lock timeout fails open by default and closes only in explicit deny mode", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-hook-lock-v1-")); const repo = path.join(root, "repo"); const home = path.join(root, "home");
   fs.mkdirSync(repo, { recursive: true }); fs.mkdirSync(home, { recursive: true }); t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   spawnSync("git", ["init", "-q"], { cwd: repo });
@@ -352,6 +352,8 @@ test("PreToolUse lock timeout denies the write instead of preserving stale proof
   const opened = run(CLI, ["open", "--repo", repo, "--goal", "lock", "--criterion-file", "check.mjs", "--criterion-policy", "default", "--alignment-because", "probe", "--files", "work.txt"], { env }); assert.equal(opened.status, 0, opened.stderr);
   const lock = path.join(repo, ".workloop", ".task.lock"); fs.mkdirSync(lock); fs.writeFileSync(path.join(lock, "owner.json"), JSON.stringify({ pid: process.pid, token: "held" }));
   const payload = JSON.stringify({ hook_event_name: "PreToolUse", cwd: repo, tool_name: "Write", tool_input: { file_path: path.join(repo, "work.txt") } });
-  const denied = run(CLI, [], { cwd: repo, env: { ...env, WORKLOOP_LOCK_TIMEOUT_MS: "20" }, input: payload });
+  const observed = run(CLI, [], { cwd: repo, env: { ...env, WORKLOOP_LOCK_TIMEOUT_MS: "20" }, input: payload });
+  assert.equal(observed.status, 0); assert.equal(observed.stdout, ""); assert.match(observed.stderr, /host retains execution authority/);
+  const denied = run(CLI, ["hook", "--profile", "claude", "--mode", "deny"], { cwd: repo, env: { ...env, WORKLOOP_LOCK_TIMEOUT_MS: "20" }, input: payload });
   assert.equal(denied.status, 0); assert.match(denied.stdout, /permissionDecision.*deny/); assert.match(denied.stdout, /artifact revision cannot be recorded/);
 });

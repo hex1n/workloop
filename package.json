@@ -11,8 +11,8 @@
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test tests/workloop.test.mjs && node --test tests/command-safety-adversarial.test.mjs tests/foreign-session-scope.test.mjs tests/host-hooks.test.mjs tests/roadmap-e2e.test.mjs tests/workloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/runtime-v6.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
-    "test:matrix": "node --test tests/command-safety-adversarial.test.mjs tests/foreign-session-scope.test.mjs tests/host-hooks.test.mjs tests/roadmap-e2e.test.mjs tests/workloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/runtime-v6.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
+    "test": "node --test tests/workloop.test.mjs && node --test tests/command-safety-adversarial.test.mjs tests/foreign-session-scope.test.mjs tests/host-authority.test.mjs tests/host-hooks.test.mjs tests/roadmap-e2e.test.mjs tests/workloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/runtime-v6.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
+    "test:matrix": "node --test tests/command-safety-adversarial.test.mjs tests/foreign-session-scope.test.mjs tests/host-authority.test.mjs tests/host-hooks.test.mjs tests/roadmap-e2e.test.mjs tests/workloop-architecture.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/runtime-v6.test.mjs tests/installer.test.mjs tests/skills.test.mjs tests/windows.test.mjs",
     "test:host-hooks": "node --test tests/host-hooks.test.mjs",
     "test:behavioral": "node --test tests/workloop.test.mjs",
     "test:architecture": "node --test tests/workloop-architecture.test.mjs",

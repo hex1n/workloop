@@ -33,7 +33,9 @@ test("roadmap E2E: dedicated criterion, host anchors, actual-use floor, and ledg
   assert.equal(post.status, 0, post.stderr); assert.equal(post.stdout, "");
 
   const stopped = run(["hook", "--profile", "claude", "--mode", "nudge"], { cwd: repo, env, input: JSON.stringify({ hook_event_name: "Stop", cwd: repo, session_id: "owner", agent_id: "child", permission_mode: "bypassPermissions" }) });
-  assert.equal(stopped.status, 0, stopped.stderr); assert.match(stopped.stderr, /terminal\(achieved\)/);
+  assert.equal(stopped.status, 0, stopped.stderr); assert.equal(stopped.stdout, "");
+  const achieved = run(["achieve", "--repo", repo], { env: { ...env, WORKLOOP_SESSION_ID: "owner", WORKLOOP_ACTING_SESSION_ID: "child" } });
+  assert.equal(achieved.status, 0, achieved.stderr); assert.match(achieved.stdout, /terminal\(achieved\)/);
 
   const ledger = run(["ledger", "--json", "--repo", repo], { env });
   assert.equal(ledger.status, 0, ledger.stderr); const payload = JSON.parse(ledger.stdout);

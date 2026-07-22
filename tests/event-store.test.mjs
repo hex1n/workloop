@@ -161,7 +161,7 @@ function terminateCrashChildAtSeam(args) {
   });
 }
 
-test("runtime contract 6 keeps snapshot, record, and outcome versions independent", () => {
+test("runtime contract 7 keeps snapshot, record, and outcome versions independent", () => {
   assert.deepEqual(
     {
       activeRuntime: RUNTIME_CONTRACT,
@@ -174,11 +174,11 @@ test("runtime contract 6 keeps snapshot, record, and outcome versions independen
       outcomeCursors: OUTCOME_CURSOR_DIR,
     },
     {
-      activeRuntime: 6,
+      activeRuntime: 7,
       task: 3,
       runtime: 5,
       record: 2,
-      outcome: 4,
+      outcome: 5,
       eventStore: "events.jsonl",
       outcomeProjection: "outcomes.jsonl",
       outcomeCursors: "outcomes-cursors",

@@ -37,11 +37,11 @@ test("installer puts runtime and skills from one release under a temporary home"
   const powershellShim = path.join(home, "bin", "workloop.ps1"); assert.ok(fs.existsSync(powershellShim));
   assert.equal(fs.readFileSync(windowsShim, "utf8"), '@echo off\r\nnode "%~dp0workloop.mjs" %*\r\n');
   assert.equal(fs.readFileSync(powershellShim, "utf8"), "$script = Join-Path $PSScriptRoot 'workloop.mjs'\r\n& node $script @args\r\nexit $LASTEXITCODE\r\n");
-  const info = JSON.parse(run(shim, ["info"], { env: { ...process.env, HOME: home, USERPROFILE: home } }).stdout); assert.equal(info.runtime_contract, 6);
+  const info = JSON.parse(run(shim, ["info"], { env: { ...process.env, HOME: home, USERPROFILE: home } }).stdout); assert.equal(info.runtime_contract, 7);
   for (const runtime of [".claude", ".codex"]) for (const skill of ["loop-core", "workloop", "judgmentloop", "meta-loop"]) assert.ok(fs.existsSync(path.join(home, runtime, "skills", skill, skill === "loop-core" ? "REFERENCE.md" : "SKILL.md")));
   const manifest = JSON.parse(fs.readFileSync(path.join(home, "bin", ".workloop-active-release.json"), "utf8"));
-  assert.equal(manifest.release_id, manifest.runtime_digest); assert.equal(manifest.runtime_contract, 6);
-  assert.deepEqual(manifest.compatibility_runtimes, { contract_5: null });
+  assert.equal(manifest.release_id, manifest.runtime_digest); assert.equal(manifest.runtime_contract, 7);
+  assert.deepEqual(manifest.compatibility_runtimes, { contract_5: null, contract_6: null });
   assert.equal(fs.existsSync(path.join(home, "bin", ".workloop-activation-journal.json")), false);
 });
 
@@ -280,38 +280,72 @@ test("installer warns about a multiline dotted workloop Stop value", (t) => {
   assert.deepEqual(fs.readFileSync(config), original);
 });
 
-test("runtime-contract-6 installer refuses a contract-3 source rollback", (t) => {
+test("runtime-contract-7 installer refuses a contract-3 source rollback", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-install-no-v3-rollback-")); const home = path.join(root, "home"); const source = path.join(root, "source");
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   for (const directory of ["bin", "lib", "skills"]) fs.cpSync(path.join(ROOT, directory), path.join(source, directory), { recursive: true });
   const prims = path.join(source, "lib", "prims.mjs");
-  fs.writeFileSync(prims, fs.readFileSync(prims, "utf8").replace("const RUNTIME_CONTRACT = 6;", "const RUNTIME_CONTRACT = 3;"));
+  fs.writeFileSync(prims, fs.readFileSync(prims, "utf8").replace("const RUNTIME_CONTRACT = 7;", "const RUNTIME_CONTRACT = 3;"));
   const result = run(path.join(ROOT, "install.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, WORKLOOP_INSTALL_HOME: home, WORKLOOP_INSTALL_REPO: source } });
   assert.notEqual(result.status, 0); assert.match(result.stderr, /refusing contract 3/);
   assert.equal(fs.existsSync(path.join(home, "bin", "workloop.mjs")), false);
 });
 
-test("Contract 6 activation gate rejects an active Contract 5 source task", (t) => {
-  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-install-active-v5-"));
+test("Contract 7 activation gate rejects active Contract 5 and 6 source tasks", (t) => {
+  const repo = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-install-active-legacy-"));
   t.after(() => fs.rmSync(repo, { recursive: true, force: true }));
   fs.mkdirSync(path.join(repo, ".workloop"));
-  const authority = (terminal = false) => `${JSON.stringify({ events: [
-    { task_id: "legacy-task", kind: "task_opened", payload_version: 1, payload: {} },
-    ...(terminal ? [{ task_id: "legacy-task", kind: "task_terminal", payload_version: 1, payload: { outcome: "abandoned" } }] : []),
+  const authority = (contract, terminal = false) => `${JSON.stringify({ events: [
+    { task_id: `legacy-task-${contract}`, kind: "task_opened", payload_version: contract === 5 ? 1 : 2, payload: contract === 5 ? {} : { runtime_contract: contract } },
+    ...(terminal ? [{ task_id: `legacy-task-${contract}`, kind: "task_terminal", payload_version: 1, payload: { outcome: "abandoned" } }] : []),
   ] })}\n`;
-  fs.writeFileSync(path.join(repo, ".workloop", "events.jsonl"), authority());
-  assert.throws(() => assertSourceActivationCompatible(repo), /active Contract 5 task blocks Contract 6 activation/);
-  fs.writeFileSync(path.join(repo, ".workloop", "events.jsonl"), authority(true));
-  assert.equal(assertSourceActivationCompatible(repo).lifecycle, "terminal");
+  for (const contract of [5, 6]) {
+    fs.writeFileSync(path.join(repo, ".workloop", "events.jsonl"), authority(contract));
+    assert.throws(() => assertSourceActivationCompatible(repo), new RegExp(`active Contract ${contract} task blocks Contract 7 activation`));
+    fs.writeFileSync(path.join(repo, ".workloop", "events.jsonl"), authority(contract, true));
+    assert.equal(assertSourceActivationCompatible(repo).lifecycle, "terminal");
+  }
 });
 
-test("Contract 5 compatibility runtime remains pinned across Contract 6 upgrades", (t) => {
+test("Contract 6 compatibility runtime remains pinned across Contract 7 upgrades", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-install-v6-pin-"));
+  const home = path.join(root, "home"); const legacySource = path.join(root, "legacy-v6");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  for (const directory of ["bin", "lib"]) fs.cpSync(path.join(ROOT, directory), path.join(legacySource, directory), { recursive: true });
+  const legacyPrims = path.join(legacySource, "lib", "prims.mjs");
+  fs.writeFileSync(legacyPrims, fs.readFileSync(legacyPrims, "utf8").replace("const RUNTIME_CONTRACT = 7;", "const RUNTIME_CONTRACT = 6;"));
+  const legacyHash = runtimeDigest(legacySource);
+  const runtimeRoot = path.join(home, "bin", ".workloop-runtime");
+  fs.mkdirSync(runtimeRoot, { recursive: true });
+  fs.cpSync(legacySource, path.join(runtimeRoot, legacyHash), { recursive: true });
+  fs.writeFileSync(path.join(home, "bin", ".workloop-active-release.json"), `${JSON.stringify({
+    release_manifest_version: 1, release_id: legacyHash, runtime_contract: 6, runtime_digest: legacyHash,
+    managed_skills_manifest_digest: null,
+  }, null, 2)}\n`);
+
+  const base = { ...process.env, HOME: home, USERPROFILE: home, WORKLOOP_INSTALL_HOME: home, WORKLOOP_INSTALL_REPO: ROOT };
+  assert.equal(run(path.join(ROOT, "install.mjs"), [], { env: base }).status, 0);
+  const first = JSON.parse(fs.readFileSync(path.join(home, "bin", ".workloop-active-release.json"), "utf8"));
+  assert.equal(first.compatibility_runtimes.contract_6, legacyHash);
+  assert.ok(fs.existsSync(path.join(runtimeRoot, legacyHash)));
+
+  const nextSource = path.join(root, "next-source");
+  for (const directory of ["bin", "lib", "skills"]) fs.cpSync(path.join(ROOT, directory), path.join(nextSource, directory), { recursive: true });
+  fs.appendFileSync(path.join(nextSource, "lib", "prims.mjs"), "\n// Contract 7 compatibility upgrade fixture\n");
+  assert.equal(run(path.join(ROOT, "install.mjs"), [], { env: { ...base, WORKLOOP_INSTALL_REPO: nextSource } }).status, 0);
+  const second = JSON.parse(fs.readFileSync(path.join(home, "bin", ".workloop-active-release.json"), "utf8"));
+  assert.equal(second.compatibility_runtimes.contract_6, legacyHash);
+  assert.equal(runtimeDigest(path.join(runtimeRoot, legacyHash)), legacyHash);
+  assert.ok(fs.existsSync(path.join(runtimeRoot, legacyHash)));
+});
+
+test("Contract 5 compatibility runtime remains pinned across Contract 7 upgrades", (t) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-install-v5-pin-"));
   const home = path.join(root, "home"); const legacySource = path.join(root, "legacy");
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   for (const directory of ["bin", "lib"]) fs.cpSync(path.join(ROOT, directory), path.join(legacySource, directory), { recursive: true });
   const legacyPrims = path.join(legacySource, "lib", "prims.mjs");
-  fs.writeFileSync(legacyPrims, fs.readFileSync(legacyPrims, "utf8").replace("const RUNTIME_CONTRACT = 6;", "const RUNTIME_CONTRACT = 5;"));
+  fs.writeFileSync(legacyPrims, fs.readFileSync(legacyPrims, "utf8").replace("const RUNTIME_CONTRACT = 7;", "const RUNTIME_CONTRACT = 5;"));
   const legacyHash = runtimeDigest(legacySource);
   const runtimeRoot = path.join(home, "bin", ".workloop-runtime");
   fs.mkdirSync(runtimeRoot, { recursive: true });
@@ -427,7 +461,7 @@ test("every installer activation interruption leaves a journal and rerun converg
     assert.notEqual(interrupted.status, 0, failpoint);
     if (failpoint !== "journal-cleaned") assert.ok(fs.existsSync(path.join(home, "bin", ".workloop-activation-journal.json")), failpoint);
     const resumed = run(path.join(ROOT, "install.mjs"), [], { env: base }); assert.equal(resumed.status, 0, `${failpoint}: ${resumed.stderr}`);
-    const info = JSON.parse(run(path.join(home, "bin", "workloop.mjs"), ["info"], { env: base }).stdout); assert.equal(info.runtime_contract, 6);
+    const info = JSON.parse(run(path.join(home, "bin", "workloop.mjs"), ["info"], { env: base }).stdout); assert.equal(info.runtime_contract, 7);
     assert.equal(fs.existsSync(path.join(home, "bin", ".workloop-activation-journal.json")), false);
   }
 });
@@ -456,7 +490,7 @@ test("activation failure after a shim switch restores the previous release", (t)
   assert.deepEqual(shimPaths.map((target) => fs.readFileSync(target)), before);
   assert.deepEqual([managedManifest, ...managedSkillPaths].map((target) => fs.readFileSync(target)), managedBefore);
   const info = JSON.parse(run(shimPaths[0], ["info"], { env: base }).stdout);
-  assert.equal(info.runtime_contract, 6);
+  assert.equal(info.runtime_contract, 7);
 });
 
 test("uninstall removes what it installed and preserves what it cannot prove is its own", (t) => {
@@ -614,7 +648,7 @@ test("the published tarball carries exactly what installing needs", (t) => {
   assert.equal(installed.status, 0, installed.stderr);
   assert.doesNotMatch(installed.stdout, /^ {2}error/m);
   const info = JSON.parse(run(path.join(home, "bin", "workloop.mjs"), ["info"], { env }).stdout);
-  assert.equal(info.name, "workloop"); assert.equal(info.runtime_contract, 6);
+  assert.equal(info.name, "workloop"); assert.equal(info.runtime_contract, 7);
   for (const skill of ["loop-core", "workloop", "judgmentloop", "meta-loop"]) {
     assert.ok(fs.existsSync(path.join(home, ".claude", "skills", skill)), `${skill} must install`);
   }

@@ -13,7 +13,8 @@ const ROOT = path.resolve(".");
 const CLI = path.join(ROOT, "bin", "workloop.mjs");
 
 function run(args, { cwd = ROOT, env = process.env, input = "" } = {}) {
-  return spawnSync(process.execPath, [CLI, ...args], { cwd, env, input, encoding: "utf8" });
+  const effectiveArgs = args[0] === "hook" && !args.includes("--mode") ? [...args, "--mode", "deny"] : args;
+  return spawnSync(process.execPath, [CLI, ...effectiveArgs], { cwd, env, input, encoding: "utf8" });
 }
 
 function fixture(t) {
@@ -41,8 +42,8 @@ function projection(repo) {
 test("current runtime describes independent repository and HOME schemas", () => {
   const info = JSON.parse(run(["info"]).stdout);
   assert.deepEqual(info, {
-    name: "workloop", runtime_contract: 6, criterion_adapter_protocol_version: 2, task_snapshot_schema_version: 3,
-    event_record_schema_version: 2, outcome_projection_schema_version: 4,
+    name: "workloop", runtime_contract: 7, criterion_adapter_protocol_version: 2, task_snapshot_schema_version: 3,
+    event_record_schema_version: 2, outcome_projection_schema_version: 5,
     event_store: ".workloop/events.jsonl", outcome_projection: "~/.workloop/outcomes.jsonl",
     distribution_owner: "workloop",
   });
@@ -65,7 +66,7 @@ test("status, verify, report, and audit self-describe the active storage contrac
       snapshot: payload.task_snapshot_schema_version,
       record: payload.event_record_schema_version,
       outcome: payload.outcome_projection_schema_version,
-    }, { runtime: 6, snapshot: 3, record: 2, outcome: 4 }, args[0]);
+    }, { runtime: 7, snapshot: 3, record: 2, outcome: 5 }, args[0]);
   }
 
   fs.appendFileSync(path.join(fx.repo, ".workloop", "events.jsonl"), "{broken}\n");
@@ -97,7 +98,7 @@ test("CLI mutations commit one authority record and a disposable snapshot", (t) 
   assert.equal(run(["amend", "--repo", fx.repo, "--reason", "raise cap", "--writes", "5"], { env: fx.env }).status, 0);
   assert.equal(run(["abandon", "--repo", fx.repo, "--reason", "done"], { env: fx.env }).status, 0);
   assert.deepEqual(readEventStore(fx.repo).events.map((event) => event.kind), [
-    "task_opened", "write_authorized", "task_suspended", "task_resumed",
+    "task_opened", "operation_intent_recorded", "task_suspended", "task_resumed",
     "coverage_changed", "review_recorded", "task_amended", "task_terminal",
   ]);
 });
@@ -381,9 +382,9 @@ test("outcome cursor makes the normal commit path incremental", (t) => {
     events: [{
       task_id: first.events[0].task_id,
       task_event_sequence: 2,
-      kind: "write_authorized",
-      payload_version: 2,
-      payload: { operation_id: "cursor-operation", tool_family: "patch", declared_targets: ["work.txt"], target_coverage: "exact", host_profile: "fixture", receipt_expectation: "post" },
+      kind: "operation_intent_recorded",
+      payload_version: 1,
+      payload: { operation_id: "cursor-operation", tool_family: "patch", declared_targets: ["work.txt"], target_coverage: "exact", host_profile: "fixture", receipt_expectation: "post", policy_mode: "nudge", policy_disposition: "conformant", policy_reasons: [], session_relation: "owner" },
     }],
   });
   let projectionReads = 0;
@@ -431,9 +432,9 @@ test("a stale repo cursor cannot omit history after the shared projection is reb
     events: [{
       task_id: first.events[0].task_id,
       task_event_sequence: 2,
-      kind: "write_authorized",
-      payload_version: 2,
-      payload: { operation_id: "repair-operation", tool_family: "patch", declared_targets: ["work.txt"], target_coverage: "exact", host_profile: "fixture", receipt_expectation: "post" },
+      kind: "operation_intent_recorded",
+      payload_version: 1,
+      payload: { operation_id: "repair-operation", tool_family: "patch", declared_targets: ["work.txt"], target_coverage: "exact", host_profile: "fixture", receipt_expectation: "post", policy_mode: "nudge", policy_disposition: "conformant", policy_reasons: [], session_relation: "owner" },
     }],
   });
 
@@ -509,7 +510,7 @@ test("[W05] twenty concurrent mutations serialize without sequence gaps or lost 
   const replay = readEventStore(fx.repo);
   assert.equal(replay.records.length, concurrency + 1, JSON.stringify(results, null, 2));
   assert.deepEqual(replay.records.map((record) => record.repo_sequence), Array.from({ length: concurrency + 1 }, (_, index) => index + 1));
-  assert.equal(replay.events.filter((event) => event.kind === "write_authorized").length, concurrency);
+  assert.equal(replay.events.filter((event) => event.kind === "operation_intent_recorded").length, concurrency);
   assert.equal(projection(fx.repo).spent.writes, concurrency);
 });
 
@@ -567,5 +568,5 @@ test("[W05] hook payload reading waits when an intermediate chunk ends with a cl
   });
   assert.equal(result.status, 0, JSON.stringify(result));
   assert.equal(result.stdout, ""); assert.equal(result.stderr, "");
-  assert.equal(readEventStore(fx.repo).events.filter((event) => event.kind === "write_authorized").length, 1);
+  assert.equal(readEventStore(fx.repo).events.filter((event) => event.kind === "operation_intent_recorded").length, 1);
 });
