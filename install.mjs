@@ -29,14 +29,20 @@ function hookSourceInteger(name) {
   if (!Number.isSafeInteger(value) || value <= 0) throw new Error(`workloop installer cannot read the ${name} contract`);
   return value;
 }
-function hookSourceString(name) {
-  const value = HOST_HOOKS_SOURCE.match(new RegExp(`const ${name} = "([^"]*)";`))?.[1];
-  if (typeof value !== "string" || !value) throw new Error(`workloop installer cannot read the ${name} contract`);
-  return value;
+function hookSourceString(name, seen = new Set()) {
+  if (seen.has(name)) throw new Error(`workloop installer found a cyclic ${name} contract`);
+  seen.add(name);
+  const literal = HOST_HOOKS_SOURCE.match(new RegExp(`const ${name} = "([^"]*)";`))?.[1];
+  if (typeof literal === "string" && literal) return literal;
+  const reference = HOST_HOOKS_SOURCE.match(new RegExp(`const ${name} = ([A-Z][A-Z0-9_]*);`))?.[1];
+  if (reference) return hookSourceString(reference, seen);
+  throw new Error(`workloop installer cannot read the ${name} contract`);
 }
 const PRE_TOOL_USE_MATCHER = hookSourceString("PRE_TOOL_USE_MATCHER");
+const POST_TOOL_USE_MATCHER = hookSourceString("POST_TOOL_USE_MATCHER");
 const STOP_MATCHER = hookSourceString("STOP_MATCHER");
 const PRE_TOOL_USE_RECIPE_TIMEOUT_SECONDS = hookSourceInteger("PRE_TOOL_USE_RECIPE_TIMEOUT_SECONDS");
+const POST_TOOL_USE_RECIPE_TIMEOUT_SECONDS = hookSourceInteger("POST_TOOL_USE_RECIPE_TIMEOUT_SECONDS");
 const STOP_RECIPE_TIMEOUT_SECONDS = hookSourceInteger("STOP_RECIPE_TIMEOUT_SECONDS");
 // Module-level plan log. Every exported entry point resets it so a library
 // caller never inherits a previous invocation's rows; main() aggregates the
@@ -534,8 +540,12 @@ function tomlContainerDelta(value) {
 
 const HOOK_EVENT_CONTRACTS = Object.freeze({
   PreToolUse: Object.freeze({ matcher: PRE_TOOL_USE_MATCHER, timeout: PRE_TOOL_USE_RECIPE_TIMEOUT_SECONDS }),
+  PostToolUse: Object.freeze({ matcher: POST_TOOL_USE_MATCHER, timeout: POST_TOOL_USE_RECIPE_TIMEOUT_SECONDS }),
+  PostToolUseFailure: Object.freeze({ matcher: POST_TOOL_USE_MATCHER, timeout: POST_TOOL_USE_RECIPE_TIMEOUT_SECONDS }),
   Stop: Object.freeze({ matcher: STOP_MATCHER, timeout: STOP_RECIPE_TIMEOUT_SECONDS }),
 });
+const CODEX_HOOK_EVENTS = Object.freeze(["PreToolUse", "PostToolUse", "Stop"]);
+const CLAUDE_HOOK_EVENTS = Object.freeze(["PreToolUse", "PostToolUse", "PostToolUseFailure", "Stop"]);
 
 function jsonHookCommands(text, event) {
   const parsed = JSON.parse(text);
@@ -648,7 +658,7 @@ function inspectCodexHookProfiles(home) {
     }
     let commands;
     try {
-      commands = Object.keys(HOOK_EVENT_CONTRACTS).flatMap((event) => codexHookCommands(config, text, event)
+    commands = CODEX_HOOK_EVENTS.flatMap((event) => codexHookCommands(config, text, event)
         .filter((handler) => /workloop(?:\.mjs)?/i.test(handler.command))
         .map((handler) => ({ ...handler, config, event })));
     } catch (error) {
@@ -659,7 +669,7 @@ function inspectCodexHookProfiles(home) {
   }
   if (!workloopHandlers.length) return;
   const configuredIn = workloopHandlers.map((handler) => handler.config);
-  for (const event of Object.keys(HOOK_EVENT_CONTRACTS)) {
+  for (const event of CODEX_HOOK_EVENTS) {
     inspectHookEvent({ host: "Codex", event, handlers: workloopHandlers.filter((handler) => handler.event === event), configuredIn, expectedProfile: "codex-safe" });
   }
 }
@@ -674,7 +684,7 @@ function inspectClaudeHookProfile(home) {
   }
   let handlers;
   try {
-    handlers = Object.keys(HOOK_EVENT_CONTRACTS).flatMap((event) => jsonHookCommands(text, event)
+    handlers = CLAUDE_HOOK_EVENTS.flatMap((event) => jsonHookCommands(text, event)
       .filter((handler) => /workloop(?:\.mjs)?/i.test(handler.command))
       .map((handler) => ({ ...handler, config, event })));
   }
@@ -683,7 +693,7 @@ function inspectClaudeHookProfile(home) {
     return;
   }
   if (!handlers.length) return;
-  for (const event of Object.keys(HOOK_EVENT_CONTRACTS)) {
+  for (const event of CLAUDE_HOOK_EVENTS) {
     inspectHookEvent({ host: "Claude", event, handlers: handlers.filter((handler) => handler.event === event), configuredIn: [config], expectedProfile: "claude" });
   }
 }

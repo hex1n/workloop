@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { buildRecord } from "../lib/event-store.mjs";
+import { buildRecord, readEventStore } from "../lib/event-store.mjs";
 import { artifactCheckpointDelta, artifactCheckpointFromSnapshot, repoSnapshot } from "../lib/criterion.mjs";
 import { assertV3TaskProjection, decide, evolve, evolveAll } from "../lib/task-engine.mjs";
 import {
@@ -20,6 +21,7 @@ import {
 } from "./fixtures/runtime-contract-6.mjs";
 
 const ROOT = path.resolve(".");
+const CLI = path.join(ROOT, "bin", "workloop.mjs");
 const CONTRACT5_SHA256 = "0c587e3536121e0b0eb78472fd28891d8a97e3c82634e472c52a3fcf5127ca10";
 
 function digest(target) {
@@ -260,4 +262,92 @@ test("an unowned reconciliation records a permanent mutation-history gap", () =>
     intervalToCheckpoint: NEXT_CHECKPOINT, reason: "must not heal history",
   });
   assert.throws(() => evolveAll(state, attemptedUpgrade.events), /cannot upgrade degraded mutation history/);
+});
+
+test("operation completion and reconciliation are exactly-once as one decision", () => {
+  const opened = openCommand();
+  let state = evolveAll(null, decide(null, opened).events);
+  state = evolveAll(state, decide(state, {
+    type: "authorize-write", taskId: state.task_id, at: "2026-07-22T00:00:01.000Z", decision: "allow",
+    files: ["work.txt"], operationId: "operation-1", toolFamily: "patch", hostProfile: "codex-safe",
+    targetCoverage: "exact", receiptExpectation: "post",
+  }).events);
+  const command = {
+    type: "complete-operation", taskId: state.task_id, at: "2026-07-22T00:00:02.000Z",
+    operationId: "operation-1", toolFamily: "patch", outcome: "success", reportedTargets: ["work.txt"],
+    receiptQuality: "tool_specific", hostProfile: "codex-safe",
+    checkpointId: NEXT_CHECKPOINT, fromCheckpoint: EMPTY_CHECKPOINT, toCheckpoint: NEXT_CHECKPOINT,
+    changedEntries: [{ path: "work.txt", before: null, after: FILE_DIGEST }], changedPaths: ["work.txt"],
+    currentScopeViolations: [], coverage: "full", reason: "post-tool",
+    coverageChange: {
+      artifactState: "full", mutationHistory: "unknown", prewriteEnforcement: "unknown",
+      episodeId: state.episodes.at(-1).episode_id, operationId: "operation-1", capabilityId: "hostcap:v1:codex",
+      hostProfile: "codex-safe", surface: "direct", exhaustiveSurface: false,
+      effectiveFromCheckpoint: EMPTY_CHECKPOINT, intervalFromCheckpoint: EMPTY_CHECKPOINT,
+      intervalToCheckpoint: NEXT_CHECKPOINT, reason: "non-exhaustive direct receipt",
+    },
+  };
+  const completion = decide(state, command);
+  assert.deepEqual(completion.events.map((event) => event.kind), ["tool_completed", "artifact_reconciled", "coverage_changed"]);
+  state = evolveAll(state, completion.events);
+  assert.equal(state.evidence.tool_completions_observed, 1);
+  assert.equal(state.artifact_revision, 1);
+
+  const replayed = decide(state, {
+    ...command, at: "2026-07-22T00:00:03.000Z", checkpointId: NEXT_CHECKPOINT,
+    fromCheckpoint: NEXT_CHECKPOINT, toCheckpoint: NEXT_CHECKPOINT, changedEntries: [], changedPaths: [],
+    coverageChange: { ...command.coverageChange, effectiveFromCheckpoint: NEXT_CHECKPOINT, intervalFromCheckpoint: NEXT_CHECKPOINT, intervalToCheckpoint: NEXT_CHECKPOINT },
+  });
+  assert.deepEqual(replayed.events.map((event) => event.kind), ["artifact_reconciled", "coverage_changed"]);
+  state = evolveAll(state, replayed.events);
+  assert.equal(state.evidence.tool_completions_observed, 1);
+  assert.equal(state.artifact_revision, 1);
+});
+
+test("PreToolUse and PostToolUse persist one correlated operation and landed artifact", (t) => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-v6-hook-"));
+  const repo = path.join(root, "repo"); const home = path.join(root, "home");
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(repo, ".git"), { recursive: true });
+  fs.mkdirSync(home, { recursive: true });
+  const command = openCommand();
+  command.episodes[0].host_session_id = "owner-v6";
+  const event = decide(null, command).events[0];
+  const record = buildRecord({
+    transactionId: randomUUID(), repoSequence: 1, occurredAtEpochMs: Date.parse(AT),
+    actor: { kind: "cli", session_id: "owner-v6" }, previousRecordDigest: null,
+    events: [{ ...event, task_event_sequence: 1 }],
+  });
+  fs.mkdirSync(path.join(repo, ".workloop"), { recursive: true });
+  fs.writeFileSync(path.join(repo, ".workloop", "events.jsonl"), `${JSON.stringify(record)}\n`);
+  const env = { ...process.env, HOME: home, USERPROFILE: home, WORKLOOP_SESSION_ID: "owner-v6" };
+  const hook = (payload) => spawnSync(process.execPath, [CLI, "hook", "--profile", "codex-safe", "--mode", "nudge"], {
+    cwd: repo, env, input: JSON.stringify(payload), encoding: "utf8",
+  });
+
+  const pre = hook({
+    hook_event_name: "PreToolUse", cwd: repo, session_id: "owner-v6", tool_use_id: "operation-1",
+    tool_name: "Write", tool_input: { file_path: path.join(repo, "work.txt"), content: "landed\n" },
+  });
+  assert.equal(pre.status, 0, pre.stderr);
+  assert.equal(pre.stdout, "");
+  fs.writeFileSync(path.join(repo, "work.txt"), "landed\n");
+  const post = hook({
+    hook_event_name: "PostToolUse", cwd: repo, session_id: "owner-v6", tool_use_id: "operation-1",
+    tool_name: "Write", tool_input: { file_path: path.join(repo, "work.txt") }, tool_response: { success: true },
+  });
+  assert.equal(post.status, 0, post.stderr);
+  assert.equal(post.stdout, "");
+
+  const replay = readEventStore(repo);
+  assert.deepEqual(replay.events.map((item) => item.kind), [
+    "task_opened", "write_authorized", "tool_completed", "artifact_reconciled", "coverage_changed",
+  ]);
+  assert.equal(replay.events[1].payload.operation_id, "operation-1");
+  assert.equal(replay.events[2].payload.operation_id, "operation-1");
+  const projection = JSON.parse(fs.readFileSync(path.join(repo, ".workloop", "task.json"), "utf8")).projection;
+  assert.equal(projection.authority.write_operations_authorized, 1);
+  assert.equal(projection.evidence.tool_completions_observed, 1);
+  assert.equal(projection.artifact_revision, 1);
+  assert.deepEqual(projection.evidence.touched_files, ["work.txt"]);
 });

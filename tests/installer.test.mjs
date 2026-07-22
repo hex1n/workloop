@@ -47,11 +47,15 @@ test("installer warns about legacy Codex Stop hooks without editing user configu
     matcher: "Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*",
     hooks: [{ type: "command", command: 'node "/installed/workloop.mjs" hook --profile codex-safe', timeout: 20 }],
   }];
+  safeConfig.hooks.PostToolUse = [{
+    matcher: "Write|Edit|MultiEdit|Bash|PowerShell|mcp__.*",
+    hooks: [{ type: "command", command: 'node "/installed/workloop.mjs" hook --profile codex-safe', timeout: 30 }],
+  }];
   const safe = Buffer.from(JSON.stringify(safeConfig, null, 2) + "\n");
   fs.writeFileSync(config, safe);
   const checked = run(path.join(ROOT, "install.mjs"), [], { env: { ...process.env, HOME: home, USERPROFILE: home, WORKLOOP_INSTALL_HOME: home, WORKLOOP_INSTALL_REPO: ROOT } });
   assert.equal(checked.status, 0, checked.stderr || checked.stdout);
-  assert.doesNotMatch(checked.stdout, /(?:legacy|experimental).*Codex.*hook|Codex workloop (?:PreToolUse|Stop) hook (?:is missing|uses a stale|is configured)/);
+  assert.doesNotMatch(checked.stdout, /(?:legacy|experimental).*Codex.*hook|Codex workloop (?:PreToolUse|PostToolUse|Stop) hook (?:is missing|uses a stale|is configured)/);
   assert.deepEqual(fs.readFileSync(config), safe);
 });
 
@@ -69,6 +73,7 @@ test("installer diagnoses a missing Codex PreToolUse hook without editing config
 
   assert.equal(installed.status, 0, installed.stderr || installed.stdout);
   assert.match(installed.stdout, /Codex workloop PreToolUse hook is missing.*hooks --profile codex-safe/);
+  assert.match(installed.stdout, /Codex workloop PostToolUse hook is missing.*hooks --profile codex-safe/);
   assert.deepEqual(fs.readFileSync(config), original);
 });
 
