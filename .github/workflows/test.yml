@@ -113,6 +113,9 @@ jobs:
       - name: Authority transaction contract
         timeout-minutes: 3
         run: node --test --test-reporter=spec tests/authority-transaction.test.mjs
+      - name: Current Git authority
+        timeout-minutes: 3
+        run: node --test --test-reporter=spec tests/git-main-authority.test.mjs
       - name: Architecture
         timeout-minutes: 3
         run: |

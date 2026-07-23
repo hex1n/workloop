@@ -13,7 +13,7 @@ import { makeTaskOpenedCommand } from "./helpers/event-v3-fixture.mjs";
 
 const ROOT = path.resolve(".");
 const CLI = path.join(ROOT, "bin", "workloop.mjs");
-const MODULES = ["application.mjs", "authority-transaction.mjs", "criterion.mjs", "event-store.mjs", "evidence-ledger.mjs", "host-hooks.mjs", "outcome-projector.mjs", "prims.mjs", "supervision.mjs", "task-engine.mjs", "task-store.mjs", "untracked.mjs"];
+const MODULES = ["application.mjs", "authority-transaction.mjs", "criterion.mjs", "event-store.mjs", "evidence-ledger.mjs", "git-authority-provider.mjs", "host-hooks.mjs", "outcome-projector.mjs", "prims.mjs", "supervision.mjs", "task-engine.mjs", "task-store.mjs", "untracked.mjs"];
 
 function run(script, args = [], options = {}) { return spawnSync(process.execPath, [script, ...args], { cwd: options.cwd ?? ROOT, env: options.env ?? process.env, input: options.input ?? "", encoding: "utf8" }); }
 function imports(file) { return [...fs.readFileSync(file, "utf8").matchAll(/(?:import|export)\s+(?:[^"']+?\s+from\s+)?["']([^"']+)["']/g)].map((m) => m[1]).filter((x) => x.startsWith(".")); }
