@@ -5,6 +5,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { pathToFileURL } from "node:url";
 
 import { canonicalJson, sha256Hex } from "../lib/prims.mjs";
 
@@ -19,7 +20,7 @@ function run(args, { cwd = ROOT, input = "", env = { ...process.env, WORKLOOP_SE
   const virtualPlatform = platform ? ["--input-type=module", "--eval", [
     `Object.defineProperty(process, "platform", { value: ${JSON.stringify(platform)} });`,
     `process.argv = ${JSON.stringify([process.execPath, CLI, ...args])};`,
-    `const { main } = await import(${JSON.stringify(path.join(ROOT, "lib", "provider-application.mjs"))});`,
+    `const { main } = await import(${JSON.stringify(pathToFileURL(path.join(ROOT, "lib", "provider-application.mjs")).href)});`,
     "process.exitCode = main();",
   ].join("\n")] : [CLI, ...args];
   return spawnSync(process.execPath, virtualPlatform, { cwd, input, env, encoding: "utf8", timeout: 10_000 });
