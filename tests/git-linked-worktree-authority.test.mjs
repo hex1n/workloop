@@ -46,7 +46,7 @@ function addWorktree(fx, name, target) {
 
 function openTask(fx, target, commandId, goal) {
   return json(run([
-    "current-open", "--target", target, "--goal", goal, "--files", "src/**",
+    "current-open", "--target", path.join(target, "src", "tracked.txt"), "--goal", goal, "--write-root", "src",
     "--command-id", commandId, ...PROVENANCE,
   ], { cwd: fx.root, env: { ...process.env, WORKLOOP_SESSION_ID: `session-${commandId}` } }));
 }
@@ -81,8 +81,8 @@ test("main and linked worktrees share authority while target routing preserves a
   assert.equal(sharedReceipts.length, 2);
   assert.deepEqual(new Set(sharedReceipts.map((record) => record.payload.task_id)), new Set([main.task.task_id, linked.task.task_id]));
 
-  assert.equal(json(run(["current-status", "--target", fx.repo])).task.task_id, main.task.task_id);
-  assert.equal(json(run(["current-status", "--target", linkedRoot])).task.task_id, linked.task.task_id);
+  assert.equal(json(run(["current-status", "--target", path.join(fx.repo, "src", "tracked.txt")])).task.task_id, main.task.task_id);
+  assert.equal(json(run(["current-status", "--target", path.join(linkedRoot, "src", "tracked.txt")])).task.task_id, linked.task.task_id);
 
   const before = repositoryTasks(fx);
   assert.equal(before.repository_tasks.length, 2);
@@ -95,7 +95,7 @@ test("main and linked worktrees share authority while target routing preserves a
   const movedRoot = path.join(fx.root, "linked-moved");
   git(fx.repo, ["worktree", "move", linkedRoot, movedRoot]);
   const movedCanonical = fs.realpathSync.native(movedRoot);
-  const moved = json(run(["current-status", "--target", movedRoot], { cwd: fx.root }));
+  const moved = json(run(["current-status", "--target", path.join(movedRoot, "src", "tracked.txt")], { cwd: fx.root }));
   assert.equal(moved.routable, true);
   assert.equal(moved.attachment_id, linked.attachment_id);
   assert.equal(moved.task.task_id, linked.task.task_id);
@@ -128,7 +128,7 @@ test("remove, prune, and same-path recreation retain old tasks without reusing a
   assert.equal(replacement.authority_id, oldTask.authority_id);
   assert.notEqual(replacement.attachment_id, oldTask.attachment_id);
   assert.notEqual(replacement.task.task_id, oldTask.task.task_id);
-  assert.equal(json(run(["current-status", "--target", oldRoot])).task.task_id, replacement.task.task_id);
+  assert.equal(json(run(["current-status", "--target", path.join(oldRoot, "src", "tracked.txt")])).task.task_id, replacement.task.task_id);
 
   const afterReuse = repositoryTasks(fx);
   assert.equal(afterReuse.repository_tasks.length, 2);
@@ -158,7 +158,7 @@ test("main worktree move preserves attachment identity and changes only path obs
   fs.renameSync(fx.repo, movedRoot);
   const observedRoot = fs.realpathSync.native(movedRoot);
 
-  const moved = json(run(["current-status", "--target", movedRoot], { cwd: fx.root }));
+  const moved = json(run(["current-status", "--target", path.join(movedRoot, "src", "tracked.txt")], { cwd: fx.root }));
   assert.equal(moved.routable, true);
   assert.equal(moved.attachment_id, opened.attachment_id);
   assert.equal(moved.task.task_id, opened.task.task_id);
@@ -177,13 +177,13 @@ test("hash-valid duplicate stable anchors are rejected by replay", (t) => {
   const invalid = {
     authority_schema_version: 1, sequence: prior.sequence + 1, previous_digest: prior.record_digest,
     record_id: randomUUID(), command_id: "duplicate-stable-anchor", kind: "attachment_stage_intent",
-    payload: { ...stage.payload, attachment_id: randomUUID(), task_id: randomUUID(), claim_token: randomUUID(), session_id: "session-duplicate-anchor" },
+    payload: { ...stage.payload, attachment_id: randomUUID(), claim_token: randomUUID() },
   };
   invalid.record_digest = sha256Hex(canonicalJson(invalid));
   const commonDir = path.resolve(git(fx.repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]));
   fs.appendFileSync(path.join(commonDir, "workloop", "authority.jsonl"), canonicalJson(invalid) + "\n");
 
-  const rejected = run(["current-status", "--target", fx.repo]);
+  const rejected = run(["current-status", "--target", path.join(fx.repo, "src", "tracked.txt")]);
   assert.equal(rejected.status, 2);
   assert.match(rejected.stderr, /attachment anchor uniqueness/);
 });
@@ -196,7 +196,7 @@ test("a copied locator cannot route old task history at another live Git admin a
   const linkedGitDir = path.resolve(git(linkedRoot, ["rev-parse", "--path-format=absolute", "--git-dir"]));
   fs.copyFileSync(main.locator_path, path.join(linkedGitDir, ".workloop-root.jsonl"));
 
-  const copied = json(run(["current-status", "--target", linkedRoot], { cwd: fx.root }));
+  const copied = json(run(["current-status", "--target", path.join(linkedRoot, "src", "tracked.txt")], { cwd: fx.root }));
   assert.equal(copied.authority_id, main.authority_id);
   assert.equal(copied.attachment_id, main.attachment_id);
   assert.equal(copied.routable, false);

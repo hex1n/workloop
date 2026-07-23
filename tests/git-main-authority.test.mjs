@@ -12,7 +12,7 @@ const ROOT = path.resolve(import.meta.dirname, "..");
 const CLI = path.join(ROOT, "bin", "workloop.mjs");
 const OPEN_PROVENANCE = ["--reason", "Ticket 03 tracer", "--granted-by", "self"];
 
-function run(args, { cwd = ROOT, input = "", env = process.env } = {}) {
+function run(args, { cwd = ROOT, input = "", env = { ...process.env, WORKLOOP_SESSION_ID: "session-main" } } = {}) {
   return spawnSync(process.execPath, [CLI, ...args], { cwd, input, env, encoding: "utf8", timeout: 10_000 });
 }
 
@@ -47,7 +47,7 @@ function json(result) {
 function openTask(fx, commandId = "open-main") {
   return json(run([
     "current-open", "--target", path.join(fx.repo, "src", "future.txt"), "--goal", "main tracer",
-    "--files", "src/**", "--command-id", commandId, ...OPEN_PROVENANCE,
+    "--write-root", "src", "--write-root", "ignored", "--command-id", commandId, ...OPEN_PROVENANCE,
   ], { cwd: fx.root, env: { ...process.env, WORKLOOP_SESSION_ID: "session-main" } }));
 }
 
@@ -58,8 +58,8 @@ test("current Git tracer selects containment and replays after disposable projec
   assert.equal(opened.placement, "partitioned");
   assert.equal(opened.routable, true);
   assert.equal(opened.task.goal, "main tracer");
-  assert.deepEqual(opened.task.files, ["src/**"]);
-  assert.equal(opened.task.session_id, "session-main");
+  assert.deepEqual(opened.task.write_claims, [{ kind: "root", path: "ignored" }, { kind: "root", path: "src" }]);
+  assert.equal(opened.task.coordinator_session_id, "session-main");
   assert.equal(opened.authority_root, path.join(fx.commonDir, "workloop"));
   assert.equal(opened.attachment_root, fx.gitDir);
 
@@ -81,7 +81,7 @@ test("current Git tracer selects containment and replays after disposable projec
   const beforeLedger = json(run(["current-ledger", "--target", targets[0]], { cwd: fx.root }));
   assert.equal(beforeAudit.integrity, "valid");
   assert.equal(beforeAudit.routable, true);
-  assert.deepEqual(beforeLedger.records.map((record) => record.kind), ["authority_genesis", "attachment_stage_intent", "attachment_staged", "attachment_claim_pending", "attachment_claimed", "task_opened"]);
+  assert.deepEqual(beforeLedger.records.map((record) => record.kind), ["authority_genesis", "attachment_stage_intent", "task_open_intent", "attachment_staged", "attachment_claim_pending", "attachment_claimed", "task_opened"]);
   assert.deepEqual(fs.readFileSync(opened.locator_path, "utf8").trim().split("\n").map((line) => JSON.parse(line).state), ["staged", "claimed"]);
 
   fs.rmSync(opened.snapshot_path, { force: true });
@@ -98,27 +98,27 @@ test("append and locator conflicts never fabricate a successful current-format o
   const locatorFx = fixture(t, "locator-conflict");
   const locator = path.join(locatorFx.gitDir, ".workloop-root.jsonl");
   fs.writeFileSync(locator, "foreign locator\n");
-  const failed = run(["current-open", "--target", locatorFx.repo, "--goal", "must fail", "--files", "src/**", "--command-id", "open-conflict", ...OPEN_PROVENANCE]);
+  const failed = run(["current-open", "--target", path.join(locatorFx.repo, "src", "future.txt"), "--goal", "must fail", "--write-root", "src", "--command-id", "open-conflict", ...OPEN_PROVENANCE]);
   assert.equal(failed.status, 2);
   assert.match(failed.stderr, /LOCATOR_CONFLICT|locator/i);
   const status = json(run(["current-status", "--target", locatorFx.repo]));
   assert.equal(status.routable, false);
   assert.equal(status.routing_reason, "attachment_pending");
   const records = json(run(["current-ledger", "--target", locatorFx.repo])).records;
-  assert.deepEqual(records.map((record) => record.kind), ["authority_genesis", "attachment_stage_intent"]);
-  const unrelated = run(["current-open", "--target", locatorFx.repo, "--goal", "other", "--files", "src/**", "--command-id", "open-other", ...OPEN_PROVENANCE]);
+  assert.deepEqual(records.map((record) => record.kind), ["authority_genesis", "attachment_stage_intent", "task_open_intent"]);
+  const unrelated = run(["current-open", "--target", path.join(locatorFx.repo, "src", "future.txt"), "--goal", "other", "--write-root", "src", "--command-id", "open-other", ...OPEN_PROVENANCE]);
   assert.equal(unrelated.status, 2);
   assert.match(unrelated.stderr, /pending|recovery/i);
   assert.equal(json(run(["current-ledger", "--target", locatorFx.repo])).records.length, records.length);
 
   fs.rmSync(locator);
-  const resumed = json(run(["current-open", "--target", locatorFx.repo, "--goal", "must fail", "--files", "src/**", "--command-id", "open-conflict", ...OPEN_PROVENANCE]));
+  const resumed = json(run(["current-open", "--target", path.join(locatorFx.repo, "src", "future.txt"), "--goal", "must fail", "--write-root", "src", "--command-id", "open-conflict", ...OPEN_PROVENANCE]));
   assert.equal(resumed.routable, true);
-  assert.deepEqual(json(run(["current-ledger", "--target", locatorFx.repo])).records.map((record) => record.kind), ["authority_genesis", "attachment_stage_intent", "attachment_staged", "attachment_claim_pending", "attachment_claimed", "task_opened"]);
+  assert.deepEqual(json(run(["current-ledger", "--target", locatorFx.repo])).records.map((record) => record.kind), ["authority_genesis", "attachment_stage_intent", "task_open_intent", "attachment_staged", "attachment_claim_pending", "attachment_claimed", "task_opened"]);
 
   const appendFx = fixture(t, "append-failure");
   fs.writeFileSync(path.join(appendFx.commonDir, "workloop"), "blocks authority directory\n");
-  const appendFailed = run(["current-open", "--target", appendFx.repo, "--goal", "must fail", "--files", "src/**", "--command-id", "open-append-fail", ...OPEN_PROVENANCE]);
+  const appendFailed = run(["current-open", "--target", path.join(appendFx.repo, "src", "future.txt"), "--goal", "must fail", "--write-root", "src", "--command-id", "open-append-fail", ...OPEN_PROVENANCE]);
   assert.equal(appendFailed.status, 2);
   assert.equal(fs.existsSync(path.join(appendFx.gitDir, ".workloop-root.jsonl")), false);
 });
@@ -154,18 +154,18 @@ test("current Git Hook receipts are target-routed and default nudge stays nonblo
     assert.equal(result.status, 0); assert.equal(result.stdout, ""); assert.match(result.stderr, /host retains execution authority/);
   }
   const multi = run(["current-hook", "--profile", "codex-safe", "--mode", "nudge"], { cwd: fx.root, input: JSON.stringify({
-    hook_event_name: "PreToolUse", cwd: fx.root, session_id: "session-main", tool_use_id: "operation-many", tool_name: "Write",
-    tool_input: { paths: [target, path.join(fx.root, "outside.txt")] },
+    hook_event_name: "PreToolUse", cwd: fx.repo, session_id: "session-main", tool_use_id: "operation-many", tool_name: "apply_patch",
+    tool_input: { patch: "*** Begin Patch\n*** Update File: " + target + "\n*** Update File: " + path.join(fx.root, "outside.txt") + "\n*** End Patch" },
   }) });
   assert.equal(multi.status, 0);
   assert.equal(multi.stdout, "");
   assert.match(multi.stderr, /host retains execution authority/);
-  assert.equal(json(run(["current-ledger", "--target", target])).records.length, beforeRejected);
+  assert.equal(json(run(["current-ledger", "--target", target])).records.length, beforeRejected + 1);
 });
 
 test("current open requires replayable command provenance and disposable projection failures degrade open", (t) => {
   const missing = fixture(t, "missing-command");
-  const refused = run(["current-open", "--target", missing.repo, "--goal", "missing id", "--files", "src/**", ...OPEN_PROVENANCE]);
+  const refused = run(["current-open", "--target", path.join(missing.repo, "src", "future.txt"), "--goal", "missing id", "--write-root", "src", ...OPEN_PROVENANCE]);
   assert.equal(refused.status, 2);
   assert.match(refused.stderr, /explicit command id/);
   assert.equal(fs.existsSync(path.join(missing.commonDir, "workloop", "authority.jsonl")), false);
@@ -185,7 +185,7 @@ test("current open requires replayable command provenance and disposable project
   assert.equal(opened.warnings.length, 2);
   assert.match(opened.warnings[0], /snapshot projection deferred/);
   assert.match(opened.warnings[1], /outcome projection deferred/);
-  const status = json(run(["current-status", "--target", degraded.repo]));
+  const status = json(run(["current-status", "--target", path.join(degraded.repo, "src", "future.txt")]));
   assert.equal(status.routable, true);
   assert.equal(status.warnings.length, 2);
 });
@@ -235,7 +235,7 @@ test("persisted schema and task-engine transitions reject hash-valid invalid aut
   const invalidTransition = {
     authority_schema_version: 1, sequence: last.sequence + 1, previous_digest: last.record_digest,
     record_id: randomUUID(), command_id: "duplicate-task-open", kind: "task_opened",
-    payload: { task_id: opened.task.task_id, attachment_id: opened.attachment_id, goal: opened.task.goal, files: opened.task.files, placement: "partitioned", session_id: opened.task.session_id, attachment_final_digest: opened.task.attachment_final_digest },
+    payload: { task_id: opened.task.task_id, attachment_id: opened.attachment_id, open_intent_digest: ledger.find((record) => record.kind === "task_open_intent").record_digest, attachment_final_digest: opened.task.attachment_final_digest },
   };
   invalidTransition.record_digest = sha256Hex(canonicalJson(invalidTransition));
   fs.appendFileSync(path.join(transitionFx.commonDir, "workloop", "authority.jsonl"), `${canonicalJson(invalidTransition)}\n`);

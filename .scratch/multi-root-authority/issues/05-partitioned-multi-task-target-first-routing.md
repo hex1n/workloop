@@ -4,11 +4,11 @@
 
 **Blocked by:** 03 — Git Main-Worktree Authority Tracer Bullet.
 
-**Status:** ready-for-agent
+**Status:** complete
 
-- [ ] One attachment can hold multiple live partitioned tasks whose structured write scopes are disjoint.
-- [ ] Overlapping live scopes are rejected; suspended tasks retain claims and terminal tasks release them.
-- [ ] A session joins one live task per attachment, while another session can join a different task on the same attachment.
-- [ ] Tracked, untracked, ignored, and not-yet-created targets route to the same Git authority.
-- [ ] External Git targets are judged by their containing authority, unsupervised targets do not inherit the launch task, and multi-authority operations remain shard-local.
-- [ ] Git and Workloop control-plane targets are excluded before task routing and can never satisfy task evidence.
+- [x] One attachment can hold multiple live partitioned tasks whose structured write scopes are disjoint.
+- [x] Overlapping live scopes are rejected; suspended tasks retain claims and terminal tasks release them.
+- [x] A session joins one live task per attachment, while another session can join a different task on the same attachment.
+- [x] Tracked, untracked, ignored, and not-yet-created targets route to the same Git authority.
+- [x] External Git targets are judged by their containing authority, unsupervised targets do not inherit the launch task, and multi-authority operations remain shard-local.
+- [x] Git and Workloop control-plane targets are excluded before task routing and can never satisfy task evidence.

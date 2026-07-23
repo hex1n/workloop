@@ -115,7 +115,7 @@ jobs:
         run: node --test --test-reporter=spec tests/authority-transaction.test.mjs
       - name: Current Git authority
         timeout-minutes: 3
-        run: node --test --test-reporter=spec tests/git-main-authority.test.mjs tests/git-linked-worktree-authority.test.mjs
+        run: node --test --test-reporter=spec tests/git-main-authority.test.mjs tests/git-linked-worktree-authority.test.mjs tests/git-partitioned-multitask-authority.test.mjs
       - name: Architecture
         timeout-minutes: 3
         run: |
