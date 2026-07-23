@@ -200,9 +200,9 @@ test("copied locator is never accepted as an automatic move after its original r
   const copied = path.join(fx.base, "copied-root");
   fs.cpSync(fx.root, copied, { recursive: true });
   fs.rmSync(fx.root, { recursive: true, force: true });
-  const status = run(fx, ["current-status", "--target", path.join(copied, "src", "later.txt")], { session: "copy-session" });
-  assert.equal(status.status, 2);
-  assert.match(status.stderr, /reattach|required|anchor/i);
+  const status = json(run(fx, ["current-status", "--target", path.join(copied, "src", "later.txt")], { session: "copy-session" }));
+  assert.equal(status.routable, false);
+  assert.equal(status.routing_reason, "attachment_collision");
 });
 
 test("a Git initialization inside a claimed filesystem root is an authority-kind conflict and filesystem exposes no Git operation surface", (t) => {

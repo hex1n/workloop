@@ -221,7 +221,7 @@ test("target-first routing covers canonical aliases, case, nesting, external and
   fs.cpSync(fx.repo, copied, { recursive: true });
   const copiedStatus = json(run(["current-status", "--target", copied]));
   assert.equal(copiedStatus.routable, false);
-  assert.equal(copiedStatus.routing_reason, "anchor_mismatch");
+  assert.equal(copiedStatus.routing_reason, "attachment_collision");
   assert.equal(copiedStatus.authority_id, opened.authority_id);
   assert.notEqual(git(copied, ["rev-parse", "--path-format=absolute", "--git-dir"]), fx.gitDir);
 });

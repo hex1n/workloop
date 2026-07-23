@@ -200,7 +200,7 @@ test("a copied locator cannot route old task history at another live Git admin a
   assert.equal(copied.authority_id, main.authority_id);
   assert.equal(copied.attachment_id, main.attachment_id);
   assert.equal(copied.routable, false);
-  assert.equal(copied.routing_reason, "anchor_mismatch");
+  assert.equal(copied.routing_reason, "attachment_collision");
 
   const provider = fs.readFileSync(path.join(ROOT, "lib", "git-authority-provider.mjs"), "utf8");
   assert.match(provider, /worktree["']?\s*,\s*["']list|worktree list/);
