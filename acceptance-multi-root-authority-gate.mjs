@@ -9,10 +9,7 @@ import { TRUSTED_REPOSITORY, TRUSTED_WORKFLOW_PATH } from "./spikes/multi-root-a
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const issueRoot = path.join(root, ".scratch", "multi-root-authority", "issues");
-const deterministicTests = [
-  path.join(root, "tests", "multi-root-authority-adapter.test.mjs"),
-  path.join(root, "tests", "multi-root-authority-receipt.test.mjs"),
-];
+const deterministicVerifier = path.join(root, "tests", "verify-full.mjs");
 const proofFile = path.join(root, "docs", "e2e-test", "multi-root-authority-spike", "proof.json");
 const receiptCli = path.join(root, "spikes", "multi-root-authority", "receipt-cli.mjs");
 const failures = [];
@@ -35,14 +32,16 @@ for (let number = 1; number <= 13; number += 1) {
   if (matches.length !== 1) failures.push(`ticket-${prefix.slice(0, 2)}-missing-or-duplicate`);
   else {
     const ticket = fs.readFileSync(path.join(issueRoot, matches[0]), "utf8");
-    const validStatus = number === 1 ? /\*\*Status:\*\* (claimed|resolved)/.test(ticket) : ticket.includes("**Status:** ready-for-agent");
+    const validStatus = number === 13
+      ? /\*\*Status:\*\* (claimed|resolved)/.test(ticket)
+      : ticket.includes("**Status:** resolved");
     if (!validStatus) failures.push(`ticket-${prefix.slice(0, 2)}-invalid-status`);
   }
 }
 
-if (deterministicTests.some((file) => !fs.existsSync(file))) failures.push("deterministic-test-missing");
+if (!fs.existsSync(deterministicVerifier)) failures.push("deterministic-test-missing");
 else {
-  const result = spawnSync(process.execPath, ["--test", ...deterministicTests], { cwd: root, encoding: "utf8", timeout: 180_000 });
+  const result = spawnSync(process.execPath, [deterministicVerifier], { cwd: root, encoding: "utf8", timeout: 180_000 });
   if (unavailable(result)) indeterminate.push("deterministic-test-infrastructure-unavailable");
   else if (result.status !== 0) failures.push("deterministic-test-failed");
 }
@@ -56,7 +55,9 @@ if (proof) {
   if (unavailable(structural)) indeterminate.push("aggregate-proof-validator-unavailable");
   else if (structural.status !== 0) failures.push("aggregate-proof-structure-or-source-mismatch");
   const candidateSha = String(proof.candidate_sha ?? "");
-  if (proof.repository !== TRUSTED_REPOSITORY || candidateSha.length !== 40 || /[^0-9a-f]/.test(candidateSha)) failures.push("aggregate-proof-identity-invalid");
+  const head = spawnSync("git", ["rev-parse", "HEAD"], { cwd: root, encoding: "utf8" });
+  const currentSha = head.status === 0 ? head.stdout.trim() : null;
+  if (proof.repository !== TRUSTED_REPOSITORY || candidateSha.length !== 40 || /[^0-9a-f]/.test(candidateSha) || candidateSha !== currentSha) failures.push("aggregate-proof-identity-invalid");
   else {
     const attestation = spawnSync("gh", [
       "attestation", "verify", proofFile,
@@ -87,5 +88,5 @@ if (indeterminate.length) {
   process.exit(2);
 }
 
-process.stdout.write("WORKLOOP_CRITERION: multi-root authority adapter and attested eight-cell proof passed\n");
+process.stdout.write("WORKLOOP_CRITERION: provider authority release gate and attested eight-cell proof passed\n");
 process.exit(4);
