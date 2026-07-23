@@ -36,7 +36,7 @@ function fixture(t, name) {
   fs.writeFileSync(path.join(repo, "src", "untracked.txt"), "untracked\n");
   fs.mkdirSync(path.join(repo, "ignored"));
   fs.writeFileSync(path.join(repo, "ignored", "ignored.txt"), "ignored\n");
-  return { root, repo, gitDir: git(repo, ["rev-parse", "--path-format=absolute", "--git-dir"]), commonDir: git(repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"]) };
+  return { root, repo, gitDir: path.resolve(git(repo, ["rev-parse", "--path-format=absolute", "--git-dir"])), commonDir: path.resolve(git(repo, ["rev-parse", "--path-format=absolute", "--git-common-dir"])) };
 }
 
 function json(result) {
@@ -127,9 +127,9 @@ test("current Git Hook receipts are target-routed and default nudge stays nonblo
   const fx = fixture(t, "hooks");
   const opened = openTask(fx, "open-hooks");
   const target = path.join(fx.repo, "src", "untracked.txt");
-  const payload = (event, response = undefined) => JSON.stringify({
+  const payload = (event, response = undefined, targetPath = target) => JSON.stringify({
     hook_event_name: event, cwd: fx.root, session_id: "session-main", permission_mode: "bypassPermissions",
-    tool_use_id: "operation-1", tool_name: "Write", tool_input: { file_path: target }, ...(response === undefined ? {} : { tool_response: response }),
+    tool_use_id: "operation-1", tool_name: "Write", tool_input: { file_path: targetPath }, ...(response === undefined ? {} : { tool_response: response }),
   });
   const pre = run(["current-hook", "--profile", "codex-safe", "--mode", "nudge"], { cwd: fx.root, input: payload("PreToolUse") });
   assert.equal(pre.status, 0, pre.stderr);
@@ -143,14 +143,14 @@ test("current Git Hook receipts are target-routed and default nudge stays nonblo
   assert.equal(ledger.at(-1).payload.operation_id, "operation-1");
 
   for (const profile of ["claude", "codex-safe", "codex-cli-legacy"]) {
-    const unreadable = run(["current-hook", "--profile", profile, "--mode", "nudge"], { cwd: fx.root, input: payload("PreToolUse").replace(target, path.join(fx.root, "outside.txt")) });
+    const unreadable = run(["current-hook", "--profile", profile, "--mode", "nudge"], { cwd: fx.root, input: payload("PreToolUse", undefined, path.join(fx.root, "outside.txt")) });
     assert.equal(unreadable.status, 0);
     assert.equal(unreadable.stdout, "");
     assert.match(unreadable.stderr, /^workloop: current authority evidence unavailable; host retains execution authority:/);
   }
   const beforeRejected = json(run(["current-ledger", "--target", target])).records.length;
   for (const rejected of [path.join(fx.gitDir, "config"), path.join(fx.repo, ".workloop", "private")]) {
-    const result = run(["current-hook", "--profile", "codex-safe", "--mode", "nudge"], { cwd: fx.root, input: payload("PreToolUse").replace(target, rejected) });
+    const result = run(["current-hook", "--profile", "codex-safe", "--mode", "nudge"], { cwd: fx.root, input: payload("PreToolUse", undefined, rejected) });
     assert.equal(result.status, 0); assert.equal(result.stdout, ""); assert.match(result.stderr, /host retains execution authority/);
   }
   const multi = run(["current-hook", "--profile", "codex-safe", "--mode", "nudge"], { cwd: fx.root, input: JSON.stringify({
