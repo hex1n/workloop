@@ -10,6 +10,9 @@ import { canonicalJson, sha256Hex } from "../lib/prims.mjs";
 
 const ROOT = path.resolve(import.meta.dirname, "..");
 const CLI = path.join(ROOT, "bin", "workloop.mjs");
+const TEST_AUTHORITY_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-linked-authority-home-"));
+process.env.WORKLOOP_AUTHORITY_HOME = TEST_AUTHORITY_HOME;
+process.once("exit", () => fs.rmSync(TEST_AUTHORITY_HOME, { recursive: true, force: true }));
 const PROVENANCE = ["--reason", "Ticket 04 lifecycle", "--granted-by", "self"];
 
 function run(args, { cwd = ROOT, env = process.env, input = undefined } = {}) {

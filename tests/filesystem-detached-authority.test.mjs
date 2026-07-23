@@ -78,6 +78,19 @@ test("explicit filesystem root creates a detached authority and locator-only roo
 
 test("current-certify achieves a filesystem task without a Git receipt", (t) => { const fx = fixture(t, "certify"); const opened = open(fx, { id: "certify-open", session: "certify-session", writeRoot: "src" }); fs.writeFileSync(path.join(fx.root, "check.mjs"), "process.exit(4);\n"); const certified = json(run(fx, ["current-certify", "--target", path.join(fx.root, "src", "future.txt"), "--task-id", opened.task.task_id, "--criterion-file", "check.mjs", "--command-id", "filesystem-certify", "--reason", "criterion satisfied", "--granted-by", "self"], { session: "certify-session" })); assert.equal(certified.task.lifecycle.outcome, "achieved"); assert.equal(certified.task.certification.commit_oid, null); });
 
+test("filesystem outcome shard rebuilds independently from its verified detached authority", (t) => {
+  const fx = fixture(t, "outcome");
+  const opened = open(fx, { id: "outcome-open", session: "outcome-session", writeRoot: "src" });
+  assert.equal(path.dirname(opened.outcome_path), path.join(fx.home, "outcomes", opened.authority_id));
+  fs.writeFileSync(opened.outcome_path, "corrupt\n");
+  fs.rmSync(opened.outcome_cursor_path, { force: true });
+  const rebuilt = json(run(fx, ["current-status", "--target", path.join(fx.root, "src", "future.txt")], { session: "outcome-session" }));
+  const outcome = JSON.parse(fs.readFileSync(rebuilt.outcome_path, "utf8"));
+  assert.equal(outcome.authority_id, opened.authority_id);
+  assert.equal(outcome.provider, "filesystem_detached");
+  assert.equal(outcome.source_sequence, rebuilt.authority_sequence);
+});
+
 test("same-object move keeps detached identity; deletion retains shard and same-path recreation gets a new authority", (t) => {
   const fx = fixture(t, "lifecycle");
   const opened = open(fx, { id: "open-move", session: "session-move", writeRoot: "src" });

@@ -11,6 +11,9 @@ import { canonicalJson, sha256Hex } from "../lib/prims.mjs";
 const ROOT = path.resolve(import.meta.dirname, "..");
 const CLI = path.join(ROOT, "bin", "workloop.mjs");
 const OPEN_PROVENANCE = ["--reason", "Ticket 03 tracer", "--granted-by", "self"];
+const TEST_AUTHORITY_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-current-authority-home-"));
+process.env.WORKLOOP_AUTHORITY_HOME = TEST_AUTHORITY_HOME;
+process.once("exit", () => fs.rmSync(TEST_AUTHORITY_HOME, { recursive: true, force: true }));
 
 function run(args, { cwd = ROOT, input = "", env = { ...process.env, WORKLOOP_SESSION_ID: "session-main" } } = {}) {
   return spawnSync(process.execPath, [CLI, ...args], { cwd, input, env, encoding: "utf8", timeout: 10_000 });
@@ -92,6 +95,27 @@ test("current Git tracer selects containment and replays after disposable projec
   assert.equal(fs.existsSync(opened.snapshot_path), true);
   assert.equal(fs.existsSync(opened.outcome_path), true);
   assert.deepEqual(json(run(["current-audit", "--target", targets[3]], { cwd: fx.root })).task, beforeAudit.task);
+});
+
+test("Git outcome shards are per-authority caches: one corrupt or missing shard cannot affect another authority", (t) => {
+  const left = fixture(t, "outcome-left");
+  const right = fixture(t, "outcome-right");
+  const leftOpen = openTask(left, "outcome-left-open");
+  const rightOpen = openTask(right, "outcome-right-open");
+  assert.notEqual(leftOpen.authority_id, rightOpen.authority_id);
+  assert.notEqual(path.dirname(leftOpen.outcome_path), path.dirname(rightOpen.outcome_path));
+  const rightLedger = json(run(["current-ledger", "--target", right.repo])).records;
+  const rightOutcome = fs.readFileSync(rightOpen.outcome_path, "utf8");
+  fs.writeFileSync(leftOpen.outcome_path, "not-json\n");
+  fs.rmSync(leftOpen.outcome_cursor_path, { force: true });
+  const rebuilt = json(run(["current-status", "--target", path.join(left.repo, "src", "future.txt")], { cwd: left.root }));
+  assert.equal(JSON.parse(fs.readFileSync(rebuilt.outcome_path, "utf8")).authority_id, leftOpen.authority_id);
+  assert.equal(JSON.parse(fs.readFileSync(rebuilt.outcome_cursor_path, "utf8")).source_sequence, rebuilt.authority_sequence);
+  assert.deepEqual(json(run(["current-ledger", "--target", right.repo])).records, rightLedger);
+  assert.equal(fs.readFileSync(rightOpen.outcome_path, "utf8"), rightOutcome);
+  fs.rmSync(rebuilt.outcome_path, { force: true });
+  const replayed = json(run(["current-status", "--target", path.join(left.repo, "src", "future.txt")], { cwd: left.root }));
+  assert.equal(JSON.parse(fs.readFileSync(replayed.outcome_path, "utf8")).authority_id, leftOpen.authority_id);
 });
 
 test("append and locator conflicts never fabricate a successful current-format open", (t) => {
@@ -179,7 +203,12 @@ test("current open requires replayable command provenance and disposable project
 
   const degraded = fixture(t, "projection-degrade");
   fs.mkdirSync(path.join(degraded.commonDir, "workloop", "snapshot.json"), { recursive: true });
-  fs.writeFileSync(path.join(degraded.commonDir, "workloop-outcomes"), "blocks outcome directory\n");
+  fs.rmSync(path.join(TEST_AUTHORITY_HOME, "outcomes"), { recursive: true, force: true });
+  fs.writeFileSync(path.join(TEST_AUTHORITY_HOME, "outcomes"), "blocks outcome directory\n");
+  t.after(() => {
+    fs.rmSync(path.join(TEST_AUTHORITY_HOME, "outcomes"), { recursive: true, force: true });
+    fs.mkdirSync(path.join(TEST_AUTHORITY_HOME, "outcomes"), { recursive: true });
+  });
   const opened = openTask(degraded, "projection-open");
   assert.equal(opened.routable, true);
   assert.equal(opened.warnings.length, 2);
@@ -286,10 +315,11 @@ test("current Git provider is a new-Contract leaf and old authority is never an 
   const provider = fs.readFileSync(path.join(ROOT, "lib", "git-authority-provider.mjs"), "utf8");
   assert.deepEqual([...provider.matchAll(/from "([^"]+)"/g)].map((match) => match[1]).filter((source) => source.startsWith(".")), ["./prims.mjs"]);
   assert.doesNotMatch(provider, /EVENT_STORE_FILE|task-store|event-store|\.workloop\/events|migrate|fallback|dual[-_ ]?(?:read|write)/i);
-  assert.match(provider, /function queryCurrentGit[\s\S]*?withLock\("authority"[\s\S]*?withLock\("outcome"/);
+  assert.doesNotMatch(provider, /withLock\("outcome"/);
   const application = fs.readFileSync(path.join(ROOT, "lib", "application.mjs"), "utf8");
   assert.match(application, /from "\.\/git-authority-provider\.mjs"/);
   assert.match(application, /from "\.\/authority-transaction\.mjs"/);
+  assert.match(application, /from "\.\/authority-outcome-projection\.mjs"/);
   const scripts = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).scripts;
   assert.match(scripts.test, /tests\/git-main-authority\.test\.mjs/);
   assert.match(scripts["test:matrix"], /tests\/git-main-authority\.test\.mjs/);
