@@ -15,8 +15,14 @@ const TEST_AUTHORITY_HOME = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-auth
 process.env.WORKLOOP_AUTHORITY_HOME = TEST_AUTHORITY_HOME;
 process.once("exit", () => fs.rmSync(TEST_AUTHORITY_HOME, { recursive: true, force: true }));
 
-function run(args, { cwd = ROOT, input = "", env = { ...process.env, WORKLOOP_SESSION_ID: "session-main" } } = {}) {
-  return spawnSync(process.execPath, [CLI, ...args], { cwd, input, env, encoding: "utf8", timeout: 10_000 });
+function run(args, { cwd = ROOT, input = "", env = { ...process.env, WORKLOOP_SESSION_ID: "session-main" }, platform = null } = {}) {
+  const virtualPlatform = platform ? ["--input-type=module", "--eval", [
+    `Object.defineProperty(process, "platform", { value: ${JSON.stringify(platform)} });`,
+    `process.argv = ${JSON.stringify([process.execPath, CLI, ...args])};`,
+    `const { main } = await import(${JSON.stringify(path.join(ROOT, "lib", "provider-application.mjs"))});`,
+    "process.exitCode = main();",
+  ].join("\n")] : [CLI, ...args];
+  return spawnSync(process.execPath, virtualPlatform, { cwd, input, env, encoding: "utf8", timeout: 10_000 });
 }
 
 function git(cwd, args) {
@@ -123,6 +129,9 @@ test("incompatible repository artifacts can only be copied opaquely with explici
   assert.equal(fs.readFileSync(path.join(legacy, "events-v3.jsonl"), "utf8"), bytes);
   assert.equal(fs.readFileSync(copied, "utf8"), bytes);
   assert.equal(archived.artifacts[0].sha256.length, 64);
+
+  const windowsArchive = json(run(["archive-incompatible-state", "--target", fx.repo, "--reason", "preserve incompatible bytes on Windows", "--granted-by", "user"], { cwd: fx.root, platform: "win32" }));
+  assert.equal(fs.readFileSync(path.join(windowsArchive.archive_path, "events-v3.jsonl"), "utf8"), bytes);
 });
 
 test("Git outcome shards are per-authority caches: one corrupt or missing shard cannot affect another authority", (t) => {
