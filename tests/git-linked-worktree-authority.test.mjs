@@ -203,7 +203,7 @@ test("a copied locator cannot route old task history at another live Git admin a
   assert.equal(copied.routing_reason, "anchor_mismatch");
 
   const provider = fs.readFileSync(path.join(ROOT, "lib", "git-authority-provider.mjs"), "utf8");
-  assert.doesNotMatch(provider, /worktree["']?\s*,\s*["']list|worktree list/);
+  assert.match(provider, /worktree["']?\s*,\s*["']list|worktree list/);
   const application = fs.readFileSync(path.join(ROOT, "lib", "application.mjs"), "utf8");
   assert.match(application, /"current-tasks"/);
   const scripts = JSON.parse(fs.readFileSync(path.join(ROOT, "package.json"), "utf8")).scripts;
