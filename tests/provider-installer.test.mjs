@@ -105,6 +105,12 @@ test("only explicit deny PreToolUse rejects an unsupported Hook profile", () => 
   assert.equal(nullPayload.status, 0, nullPayload.stderr);
   assert.equal(nullPayload.stderr, "");
   assert.equal(nullPayload.stdout, "");
+  for (const mode of ["nudge", "deny"]) for (const input of ["null", JSON.stringify({ hook_event_name: "Unknown" })]) {
+    const validMalformedPayload = spawnSync(process.execPath, [path.join(ROOT, "bin", "workloop.mjs"), "hook", "--profile", "codex", "--mode", mode], { encoding: "utf8", input });
+    assert.equal(validMalformedPayload.status, 0, `${mode}: ${validMalformedPayload.stderr}`);
+    assert.equal(validMalformedPayload.stderr, "", mode);
+    assert.equal(validMalformedPayload.stdout, "", mode);
+  }
   const denied = spawnSync(process.execPath, [path.join(ROOT, "bin", "workloop.mjs"), "hook", "--profile", "codex-safe", "--mode", "deny"], { encoding: "utf8", input: JSON.stringify({ hook_event_name: "PreToolUse" }) });
   assert.equal(denied.status, 2);
   assert.match(denied.stderr, /unsupported hook profile; expected claude\|codex/);
