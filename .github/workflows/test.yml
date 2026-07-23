@@ -110,6 +110,9 @@ jobs:
       - name: W01-W08 event authority, recovery, transcript, and concurrency
         timeout-minutes: 5
         run: node --test --test-reporter=spec --test-name-pattern="\[W0[1-8]\]" tests/windows.test.mjs tests/event-store.test.mjs tests/task-snapshot-v3.test.mjs tests/runtime-v5.test.mjs tests/runtime-v6.test.mjs tests/workloop-architecture.test.mjs
+      - name: Authority transaction contract
+        timeout-minutes: 3
+        run: node --test --test-reporter=spec tests/authority-transaction.test.mjs
       - name: Architecture
         timeout-minutes: 3
         run: |
