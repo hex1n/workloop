@@ -66,14 +66,16 @@ if (proof) {
   const currentSha = head.status === 0 ? head.stdout.trim() : null;
   if (proof.repository !== TRUSTED_REPOSITORY || candidateSha.length !== 40 || /[^0-9a-f]/.test(candidateSha) || candidateSha !== currentSha) failures.push("aggregate-proof-identity-invalid");
   else {
-    const attestation = spawnSync("gh", [
+    const verifyAttestation = () => spawnSync("gh", [
       "attestation", "verify", proofFile,
       "--repo", TRUSTED_REPOSITORY,
       "--signer-workflow", `${TRUSTED_REPOSITORY}/${TRUSTED_WORKFLOW_PATH}`,
       "--source-digest", candidateSha,
       "--deny-self-hosted-runners",
       "--format", "json",
-    ], { cwd: root, encoding: "utf8", timeout: 60_000 });
+    ], { cwd: root, encoding: "utf8", timeout: 90_000 });
+    let attestation = verifyAttestation();
+    if (unavailable(attestation) || networkFailure(attestation)) attestation = verifyAttestation();
     if (unavailable(attestation) || networkFailure(attestation)) indeterminate.push("aggregate-proof-attestation-infrastructure-unavailable");
     else if (attestation.status !== 0) failures.push("aggregate-proof-attestation-unverified");
     else {
