@@ -69,16 +69,16 @@ const payloadOf = (result) => result.records.at(-1).payload;
 
 test("GR-01: a task-scoped stage keeps another task's index entry, and the commit leaves it staged", (t) => {
   const { root, session, criterionFile } = repo(t);
-  open(session(), ["src"], criterionFile);
+  const { loopId } = open(session(), ["src"], criterionFile);
   // Somebody else — another loop, the user, an editor — stages their own file.
   git(root, "add", "docs/b.txt");
 
-  const stage = payloadOf(receipt(session(), { root, mode: MODE.STAGE, session: "s1", commandId: "stage" }));
+  const stage = payloadOf(receipt(session(), { loopId, root, mode: MODE.STAGE, session: "s1", commandId: "stage" }));
   assert.deepEqual(staged(root), ["docs/b.txt", "src/a.txt"], "the foreign entry survives the task-scoped add");
   assert.equal(stage.status, STATUS.UNCERTAIN, "content the loop cannot account for is never vouched for");
   assert.match(stage.reasons[0], /docs\/b\.txt/u);
 
-  const commit = payloadOf(receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }));
+  const commit = payloadOf(receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }));
   assert.deepEqual(commit.paths, ["src/a.txt"], "the commit carries only the task's paths");
   assert.deepEqual(staged(root), ["docs/b.txt"], "and the other task's entry is still staged afterwards");
   assert.equal(commit.status, STATUS.UNCERTAIN);
@@ -86,14 +86,14 @@ test("GR-01: a task-scoped stage keeps another task's index entry, and the commi
 
 test("GR-02: a clean stage receipt causally binds a clean task-scoped commit", (t) => {
   const { root, session, criterionFile } = repo(t);
-  open(session(), ["src"], criterionFile);
+  const { loopId } = open(session(), ["src"], criterionFile);
   const head = git(root, "rev-parse", "HEAD");
 
-  const stage = payloadOf(receipt(session(), { root, mode: MODE.STAGE, session: "s1", commandId: "stage" }));
+  const stage = payloadOf(receipt(session(), { loopId, root, mode: MODE.STAGE, session: "s1", commandId: "stage" }));
   assert.equal(stage.status, STATUS.CLEAN);
   assert.deepEqual(stage.reasons, []);
 
-  const commit = payloadOf(receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }));
+  const commit = payloadOf(receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }));
   assert.equal(commit.status, STATUS.CLEAN);
   assert.equal(commit.head_before, head);
   assert.equal(commit.parent_oid, head, "the commit is a child of the HEAD the receipt was taken against");
@@ -103,11 +103,11 @@ test("GR-02: a clean stage receipt causally binds a clean task-scoped commit", (
 
 test("GR-03: a host index mutation after the stage degrades the commit receipt without swallowing it", (t) => {
   const { root, session, criterionFile } = repo(t);
-  open(session(), ["src"], criterionFile);
-  assert.equal(payloadOf(receipt(session(), { root, mode: MODE.STAGE, session: "s1", commandId: "stage" })).status, STATUS.CLEAN);
+  const { loopId } = open(session(), ["src"], criterionFile);
+  assert.equal(payloadOf(receipt(session(), { loopId, root, mode: MODE.STAGE, session: "s1", commandId: "stage" })).status, STATUS.CLEAN);
 
   git(root, "add", "docs/b.txt");
-  const commit = payloadOf(receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }));
+  const commit = payloadOf(receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }));
 
   assert.equal(commit.status, STATUS.UNCERTAIN, "the receipt degrades");
   assert.ok(commit.commit_oid, "but the host's commit still happened — the runtime is not the approver");
@@ -118,9 +118,9 @@ test("GR-03: a host index mutation after the stage degrades the commit receipt w
 test("GR-04: a direct Git race keeps the host's success and records an uncertain receipt", (t) => {
   const { root, session, criterionFile } = repo(t);
   git(root, "add", "docs/b.txt");
-  open(session(), ["src"], criterionFile);
+  const { loopId } = open(session(), ["src"], criterionFile);
 
-  const result = receipt(session(), { root, mode: MODE.STAGE, session: "s1", commandId: "stage" });
+  const result = receipt(session(), { loopId, root, mode: MODE.STAGE, session: "s1", commandId: "stage" });
   assert.equal(result.replayed, false, "the operation succeeded");
   assert.ok(staged(root).includes("src/a.txt"), "the task's own paths were staged");
   assert.equal(payloadOf(result).status, STATUS.UNCERTAIN, "clean is never fabricated");
@@ -128,14 +128,14 @@ test("GR-04: a direct Git race keeps the host's success and records an uncertain
 
 test("GR-05: the runtime's control plane never enters a receipt, even under a '.' claim", (t) => {
   const { root, session, criterionFile } = repo(t);
-  open(session(), ["."], criterionFile);
+  const { loopId } = open(session(), ["."], criterionFile);
 
-  const stage = payloadOf(receipt(session(), { root, mode: MODE.STAGE, session: "s1", commandId: "stage" }));
+  const stage = payloadOf(receipt(session(), { loopId, root, mode: MODE.STAGE, session: "s1", commandId: "stage" }));
   assert.equal(stage.status, STATUS.CLEAN, "a loop that claims everything owns everything it staged");
   assert.ok(stage.paths.includes("src/a.txt") && stage.paths.includes("docs/b.txt"), "task data is in");
   assert.equal(stage.paths.some((entry) => entry.startsWith(".workloop")), false, "the ledger is not");
 
-  const commit = payloadOf(receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }));
+  const commit = payloadOf(receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }));
   assert.equal(commit.paths.some((entry) => entry.startsWith(".workloop")), false);
   // Not merely excluded from the receipt: never tracked at all. A loop that
   // committed its own ledger into the repository it records would be recording
@@ -146,9 +146,9 @@ test("GR-05: the runtime's control plane never enters a receipt, even under a '.
 
 test("GR-06: an amended history unlands a receipt whose content never changed", (t) => {
   const { root, session, criterionFile } = repo(t);
-  open(session(), ["src"], criterionFile);
+  const { loopId } = open(session(), ["src"], criterionFile);
   fs.writeFileSync(path.join(root, "src", "a.txt"), "done\n");
-  const recorded = payloadOf(receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }));
+  const recorded = payloadOf(receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }));
   assert.equal(recorded.status, STATUS.CLEAN);
 
   const claims = ["src"];
@@ -168,9 +168,9 @@ test("GR-06: an amended history unlands a receipt whose content never changed", 
 
 test("GR-07: drift on the task paths unseats the receipt; drift elsewhere does not", (t) => {
   const { root, session, criterionFile } = repo(t);
-  open(session(), ["src"], criterionFile);
+  const { loopId } = open(session(), ["src"], criterionFile);
   fs.writeFileSync(path.join(root, "src", "a.txt"), "done\n");
-  const recorded = payloadOf(receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }));
+  const recorded = payloadOf(receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }));
   const standing = () => receiptStanding({ root, receipt: recorded, claims: ["src"], storeLocation: session().location });
   assert.equal(standing().standing, STANDING.IN_FORCE);
 
@@ -211,19 +211,19 @@ test("GR-07: drift on the task paths unseats the receipt; drift elsewhere does n
 
 test("GR-06/07 end to end: an achievement rests on a receipt the runtime re-verified", async (t) => {
   const { root, session, criterionFile } = repo(t);
-  open(session(), ["src"], criterionFile);
+  const { loopId } = open(session(), ["src"], criterionFile);
 
   // Round 1: the work is not done. No receipt exists at all.
-  await observe(session(), { root, session: "s1", criterionFile, commandId: "observe-1" });
+  await observe(session(), { loopId, root, session: "s1", criterionFile, commandId: "observe-1" });
   const afterFirst = session().read().at(-2).payload;
   assert.equal(afterFirst.verdict, VERDICT.UNSATISFIED);
   assert.equal(afterFirst.receipt_state, STANDING.NONE);
-  assert.equal(next(session()).decision, DECISION.PRODUCE_RECEIPT, "under the git regime, evidence comes before repair");
+  assert.equal(next(session(), { loopId }).decision, DECISION.PRODUCE_RECEIPT, "under the git regime, evidence comes before repair");
 
   // Round 2: the work is done and receipted, so the loop may be certified.
   fs.writeFileSync(path.join(root, "src", "a.txt"), "done\n");
-  const recorded = receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit" });
-  await observe(session(), { root, session: "s1", criterionFile, commandId: "observe-2" });
+  const recorded = receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" });
+  await observe(session(), { loopId, root, session: "s1", criterionFile, commandId: "observe-2" });
 
   const records = session().read();
   const round = records.find((entry) => entry.kind === "round_observed" && entry.payload.round === 2).payload;
@@ -235,14 +235,14 @@ test("GR-06/07 end to end: an achievement rests on a receipt the runtime re-veri
 
 test("GR-07 end to end: a satisfied criterion over drifted paths is refused certification", async (t) => {
   const { root, session, criterionFile } = repo(t);
-  open(session(), ["src"], criterionFile);
+  const { loopId } = open(session(), ["src"], criterionFile);
   fs.writeFileSync(path.join(root, "src", "a.txt"), "done\n");
-  receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit" });
+  receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" });
 
   // The criterion will still pass — "done" is still in the file — but the file
   // is no longer the one the receipt vouched for.
   fs.writeFileSync(path.join(root, "src", "a.txt"), "done, plus something nobody receipted\n");
-  await observe(session(), { root, session: "s1", criterionFile, commandId: "observe-1" });
+  await observe(session(), { loopId, root, session: "s1", criterionFile, commandId: "observe-1" });
 
   const records = session().read();
   const round = records.find((entry) => entry.kind === "round_observed").payload;
@@ -250,38 +250,38 @@ test("GR-07 end to end: a satisfied criterion over drifted paths is refused cert
   assert.equal(round.receipt_state, STANDING.DRIFTED);
   assert.equal(round.receipt_digest, null);
   assert.equal(records.some((entry) => entry.kind === "loop_terminal"), false, "and the loop was not certified");
-  assert.equal(next(session()).decision, DECISION.PRODUCE_RECEIPT);
+  assert.equal(next(session(), { loopId }).decision, DECISION.PRODUCE_RECEIPT);
 });
 
 test("once the receipt exists the directive moves on, instead of asking again", async (t) => {
   const { root, session, criterionFile } = repo(t);
-  open(session(), ["src"], criterionFile);
+  const { loopId } = open(session(), ["src"], criterionFile);
   fs.writeFileSync(path.join(root, "src", "a.txt"), "done\n");
 
   // Observing before receipting: the check passes, but nothing vouches for it.
-  await observe(session(), { root, session: "s1", criterionFile, commandId: "observe-1" });
-  assert.equal(next(session()).decision, DECISION.PRODUCE_RECEIPT);
+  await observe(session(), { loopId, root, session: "s1", criterionFile, commandId: "observe-1" });
+  assert.equal(next(session(), { loopId }).decision, DECISION.PRODUCE_RECEIPT);
 
   // The host does exactly what it was told. Asking again must not return the
   // same instruction — a directive that never changes is a loop with no exit.
-  receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit" });
-  assert.equal(next(session()).decision, DECISION.JUDGE, "the evidence exists and is waiting to be judged");
+  receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" });
+  assert.equal(next(session(), { loopId }).decision, DECISION.JUDGE, "the evidence exists and is waiting to be judged");
 
-  await observe(session(), { root, session: "s1", criterionFile, commandId: "observe-2" });
-  assert.equal(next(session()).decision, DECISION.ACHIEVED);
+  await observe(session(), { loopId, root, session: "s1", criterionFile, commandId: "observe-2" });
+  assert.equal(next(session(), { loopId }).decision, DECISION.ACHIEVED);
 });
 
 test("a loop that claims the whole repository can still be certified", async (t) => {
   const { root, session, criterionFile } = repo(t);
-  open(session(), ["."], criterionFile);
+  const { loopId } = open(session(), ["."], criterionFile);
   fs.writeFileSync(path.join(root, "src", "a.txt"), "done\n");
-  receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit" });
+  receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" });
 
   // The ledger sits inside the claim and is written on every append, so it is
   // permanently untracked, permanently changing content under ".". If the
   // drift checks did not exclude the control plane, this loop could never be
   // certified — the runtime's own record-keeping would unseat its evidence.
-  await observe(session(), { root, session: "s1", criterionFile, commandId: "observe-1" });
+  await observe(session(), { loopId, root, session: "s1", criterionFile, commandId: "observe-1" });
   const round = session().read().find((entry) => entry.kind === "round_observed").payload;
   assert.equal(round.receipt_state, STANDING.IN_FORCE);
   assert.equal(session().read().at(-1).payload.outcome, "achieved");
@@ -289,26 +289,26 @@ test("a loop that claims the whole repository can still be certified", async (t)
 
 test("a loop that declared no receipt regime refuses to produce one", (t) => {
   const { root, session, criterionFile } = repo(t);
-  openLoop(session(), {
+  const { loopId } = openLoop(session(), {
     goal: "g", claims: ["src"], criterionFile, roundsBudget: 5,
     session: "s1", reason: "fixture", grantedBy: "self", receipts: "none", commandId: "open",
   });
   assert.throws(
-    () => receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }),
+    () => receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }),
     (error) => error.code === "NO_RECEIPT_REGIME",
   );
 });
 
 test("work the host committed itself can still be receipted", (t) => {
   const { root, session, criterionFile } = repo(t);
-  open(session(), ["src"], criterionFile);
+  const { loopId } = open(session(), ["src"], criterionFile);
   // The host owns git and may commit by hand. A loop that could never produce
   // evidence for such work could never be certified at all.
   git(root, "add", "src/a.txt");
   git(root, "commit", "-q", "-m", "committed by the host, not by workloop");
   const head = git(root, "rev-parse", "HEAD");
 
-  const attested = payloadOf(receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit-1" }));
+  const attested = payloadOf(receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit-1" }));
   assert.equal(attested.status, STATUS.CLEAN);
   assert.equal(attested.commit_oid, head, "the receipt attests the commit that already holds the work");
   assert.equal(attested.head_before, head, "and says so: a made commit has head_before === parent_oid instead");
@@ -318,20 +318,20 @@ test("work the host committed itself can still be receipted", (t) => {
 
 test("git failures are refused rather than turned into a receipt", (t) => {
   const { root, session, criterionFile } = repo(t);
-  openLoop(session(), {
+  const { loopId } = openLoop(session(), {
     goal: "g", claims: ["absent"], criterionFile, roundsBudget: 5,
     session: "s1", reason: "fixture", grantedBy: "self", receipts: "git", commandId: "open",
   });
   // Claims that hold nothing and appear in no commit: there is no commit to
   // make and none to attest, so there is no receipt either.
   assert.throws(
-    () => receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }),
+    () => receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }),
     (error) => error.code === "NOTHING_TO_COMMIT",
   );
   // But a claim that names nothing yet is ordinary — claims name intent, and
   // on the first round the agent has not created that path. Staging must not
   // turn that into a hard failure of the whole receipt.
-  const early = payloadOf(receipt(session(), { root, mode: MODE.STAGE, session: "s1", commandId: "stage" }));
+  const early = payloadOf(receipt(session(), { loopId, root, mode: MODE.STAGE, session: "s1", commandId: "stage" }));
   assert.deepEqual(early.paths, []);
   assert.equal(early.status, STATUS.CLEAN, "nothing claimed, nothing foreign: there is nothing to be uncertain about");
 
@@ -348,12 +348,12 @@ test("a receipt over a crowded index is recorded rather than thrown away", (t) =
   fs.mkdirSync(path.join(root, "other"));
   for (let index = 0; index < 25; index += 1) fs.writeFileSync(path.join(root, "other", `f${index}.txt`), `${index}\n`);
   git(root, "add", "other");
-  open(session(), ["src"], criterionFile);
+  const { loopId } = open(session(), ["src"], criterionFile);
 
   // More foreign entries than the reasons list can hold. The git operation has
   // already happened by the time the payload is built, so a payload the log
   // refuses would leave the index changed with nothing recording it.
-  const result = receipt(session(), { root, mode: MODE.STAGE, session: "s1", commandId: "stage" });
+  const result = receipt(session(), { loopId, root, mode: MODE.STAGE, session: "s1", commandId: "stage" });
   const stage = payloadOf(result);
   assert.equal(stage.status, STATUS.UNCERTAIN);
   assert.ok(stage.reasons.length <= 21, `reasons must stay within what the log carries, got ${stage.reasons.length}`);
@@ -362,7 +362,7 @@ test("a receipt over a crowded index is recorded rather than thrown away", (t) =
 
 test("a retry racing its original still commits once", async (t) => {
   const { root, location, session, criterionFile } = repo(t);
-  open(session(), ["src"], criterionFile);
+  const { loopId } = open(session(), ["src"], criterionFile);
   const before = Number(git(root, "rev-list", "--count", "HEAD"));
 
   // Real processes, released together by a barrier so they genuinely overlap.
@@ -378,7 +378,7 @@ test("a retry racing its original still commits once", async (t) => {
   const barrier = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-barrier-"));
   t.after(() => fs.rmSync(barrier, { recursive: true, force: true }));
   const run = (id) => new Promise((resolve) => {
-    const child = spawn(process.execPath, [RECEIPT_CHILD, location, root, id, "shared-command", barrier, "2"], { encoding: "utf8" });
+    const child = spawn(process.execPath, [RECEIPT_CHILD, location, root, loopId, id, "shared-command", barrier, "2"], { encoding: "utf8" });
     let out = "";
     child.stdout.on("data", (chunk) => { out += chunk; });
     child.once("close", () => resolve(out.trim()));
@@ -392,11 +392,11 @@ test("a retry racing its original still commits once", async (t) => {
 
 test("a retried receipt does not commit twice", (t) => {
   const { root, session, criterionFile } = repo(t);
-  open(session(), ["src"], criterionFile);
+  const { loopId } = open(session(), ["src"], criterionFile);
   const before = git(root, "rev-list", "--count", "HEAD");
 
-  const first = receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit" });
-  const again = receipt(session(), { root, mode: MODE.COMMIT, session: "s1", commandId: "commit" });
+  const first = receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" });
+  const again = receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" });
 
   assert.equal(first.replayed, false);
   assert.equal(again.replayed, true);

@@ -43,7 +43,24 @@ const TYPES = {
     && value.length <= (rule.max ?? 256)
     && value.every((item) => typeof item === "string" && item.length > 0 && item.length <= (rule.itemMax ?? 4096)),
   object: (value) => isPlainObject(value),
+  // A bounded list of small records, each checked against its own field map by
+  // the same rules as a top-level payload. Edges need it: encoding "which loop,
+  // pinned to what" as a packed string would put a parser between the log and
+  // its own meaning, and a log that needs parsing is no longer self-describing.
+  list: (value, rule) => Array.isArray(value)
+    && value.length <= (rule.max ?? 64)
+    && value.every((item) => isPlainObject(item) && matchesFields(rule.fields, item)),
 };
+
+function matchesFields(fields, payload) {
+  const declared = Object.keys(fields).sort();
+  if (canonicalJson(declared) !== canonicalJson(Object.keys(payload).sort())) return false;
+  return Object.entries(fields).every(([field, rule]) => {
+    const value = payload[field];
+    if (value === null && rule.nullable === true) return true;
+    return TYPES[rule.type](value, rule);
+  });
+}
 
 function assertDescriptor(kind, descriptor) {
   if (!isPlainObject(descriptor?.fields)) refuse("BAD_DESCRIPTOR", "a descriptor needs a fields object", kind);
@@ -52,6 +69,10 @@ function assertDescriptor(kind, descriptor) {
       refuse("BAD_DESCRIPTOR", `field ${field} has no known type`, kind);
     }
     if (rule.type === "enum" && !Array.isArray(rule.values)) refuse("BAD_DESCRIPTOR", `field ${field} is an enum without values`, kind);
+    if (rule.type === "list") {
+      if (!isPlainObject(rule.fields)) refuse("BAD_DESCRIPTOR", `field ${field} is a list without item fields`, kind);
+      assertDescriptor(`${kind}.${field}`, { fields: rule.fields });
+    }
   }
   return descriptor;
 }

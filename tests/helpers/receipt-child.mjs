@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { openLoopStore, receipt } from "../../src/domain/loop.mjs";
 
-const [location, root, session, commandId, barrier, expected] = process.argv.slice(2);
+const [location, root, loopId, session, commandId, barrier, expected] = process.argv.slice(2);
 
 fs.writeFileSync(path.join(barrier, `${session}.ready`), "");
 const deadline = Date.now() + 10_000;
@@ -19,7 +19,7 @@ while (fs.readdirSync(barrier).length < Number(expected) && Date.now() < deadlin
 }
 
 try {
-  const result = receipt(openLoopStore(location, { lockTimeoutMs: 30_000 }), { root, mode: "commit", session, commandId });
+  const result = receipt(openLoopStore(location, { lockTimeoutMs: 30_000 }), { root, loopId, mode: "commit", session, commandId });
   process.stdout.write(`${result.replayed ? "replayed" : "recorded"}\n`);
 } catch (error) {
   process.stdout.write(`refused:${error.code}\n`);

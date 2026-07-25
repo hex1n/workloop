@@ -43,7 +43,7 @@ test("SL-01: opening records who and why, and refuses to proceed without them", 
   ]) {
     assert.throws(() => openLoop(session(), { ...valid(changes), criterionFile }), (error) => error.code === code, code);
   }
-  openLoop(session(), { ...valid(), criterionFile });
+  const { loopId } = openLoop(session(), { ...valid(), criterionFile });
   const record = session().read().find((entry) => entry.kind === "loop_opened");
   assert.equal(record.payload.reason, "because");
   assert.equal(record.payload.granted_by, "self");
@@ -69,29 +69,29 @@ test("SL-02: claims are literal, relative, distinct and non-overlapping paths", 
 
 test("SL-11: only a session that has taken part may move the loop", (t) => {
   const { session, criterionFile } = workspace(t);
-  openLoop(session(), { ...valid(), criterionFile });
+  const { loopId } = openLoop(session(), { ...valid(), criterionFile });
   assert.throws(
-    () => suspend(session(), { outcome: "needs_input", reason: "r", session: "stranger", commandId: "s" }),
+    () => suspend(session(), { loopId, outcome: "needs_input", reason: "r", session: "stranger", commandId: "s" }),
     (error) => error.code === "NOT_A_PARTICIPANT",
   );
-  join(session(), { session: "stranger", reason: "invited", commandId: "join" });
-  assert.ok(suspend(session(), { outcome: "needs_input", reason: "r", session: "stranger", commandId: "s" }));
+  join(session(), { loopId, session: "stranger", reason: "invited", commandId: "join" });
+  assert.ok(suspend(session(), { loopId, outcome: "needs_input", reason: "r", session: "stranger", commandId: "s" }));
   // Joining twice is refused rather than quietly accumulating duplicates.
-  assert.throws(() => join(session(), { session: "stranger", reason: "again", commandId: "join-2" }), (error) => error.code === "ALREADY_PARTICIPANT");
+  assert.throws(() => join(session(), { loopId, session: "stranger", reason: "again", commandId: "join-2" }), (error) => error.code === "ALREADY_PARTICIPANT");
 });
 
 test("a retried round does not pay for the criterion a second time", async (t) => {
   const { root, session, criterionFile } = workspace(t);
-  openLoop(session(), { ...valid(), criterionFile });
+  const { loopId } = openLoop(session(), { ...valid(), criterionFile });
   const runs = () => (fs.existsSync(path.join(root, "runs.log")) ? fs.readFileSync(path.join(root, "runs.log"), "utf8").trim().split("\n").length : 0);
 
-  const first = await observe(session(), { root, session: "s1", criterionFile, commandId: "round-1" });
+  const first = await observe(session(), { loopId, root, session: "s1", criterionFile, commandId: "round-1" });
   assert.equal(first.replayed, false);
   assert.equal(runs(), 1);
 
   // The same command again: recognised before the criterion is spawned, so a
   // retry after a crash costs nothing and cannot record a second round.
-  const again = await observe(session(), { root, session: "s1", criterionFile, commandId: "round-1" });
+  const again = await observe(session(), { loopId, root, session: "s1", criterionFile, commandId: "round-1" });
   assert.equal(again.replayed, true);
   assert.equal(runs(), 1, "the criterion ran once, not twice");
   assert.deepEqual(again.records.map((entry) => entry.seq), first.records.map((entry) => entry.seq));

@@ -42,6 +42,11 @@ export const DECISION = Object.freeze({
   // `stuck`, but nothing in this slice can produce a reviewer, and vocabulary
   // that nothing writes is exactly the residue the audit spent its time
   // removing. It returns when a reviewer does.
+  // Waiting on an upstream loop. Deliberately not `suspend`: a suspension
+  // waits for a person, and this waits for something that will happen on its
+  // own. Collapsing the two would make "this loop is stuck" stop meaning
+  // anything, because most of what it flagged would just be queueing.
+  BLOCKED: "blocked",
   STUCK: "stuck",
   ACHIEVED: "achieved",
   SUSPEND: "suspend",
@@ -49,6 +54,11 @@ export const DECISION = Object.freeze({
 
 export const SUSPENSION = Object.freeze({ OUT_OF_BUDGET: "out_of_budget", NEEDS_INPUT: "needs_input" });
 export const TERMINAL = Object.freeze({ ACHIEVED: "achieved", ABANDONED: "abandoned" });
+
+// What the dependency gate saw when the round was observed. It lives here
+// rather than in the graph module because it is a value that appears in
+// records, and the vocabulary is what the log means by its own fields.
+export const DEPENDENCY = Object.freeze({ NONE: "none", SATISFIED: "satisfied", UNMET: "unmet" });
 
 export const loopVocabulary = createVocabulary({
   [KIND.OPENED]: {
@@ -61,10 +71,22 @@ export const loopVocabulary = createVocabulary({
       reason: { type: "string", max: 1000 },
       granted_by: { type: "enum", values: ["self", "user"] },
       receipts: { type: "enum", values: Object.values(RECEIPTS) },
+      // Declared here and nowhere else. An edge is part of what this loop is,
+      // not one of its settings: changing what a node depends on makes it a
+      // different node, and a different node is opened, not amended.
+      depends_on: {
+        type: "list",
+        max: 32,
+        fields: {
+          loop_id: { type: "digest" },
+          pinned_certification_digest: { type: "digest", nullable: true },
+        },
+      },
     },
   },
   [KIND.OBSERVED]: {
     fields: {
+      loop_id: { type: "digest" },
       round: { type: "integer", min: 1 },
       verdict: { type: "enum", values: Object.values(VERDICT) },
       // Null when the criterion said nothing a signature could be built from.
@@ -77,12 +99,16 @@ export const loopVocabulary = createVocabulary({
       // since drifted" — two very different situations for whoever is reading
       // the log to find out what went wrong.
       receipt_state: { type: "enum", values: Object.values(STANDING) },
+      // Checked at observation time, like the receipt: the ancestry half
+      // of it needs git, and the policy must stay a pure function of the log.
+      dependency_state: { type: "enum", values: Object.values(DEPENDENCY) },
       summary: { type: "string", max: 2000, min: 0 },
       observed_by: { type: "string", max: 200 },
     },
   },
   [KIND.DECIDED]: {
     fields: {
+      loop_id: { type: "digest" },
       round: { type: "integer", min: 1 },
       decision: { type: "enum", values: Object.values(DECISION) },
       reason: { type: "string", max: 1000 },
@@ -90,12 +116,14 @@ export const loopVocabulary = createVocabulary({
   },
   [KIND.JOINED]: {
     fields: {
+      loop_id: { type: "digest" },
       session: { type: "string", max: 200 },
       reason: { type: "string", max: 1000 },
     },
   },
   [KIND.SUSPENDED]: {
     fields: {
+      loop_id: { type: "digest" },
       outcome: { type: "enum", values: Object.values(SUSPENSION) },
       reason: { type: "string", max: 1000 },
       suspended_by: { type: "string", max: 200 },
@@ -103,12 +131,14 @@ export const loopVocabulary = createVocabulary({
   },
   [KIND.RESUMED]: {
     fields: {
+      loop_id: { type: "digest" },
       reason: { type: "string", max: 1000 },
       resumed_by: { type: "string", max: 200 },
     },
   },
   [KIND.TERMINAL]: {
     fields: {
+      loop_id: { type: "digest" },
       outcome: { type: "enum", values: Object.values(TERMINAL) },
       reason: { type: "string", max: 1000 },
       // Present when the loop was achieved: the receipt the judgment rested on.
@@ -118,6 +148,7 @@ export const loopVocabulary = createVocabulary({
   },
   [KIND.AMENDED]: {
     fields: {
+      loop_id: { type: "digest" },
       rounds_budget: { type: "integer", min: 1, max: 10_000, nullable: true },
       criterion_digest: { type: "digest", nullable: true },
       goal: { type: "string", max: 1000, nullable: true },
@@ -129,6 +160,7 @@ export const loopVocabulary = createVocabulary({
   },
   [KIND.RECEIPT]: {
     fields: {
+      loop_id: { type: "digest" },
       mode: { type: "enum", values: Object.values(MODE) },
       // Two states, because the runtime does not own the index and cannot
       // honestly offer a third. `clean` is witnessed, never inferred.

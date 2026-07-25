@@ -15,12 +15,12 @@ const record = (kind, payload) => ({ seq: (seq += 1), kind, payload });
 const fold = (records) => records.reduce((state, entry) => reduceLoop(state, entry), EMPTY);
 
 const opened = (budget = 3, receipts = RECEIPTS.NONE) => record(KIND.OPENED, {
-  goal: "make it green", claims: ["src"], criterion_digest: CRITERION, rounds_budget: budget, opened_by: "s1", receipts,
+  goal: "make it green", claims: ["src"], criterion_digest: CRITERION, rounds_budget: budget, opened_by: "s1", receipts, depends_on: [],
 });
 const observed = (round, verdict, { signature = null, checkpoint = CHECKPOINT(round), receipt = digestOf({ r: round }), receiptState = "in_force" } = {}) =>
   record(KIND.OBSERVED, {
     round, verdict, progress_signature: signature, artifact_checkpoint: checkpoint,
-    receipt_digest: receipt, receipt_state: receiptState, summary: "", observed_by: "s1",
+    receipt_digest: receipt, receipt_state: receiptState, dependency_state: "none", summary: "", observed_by: "s1",
   });
 
 test("an unopened loop asks for implementation and nothing else", () => {

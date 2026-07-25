@@ -3,11 +3,12 @@
 // the test but the directory on disk.
 import { next, observe, openLoopStore } from "../../src/domain/loop.mjs";
 
-const [location, root, criterionFile, session, commandId] = process.argv.slice(2);
+const [location, root, loopId, criterionFile, session, commandId] = process.argv.slice(2);
 
-const directive = next(openLoopStore(location));
+const directive = next(openLoopStore(location), { loopId });
 await observe(openLoopStore(location), {
   root,
+  loopId,
   session,
   criterionFile,
   commandId,

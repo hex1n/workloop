@@ -5,7 +5,7 @@
 // involved, because a policy that cannot be evaluated cannot be improved: you
 // could never tell "the strategy worked" from "the model happened to succeed".
 import { digestOf } from "../canonical.mjs";
-import { DECISION, RECEIPTS, SUSPENSION, VERDICT } from "./vocabulary.mjs";
+import { DECISION, DEPENDENCY, RECEIPTS, SUSPENSION, VERDICT } from "./vocabulary.mjs";
 import { isLive, lastRound, repeatedFailures, roundsSpent } from "./projection.mjs";
 
 export const DEFAULT_STUCK_THRESHOLD = 3;
@@ -31,7 +31,7 @@ export function progressSignature({ criterionDigest, artifactCheckpoint, receipt
  * Order is load-bearing — budget is checked before new work is proposed, and
  * a terminal loop answers the same thing forever.
  */
-export function decide(state, { stuckThreshold = DEFAULT_STUCK_THRESHOLD } = {}) {
+export function decide(state, { stuckThreshold = DEFAULT_STUCK_THRESHOLD, dependency = null } = {}) {
   if (!state.opened) return { decision: DECISION.IMPLEMENT, reason: "the loop is not open yet" };
   if (state.lifecycle === "terminal") {
     return { decision: state.outcome === "achieved" ? DECISION.ACHIEVED : DECISION.STUCK, reason: `the loop is already ${state.outcome}`, terminal: true };
@@ -51,6 +51,19 @@ export function decide(state, { stuckThreshold = DEFAULT_STUCK_THRESHOLD } = {})
     : { decision: DECISION.PRODUCE_RECEIPT, reason: `no receipt is in force (${last.receiptState})` });
 
   if (last !== null && last.verdict === VERDICT.SATISFIED) {
+    // The dependency gate. It stops the certification, never the work: the
+    // criterion has already run, and a loop whose upstream is not finished is
+    // not failing — it is early.
+    const unmet = dependency ?? (last.dependencyState === DEPENDENCY.UNMET ? { state: DEPENDENCY.UNMET, unmet: [] } : null);
+    if (unmet !== null && unmet.state === DEPENDENCY.UNMET) {
+      const first = unmet.unmet?.[0];
+      return {
+        decision: DECISION.BLOCKED,
+        reason: first === undefined
+          ? "a dependency is unmet"
+          : `dependency_unmet: ${first.loop_id.slice(0, 19)} is ${first.reason}`,
+      };
+    }
     // A satisfied criterion is half of an achievement. Under the git regime
     // the other half is evidence that still describes the task paths — a
     // receipt that has drifted, been rebased away, or never landed leaves the

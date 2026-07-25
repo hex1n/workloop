@@ -224,6 +224,16 @@ export function takeReceipt({ root, mode, claims, storeLocation }) {
   };
 }
 
+// Whether a commit is still reachable from HEAD. The graph's cross-loop check
+// needs the same question GR-06 asks within one loop, so it is answered in one
+// place: an upstream certified on a commit that has since been rewritten away
+// cannot support anything downstream either.
+export function isAncestorCommit(root, commitOid) {
+  if (typeof commitOid !== "string" || commitOid.length === 0) return true;
+  assertGitWorkspace(root);
+  return git(root, ["merge-base", "--is-ancestor", commitOid, "HEAD"], { tolerate: [1, 128] }).status === 0;
+}
+
 /**
  * Does a recorded receipt still describe reality?
  *
