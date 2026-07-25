@@ -60,5 +60,17 @@ export function npmCliPath() {
 }
 
 export function npm(args, options = {}) {
-  return spawnSync(process.execPath, [npmCliPath(), ...args], { encoding: "utf8", ...options });
+  // A bounded wait by default, like every other subprocess this suite starts.
+  // An npm that hangs should fail the gate, not own it.
+  return spawnSync(process.execPath, [npmCliPath(), ...args], { encoding: "utf8", timeout: 120_000, ...options });
+}
+
+// `--json` output arrives after whatever npm decided to say first, so the array
+// has to be found rather than assumed to start at byte zero.
+export function npmJson(args, options = {}) {
+  const result = npm([...args, "--json"], options);
+  if (result.status !== 0) throw new Error(`npm ${args.join(" ")} failed (${result.status}): ${result.stderr}`);
+  const start = result.stdout.indexOf("[");
+  if (start === -1) throw new Error(`npm ${args.join(" ")} printed no JSON array: ${result.stdout}`);
+  return JSON.parse(result.stdout.slice(start));
 }

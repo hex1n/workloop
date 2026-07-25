@@ -7,7 +7,7 @@ import path from "node:path";
 import test from "node:test";
 import { EXIT, VERDICT_PREFIX } from "../src/domain/criterion.mjs";
 import { VERBS, main, parseArgs, run } from "../src/cli.mjs";
-import { npm } from "./helpers/npm.mjs";
+import { npmJson } from "./helpers/npm.mjs";
 import { openLoopStore } from "../src/domain/loop.mjs";
 import { assertChain } from "../src/record.mjs";
 
@@ -269,9 +269,7 @@ test("HF-08: what ships is only what is implemented", () => {
   // said nothing about what ships: the tarball carried 139 files of the
   // previous implementation's documentation, and every string check here
   // passed anyway.
-  const packed = npm(["pack", "--dry-run", "--json"], { cwd: repoRoot });
-  assert.equal(packed.status, 0, `npm pack failed: ${packed.stderr}`);
-  const shipped = JSON.parse(packed.stdout.slice(packed.stdout.indexOf("[")))[0].files.map((entry) => entry.path);
+  const shipped = npmJson(["pack", "--dry-run"], { cwd: repoRoot })[0].files.map((entry) => entry.path);
   for (const path_ of shipped) {
     assert.match(path_, /^(src\/|bin\/|greenfield\/WORKFLOW\.md$|package\.json$|README\.md$|LICENSE$)/u, `${path_} is not part of the runtime`);
   }

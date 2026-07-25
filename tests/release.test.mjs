@@ -14,7 +14,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { spawnSync } from "node:child_process";
-import { npm } from "./helpers/npm.mjs";
+import { VERBS } from "../src/cli.mjs";
+import { npm, npmJson } from "./helpers/npm.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 
@@ -69,6 +70,22 @@ const SHELLS = process.platform === "win32"
   ]
   : [{ id: "sh", command: "/bin/sh", args: (script) => [script], extension: "sh", body: SH, shim: path.join("bin", "workloop") }];
 
+// npm keeps the package under lib/ on POSIX and in the prefix root on Windows.
+// Asked rather than assumed: a layout surprise should name itself.
+const installedPackage = (prefix) => {
+  for (const candidate of [path.join(prefix, "lib", "node_modules", "workloop"), path.join(prefix, "node_modules", "workloop")]) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  throw new Error(`npm installed no workloop package under ${prefix}`);
+};
+
+// The verb table the installed binary prints, so it can be compared with the
+// one this source tree defines. WN-01 asks the shells for "正确契约版本"; the
+// runtime reports no version number, and its contract surface is the verb
+// table — so that is what gets compared, and a stale or foreign workloop on
+// the machine cannot answer for this one.
+const verbsOffered = (help) => new Set([...help.matchAll(/^\s{2}([a-z]+)\s{2,}--/gmu)].map((match) => match[1]));
+
 const inventory = (directory) => {
   const seen = [];
   const walk = (current, relative) => {
@@ -87,9 +104,7 @@ test("WN-01: the packed release installs into an awkward prefix and runs from ev
   const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-release-")));
   t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
 
-  const packed = npm(["pack", "--json", "--pack-destination", scratch], { cwd: repoRoot });
-  assert.equal(packed.status, 0, `npm pack failed: ${packed.stderr}`);
-  const tarball = path.join(scratch, JSON.parse(packed.stdout.slice(packed.stdout.indexOf("[")))[0].filename);
+  const tarball = path.join(scratch, npmJson(["pack", "--pack-destination", scratch], { cwd: repoRoot })[0].filename);
   assert.ok(fs.existsSync(tarball), `npm pack reported ${tarball}, which is not there`);
 
   // An empty cache and no network: a zero-dependency tarball has nothing to
@@ -108,9 +123,22 @@ test("WN-01: the packed release installs into an awkward prefix and runs from ev
 
   const second = install();
   assert.equal(second.status, 0, `installing over the same prefix failed: ${second.stderr}`);
-  // HF-06's one surviving clause: repeated installation is idempotent. npm owns
-  // the mechanism; what is asserted here is only that it holds for this package.
+  // WN-01 and HF-06's first clause: repeated installation is idempotent. npm
+  // owns the mechanism; what is asserted here is only that it holds for this
+  // package.
   assert.deepEqual(inventory(prefix), afterFirst, "a second install changed the installed tree");
+
+  // "运行时目录只剩现行版本" — the half of WN-01's second clause that survived
+  // the ruling on activation manifests. A file the current tarball does not
+  // carry is what a source file deleted since the previous version looks like
+  // on disk; installing must replace the package tree, not merge into it, or
+  // an upgrade leaves the old runtime's code sitting inside the new one.
+  const stale = path.join(installedPackage(prefix), "src", "from-a-previous-version.mjs");
+  fs.writeFileSync(stale, "export const gone = true;\n");
+  const upgrade = install();
+  assert.equal(upgrade.status, 0, `installing over a dirtied package failed: ${upgrade.stderr}`);
+  assert.equal(fs.existsSync(stale), false, "a file from a previous version survived the install");
+  assert.deepEqual(inventory(prefix), afterFirst, "after installing over a dirtied package the tree is not the current release");
 
   const scripts = path.join(scratch, "shell-checks");
   fs.mkdirSync(scripts);
@@ -124,15 +152,21 @@ test("WN-01: the packed release installs into an awkward prefix and runs from ev
     const ran = spawnSync(shell.command, shell.args(script), {
       encoding: "utf8",
       env: { ...process.env, WORKLOOP_SHIM: shim },
+      // A shell that stops for input — a prompt `-NonInteractive` did not
+      // suppress, a `cmd` waiting on something — must fail this test, not own
+      // the gate until someone notices it never finished.
+      timeout: 60_000,
     });
 
     // WN-01 names all three Windows shells. A missing one is a shell this
     // machine cannot prove the release works from, not a shell to skip past.
     assert.equal(ran.error?.code, undefined, `${shell.id} could not be started: ${ran.error?.message}`);
     assert.equal(ran.status, 0, `${shell.id} exited ${ran.status} (${HELP_FAILED} = --help failed, ${UNKNOWN_VERB_NOT_1} = an unknown verb did not exit 1)\n${ran.stdout}\n${ran.stderr}`);
-    // Exit 0 alone would also be what a script that ran nothing returns.
-    // ASCII on purpose: the banner's em dash would be at the mercy of a console
-    // codepage, and this assertion is about the CLI having run, not about that.
-    assert.match(ran.stdout, /workloop <verb>/u, `${shell.id} exited 0 without the CLI having printed anything`);
+    // Exit 0 alone would also be what a script that ran nothing returns, and a
+    // banner alone would be printed by any workloop this machine happens to
+    // have. The verb table is the contract surface, so comparing it with this
+    // source tree's own is what answers WN-01's "正确契约版本". ASCII on
+    // purpose: it must not depend on a console codepage.
+    assert.deepEqual(verbsOffered(ran.stdout), new Set(VERBS), `${shell.id} reached a CLI offering a different verb table\n${ran.stdout}`);
   }
 });
