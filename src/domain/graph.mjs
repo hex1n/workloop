@@ -4,6 +4,7 @@
 // that one is" — it does not schedule, does not dispatch, and does not stop
 // anyone from working. It gates the certification, which is the only place a
 // dependency can be checked against evidence rather than against intent.
+import { pathContains } from "../site.mjs";
 import { refuse } from "./error.mjs";
 import { achieved, isLive } from "./projection.mjs";
 import { DEPENDENCY, TERMINAL } from "./vocabulary.mjs";
@@ -111,11 +112,9 @@ export function ready(state, options = {}) {
 // loops that claim the same path cannot both be told what "my paths" means,
 // and each would count the other's work as foreign content in its receipts.
 export function claimConflicts(claims, { loops }, { fold = (value) => value } = {}) {
-  const overlaps = (left, right) => left === right || left === "." || right === "."
-    || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
   return Object.values(loops)
     .filter((loop) => loop.opened && loop.lifecycle !== "terminal")
     .flatMap((loop) => loop.claims
-      .filter((held) => claims.some((wanted) => overlaps(fold(held), fold(wanted))))
+      .filter((held) => claims.some((wanted) => pathContains(fold(held), fold(wanted))))
       .map((held) => ({ loop_id: loop.id, claim: held })));
 }

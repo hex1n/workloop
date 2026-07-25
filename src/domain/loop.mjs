@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { digestOf, sha256Hex } from "../canonical.mjs";
 import { CLASSES } from "../locks.mjs";
-import { caseInsensitiveVolume, controlPlanePaths, realOf } from "../site.mjs";
+import { caseInsensitiveVolume, controlPlanePaths, pathContains, realOf } from "../site.mjs";
 import { openStore } from "../store.mjs";
 import { runCriterion } from "./criterion.mjs";
 import { LoopError, refuse } from "./error.mjs";
@@ -144,9 +144,6 @@ export function artifactCheckpoint(root, claims, { storeLocation = null } = {}) 
 // and `src/new` today and find themselves sharing a tree tomorrow.
 export const folder = (root) => (caseInsensitiveVolume(root) ? (value) => value.toLowerCase() : (value) => value);
 
-export const overlaps = (left, right) =>
-  left === right || left === "." || right === "." || left.startsWith(`${right}${path.sep}`) || right.startsWith(`${left}${path.sep}`);
-
 export function claimIdentity(root, claim) {
   const normalized = path.normalize(claim);
   const base = realOf(root);
@@ -201,7 +198,7 @@ export function assertClaims(root, claims, { storeLocation = null } = {}) {
   // to make decidable.
   for (const outer of normalized) {
     for (const inner of normalized) {
-      if (outer !== inner && overlaps(fold(inner), fold(outer))) refuse("CLAIM_OVERLAP", `${inner} lies inside ${outer}`);
+      if (outer !== inner && pathContains(fold(inner), fold(outer))) refuse("CLAIM_OVERLAP", `${inner} lies inside ${outer}`);
     }
   }
   // Code unit order, never `localeCompare`: this ordering goes into a digest,

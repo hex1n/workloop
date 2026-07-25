@@ -99,19 +99,52 @@ export function readVerdict({ stdout, code, signal }) {
   return { verdict: parsed.verdict, failures: normalizeFailures(parsed.failures), source: "verdict_line" };
 }
 
+const treeKill = (child) => {
+  if (process.platform === "win32") {
+    // Windows has no process group. `taskkill /T` is the whole mechanism.
+    const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    killer.once("error", () => {});
+    return killer;
+  }
+  // Negative pid targets the whole process group, which the child got by being
+  // spawned detached. Killing only the child would leave whatever it started
+  // running after the runtime believed the criterion was over.
+  process.kill(-child.pid, "SIGKILL");
+  return null;
+};
+
+/**
+ * Ends the criterion and everything it started, and reports how sure it is.
+ *
+ * The fallback is honest about its reach. A failed tree-kill is usually a
+ * process that had already exited, so it is retried once. If the mechanism
+ * itself is unavailable — `taskkill` off the PATH — nothing Node exposes can
+ * reach a grandchild on Windows; the equivalent of a process group there is a
+ * job object, which Node does not surface. So the runtime kills what it can
+ * and *says* the descendants may have survived, rather than reporting a tree
+ * it did not fell.
+ *
+ * Returning promptly is not negotiable either way: a timeout that hangs is
+ * the one thing a timeout must never do.
+ */
 function killTree(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
+  if (child.exitCode !== null || child.signalCode !== null) return { felled: true };
   try {
-    if (process.platform === "win32") {
-      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-    } else {
-      // Negative pid targets the whole process group, which the child got by
-      // being spawned detached. Killing only the child would leave whatever it
-      // started running after the runtime believed the criterion was over.
-      process.kill(-child.pid, "SIGKILL");
+    treeKill(child);
+    return { felled: true };
+  } catch (error) {
+    // Nothing there to kill is not a failure to kill it. Reporting the group
+    // as possibly-surviving because it had already exited would cry wolf on
+    // the one outcome that needs no attention at all.
+    if (error.code === "ESRCH") return { felled: true };
+    try {
+      treeKill(child);
+      return { felled: true };
+    } catch (retry) {
+      if (retry.code === "ESRCH") return { felled: true };
+      try { child.kill("SIGKILL"); } catch { /* already gone */ }
+      return { felled: false };
     }
-  } catch {
-    try { child.kill("SIGKILL"); } catch { /* already gone */ }
   }
 }
 
@@ -122,6 +155,7 @@ export async function runCriterion({ executable, args = [], cwd, timeoutMs = 120
     const err = streamSink();
     let settled = false;
     let timedOut = false;
+    let descendantsUncertain = false;
     let child;
 
     // `error` and `close` can both fire — a spawn failure after a timeout, for
@@ -142,7 +176,7 @@ export async function runCriterion({ executable, args = [], cwd, timeoutMs = 120
     const onExit = () => { if (child !== undefined) killTree(child); };
     const timer = setTimeout(() => {
       timedOut = true;
-      if (child !== undefined) killTree(child);
+      if (child !== undefined) descendantsUncertain = !killTree(child).felled;
     }, timeoutMs);
 
     const failed = (source, message) => settle({
@@ -180,7 +214,7 @@ export async function runCriterion({ executable, args = [], cwd, timeoutMs = 120
       settle({
         ...read,
         execution: {
-          error: timedOut ? "timeout" : null,
+          error: timedOut ? (descendantsUncertain ? "timeout_descendants_uncertain" : "timeout") : null,
           duration_ms: Date.now() - started,
           exit_code: code,
           signal,

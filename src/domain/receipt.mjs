@@ -66,6 +66,9 @@ const excludeSpecs = (excluded) => excluded.map((entry) => `:(exclude)${entry}`)
 // one claim that needs saying out loud: git prints "src/a.txt", never
 // "./src/a.txt", so prefix matching alone would call the whole repository
 // foreign to a loop that claimed all of it.
+// Deliberately not `pathContains`: these are git's paths, and git uses `/` on
+// every platform. The identical-looking comparison over workspace paths is
+// separator-aware for exactly the opposite reason.
 const under = (prefixes) => (candidate) =>
   prefixes.some((prefix) => prefix === "." || candidate === prefix || candidate.startsWith(`${prefix}/`));
 

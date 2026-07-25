@@ -76,6 +76,21 @@ export const realOf = (target) => {
   try { return fs.realpathSync.native(target); } catch { return path.resolve(target); }
 };
 
+/**
+ * Whether two workspace-relative paths name the same place or one inside the
+ * other, on this platform's separator.
+ *
+ * Kept in one place because there used to be two, and one of them compared on
+ * a hard-coded `/`. On Windows a claim identity is built with `\`, so `src`
+ * and `src\nested` did not look nested and two loops could hold overlapping
+ * paths. The git-side comparison in the receipt adapter is deliberately
+ * separate: git speaks `/` on every platform, so the same-looking code is
+ * correct there for a different reason.
+ */
+export const pathContains = (left, right) =>
+  left === right || left === "." || right === "."
+  || left.startsWith(`${right}${path.sep}`) || right.startsWith(`${left}${path.sep}`);
+
 const swapCase = (name) => [...name].map((ch) => (ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase())).join("");
 
 /**
