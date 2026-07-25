@@ -65,12 +65,12 @@ CRC   u32 小端   = crc32(PAYLOAD)   // CRC-32/IEEE,取自 node:zlib
 {
   "store_schema": 1,
   "store_id": "…",
-  "genesis_anchor": { "platform": "…", "kind": "git_common|root", "dev": "…", "ino": "…", "birthtime_ns": "…" },
+  "anchor": "sha256:…",   // digest over {platform, dev, ino, birthtime}
   "genesis_digest": "sha256:…"
 }
 ```
 
-`genesis_anchor` 是碰撞检测的全部依据(设计稿存储层):读取时比对当前位置的
+`anchor` 是碰撞检测的全部依据(设计稿存储层):读取时比对当前位置的
 物理锚,不符即判碰撞、拒绝一切写入。**`store_id` 含随机成分,不从锚推导**
 ——否则复制体会得到不同 id,碰撞反而检不出来(见 FS-01)。
 
@@ -130,8 +130,16 @@ deadline_ms}`。调用方提供的 owner 附加字段**不得覆盖**上述保�
 | `prev` 与前帧 `digest` 不符 | 链断裂 | 失败关闭 |
 | `digest` 重算不符 | 伪造 | 失败关闭 |
 | `seq` 非连续 | 空洞 | 失败关闭 |
-| 未知 `v` 或 `kind` | 词汇超前 | 失败关闭 + 升级提示 |
+| 未知 `v` | 记录 schema 超前 | 失败关闭 + 升级提示 |
 | 非最后一段末尾出现不完整帧 | 中段损坏 | 失败关闭 |
+
+**`kind` 不在此表内**:它是领域词汇,而内核按 §7/§8 不认识领域。内核只校验
+`kind` 存在且是非空字符串;词汇合法性由切片 2 的声明式描述符裁决。原表把
+"未知 kind"列为内核职责,是与领域无关性自相矛盾的,已更正。
+
+**自动截断必须留痕**:截断后追加一条 `tail_truncated` 记录,payload 含被弃
+字节数、digest 与偏移。丢掉的字节不值钱,但"曾经丢过字节"这件事值钱——
+不留痕的截断就是日志自己悄悄变短,而这正是本运行时要杜绝的那类事。
 
 ### 4.1 对 LK-10 的修订(已确认,语料已回写)
 
@@ -170,7 +178,7 @@ Unicode(含代理对与组合字符)、极端整数、空对象;随机穿插封�
 | P9 | 投影可弃 | 删除或写坏快照 → 重放结果不变,且不静默改写坏文件 | LK-12 |
 | P10 | 分段等价 | 任意 `SEGMENT_MAX` 下重放结果相同;链跨段相接 | LK-13 |
 | P11 | 失败关闭 | §4 表中每一种非法态 → 特定诊断的拒绝,且从不部分应用 | LK-08 |
-| P12 | 拒绝原子性 | 任何拒绝路径之后,日志字节与 mtime 与拒绝前逐字节相同 | LK-05 |
+| P12 | 拒绝原子性 | 任何拒绝路径之后,**被拒的命令一条记录都没应用**;日志字节与 mtime 不变,唯一例外是入口处已记录的尾部修复(见下) | LK-05 |
 
 P7 用真实子进程,不用线程模拟——锁是文件系统事实,进程内模拟证明不了它。
 
@@ -179,18 +187,18 @@ P7 用真实子进程,不用线程模拟——锁是文件系统事实,进程内
 追加的执行序列(相位名即注入点名):
 
 ```text
-lock_acquired → tail_read → idempotence_checked → occ_checked
-  → [segment_sealed] → [segment_created] → frames_written → frames_fsynced
-  → [snapshot_written] → [snapshot_fsynced] → lock_released
+lock_acquired → [tail_repaired] → tail_read → idempotence_checked → prepared
+  → [segment_created] → frames_written → frames_fsynced
+  → [snapshot_staged] → [snapshot_written] → before_release
 ```
 
 | 注入点 | 崩溃后必须成立 |
 | --- | --- |
-| C1 `occ_checked` 之后、写入之前 | 日志字节不变;命令未应用;原命令重跑应用之 |
+| C1 `prepared` 之后、写入之前 | 日志字节不变;命令未应用;原命令重跑应用之 |
 | C2 写入中途,k ∈ {1, 3, 4, 8, 8+⌊LEN/2⌋, 8+LEN-1} 字节 | 判为不完整写入 → 自动截断至上一合法帧;命令未应用;原命令重跑应用之。**C2 以直接构造字节状态验证,不用杀进程**:`writeSync` 一个小缓冲区在实践中不会停在任意字节边界,靠杀进程去"碰"出部分写入既不可靠也不彻底;而磁盘上的字节状态才是被断言的对象,直接构造能穷举每一个 k |
 | C3 `frames_written` 之后、fsync 之前 | 帧或在或不在,两者皆合法;**绝不允许部分应用**——在则 CRC 必合法且命令视为已应用(重跑幂等空操作),不在则等同 C1 |
 | C4 fsync 之后、快照之前 | 命令已应用;快照陈旧;P2 保证重放结果不变 |
-| C5 快照写入中途 | 半截快照在读取时自证不合法并被跳过,回退到更早快照或全量重放;结果与 P1 相同 |
+| C5 `snapshot_staged` 之后、rename 之前 | 暂存文件已落盘但从未改名;加载器不把它当快照,故没有半截快照可被采信;记录本身在此之前已经持久,结果与 P1 相同 |
 | C6 快照完成、锁释放之前 | 锁目录残留;后续进程按 §3 收割规则(pid 已死 **且** 超 deadline)恢复 |
 | C7 决定轮转、新段未建 | 无封段帧,故无痕迹;等同 C1 |
 | C8 新段已建、首帧未写 | 空段合法(零帧);重放跳过 |
@@ -206,25 +214,37 @@ C2 的 k 取值覆盖:长度前缀写了一部分(1、3)、长度前缀恰好写
 ## 7. 内核 API(领域无关)
 
 ```text
-createStore({ location, anchor, commandId, kind, payload }) -> Store
-openStore(location) -> Store            // 发现 + 完整性 + 锚比对
-store.append({ commandId, records, expect? }) -> { seq, digests, replayed: bool }
+createStore({ location, commandId, requestDigest?, kind?, payload? }) -> Store
+openStore(location, { reduce, initial, segmentMaxBytes?, snapshotEvery?,
+                      lockTimeoutMs?, lockLeaseMs?, onPhase? }) -> Store
+store.append({ commandId, requestDigest, prepare }) -> { seq, records, replayed }
 store.read({ fromSeq? }) -> Record[]
-store.replay({ reduce, initial, useSnapshot? }) -> { state, seq }
+store.replay({ useSnapshot? }) -> { state, seq, headDigest, snapshotUsed }
 store.recoverTail({ expectValidEndOffset, expectTailDigest, grantedBy, reason })
-store.close()
 ```
 
-- `append` 是唯一写入口,自身完成锁、幂等、OCC、封段、fsync、快照。
-- `reduce(state, record) -> state` 由调用方提供;内核不解释 `kind` 与 `payload`,
-  只校验它们**存在且规范**。词汇校验(声明式描述符)属切片 2。
-- `expect` 形如 `{ entityId: revision }`,内核只做"调用方声明的 revision 与
-  它在重放态里读到的是否一致"这一层比较,实体语义不归内核。
+- `append` 是唯一写入口,自身完成锁、尾部修复、幂等、封段轮转、fsync、快照。
+- `reduce(state, record) -> state` 在 `openStore` 时给定:一个 store 是带着
+  它所服务的投影被打开的。内核不解释 `kind` 与 `payload`,只校验它们**存在
+  且规范**。词汇校验(声明式描述符)属切片 2。
+- **乐观并发的形状是 `prepare(state, {seq})`**(修订,原设计为 `expect`
+  字段)。理由:实体级 revision 要求内核理解"实体",而它按 §8 不该理解。
+  `prepare` 在锁内拿到最新重放态,返回要写的记录或抛出以中止——内核供给
+  state,调用方供给含义,乐观并发因此不需要任何领域知识进入内核。
+- **幂等比对的是 `requestDigest`,不是 prepare 的产出**。重放 `prepare`
+  没有意义:命令已经落账,现在的 state 已含它自己的效果,再跑必然产出不同
+  的东西。故请求的副本必须持久化(记录的 `req` 字段)。
 
 ## 8. 非目标(切片 1 内)
 
 领域词汇与描述符校验、循环状态机、criterion、git receipt、图与边、CLI。
 内核不认识它们,也不为它们预留字段。
+
+P12 的例外要说清楚:`append` 在拿到锁后**先修复撕裂尾部**,再判断这条命令。
+若命令随后被拒(例如 command id 冲突),修复仍然留下。这不是漏洞而是正确的:
+修复是它自己的一次已记录的行为,不属于被拒的那条命令;把它回滚等于把"曾经
+有过撕裂"这个事实也一并抹掉。断言应写成"被拒命令零记录 + 修复有记录",
+而不是"字节逐一相同"。
 
 ### 5.1 快照的信任边界(如实记)
 
@@ -237,6 +257,12 @@ store.close()
   代价,不是可以靠加字段消除的疏漏。
 - 需要不依赖缓存的答案时,用 `replay({ useSnapshot: false })` 全量重放;
   它与用快照的结果必须相同(P2),这条等价性本身就是快照的验证手段。
+
+**当前快照省下的是什么,如实记**:它跳过被覆盖前缀的**链校验(逐记录
+sha256 重算)与 reduce**,这是重放里的主要 CPU 开销;但它**尚未减少 I/O 与
+JSON 解析**——幂等所需的命令索引仍由全量日志推导。要真正把工作量收敛到
+"快照 + 尾段",快照需要一并携带命令索引与它覆盖到的段号。**这一项显式延后**,
+触发条件:日志规模到了全量解析可测量地拖慢 `append` 的程度。
 
 ## 9. 修订记录
 
@@ -251,3 +277,13 @@ store.close()
 - 2026-07-25:C2(写入中途崩溃)改为直接构造字节状态验证,不用杀进程(§6)。
   小缓冲区的 `writeSync` 实践中不会停在任意字节边界,靠杀进程去碰既不可靠也
   不彻底;被断言的对象是磁盘字节状态,直接构造反而能穷举每一个 k。
+- 2026-07-25(第二轮代码评审后):补记三处此前未登记的偏离与两处遗漏。
+  偏离:§7 的 `append` 由 `{commandId, records, expect}` 改为
+  `{commandId, requestDigest, prepare}`(理由见 §7,核心是实体级 OCC 会把
+  领域知识拖进内核);§1.3 的 `genesis_anchor` 对象改为 `anchor` digest;
+  §6 相位表按实现更新(`occ_checked` → `prepared`,新增 `tail_repaired`
+  与 `snapshot_staged`,删除已不存在的 `segment_sealed`)。
+  遗漏:自动截断未留痕(§4 已补 `tail_truncated` 要求并实现);
+  `recoverTail` 从未实现(§7 已实现,见 `tests/store-recovery.test.mjs`)。
+  另更正 §4 的"未知 kind"行——那与内核的领域无关性自相矛盾;并把 P12 的
+  措辞从"字节逐一相同"改为"被拒命令零记录 + 修复有记录"(§5)。

@@ -133,15 +133,27 @@ test("C8: a crash right after a new segment is created leaves a valid empty segm
   assert.equal(store.replay().seq, seqBefore + 1);
 });
 
-test("C5: a snapshot interrupted mid-write is never mistaken for a finished one", (t) => {
-  const { location, open } = fixture(t, { commands: 8 });
-  const expected = open().replay({ useSnapshot: false }).state;
+test("C5: a process killed while staging a snapshot leaves nothing that loads as one", (t) => {
+  // Four seeds plus genesis puts the child's append on seq 6, which is the
+  // boundary its snapshotEvery of 3 triggers on — otherwise the phase is never
+  // reached and the kill would silently not happen.
+  const { location, open } = fixture(t, { commands: 4 });
   const snapshots = path.join(location, "snapshots");
-  const newest = fs.readdirSync(snapshots).filter((name) => name.endsWith(".json")).sort().at(-1);
-  // Staging plus rename means a half-written snapshot can only ever exist under
-  // the staging name, which the loader does not consider a snapshot at all.
-  fs.writeFileSync(path.join(snapshots, `${Number(newest.slice(0, -5)) + 90}.json.partial`), '{"seq":99,"state":{"count":999}');
-  assert.deepEqual(open().replay().state, expected);
+  const before = fs.readdirSync(snapshots).filter((name) => name.endsWith(".json"));
+
+  // Killed after the staging file is written and fsynced but before it is
+  // renamed into place — the one instant where a half-finished snapshot could
+  // exist on disk.
+  crashAt(location, "snapshot_staged", "staging");
+  const after = fs.readdirSync(snapshots);
+  assert.deepEqual(after.filter((name) => name.endsWith(".json")), before, "no new snapshot became visible");
+  assert.ok(after.some((name) => name.endsWith(".partial")), "the staging file is what was left behind");
+
+  // The record itself was durable before the snapshot was attempted, and the
+  // orphaned staging file is not mistaken for a snapshot.
+  const store = open();
+  assert.deepEqual(store.replay().state, store.replay({ useSnapshot: false }).state);
+  assert.equal(store.read().at(-1).cmd, "staging");
 });
 
 test("C2: an unfinished frame at any byte offset is discarded, and only that command is lost", (t) => {
@@ -160,8 +172,10 @@ test("C2: an unfinished frame at any byte offset is discarded, and only that com
     assert.throws(() => store.read(), (error) => error.code === "STORE_TORN", `cut ${cut}: a read must refuse rather than repair`);
 
     const applied = store.append({ commandId: `after-${cut}`, requestDigest: REQ(cut), prepare: () => [{ kind: "crash", payload: {} }] });
-    assert.equal(applied.records[0].seq, seqBefore + 1, `cut ${cut}: the discarded bytes never held a record`);
-    assert.equal(store.replay().seq, seqBefore + 1);
+    const repair = store.read().find((record) => record.kind === "tail_truncated");
+    assert.equal(repair.payload.bytes, cut, `cut ${cut}: the repair records how much was dropped`);
+    assert.equal(applied.records[0].seq, repair.seq + 1, `cut ${cut}: the discarded bytes never held a record`);
+    assert.equal(store.replay().seq, seqBefore + 2, `cut ${cut}: the repair and the command each took one seq`);
     fs.writeFileSync(segment, intact);
   }
 });

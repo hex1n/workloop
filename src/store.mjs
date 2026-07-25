@@ -5,12 +5,14 @@
 // records, replays them through a reducer the caller supplies, and refuses
 // anything it cannot prove. Domain meaning arrives in slice 2 and must not
 // leak backwards into this file.
+import { getRandomValues } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import { canonicalJson, digestOf, isPlainObject } from "./canonical.mjs";
+import { canonicalJson, digestOf, isPlainObject, sha256Hex } from "./canonical.mjs";
 import { TRAILING, encodeFrame, scanFrames } from "./frame.mjs";
 import { assertChain, buildRecord } from "./record.mjs";
 import { CLASSES, createLockManager } from "./locks.mjs";
+import { readNewestSnapshot, snapshotFits, writeSnapshot } from "./snapshot.mjs";
 
 export const STORE_SCHEMA = 1;
 export const DEFAULT_SEGMENT_MAX_BYTES = 4 * 1024 * 1024;
@@ -25,15 +27,22 @@ const SEGMENT_DIGITS = 6;
 // only credible when "here" can be pointed at.
 export const PHASES = Object.freeze([
   "lock_acquired",
+  "tail_repaired",
   "tail_read",
   "idempotence_checked",
   "prepared",
   "segment_created",
   "frames_written",
   "frames_fsynced",
+  "snapshot_staged",
   "snapshot_written",
   "before_release",
 ]);
+
+// Kinds the kernel writes about the log itself. They are not domain vocabulary
+// — they record what happened to the file, which is exactly the kind of fact a
+// caller must never have to take on trust.
+export const KERNEL_KINDS = Object.freeze({ TAIL_TRUNCATED: "tail_truncated", TAIL_RECOVERED: "tail_recovered" });
 
 export class StoreError extends Error {
   constructor(code, message) {
@@ -118,7 +127,7 @@ export function createStore({ location, commandId, requestDigest = digestOf({ ge
   fs.mkdirSync(path.join(location, LOCKS), { recursive: true });
   const manifest = {
     store_schema: STORE_SCHEMA,
-    store_id: digestOf({ created: location, entropy: [...crypto.getRandomValues(new Uint32Array(4))] }).slice("sha256:".length, "sha256:".length + 32),
+    store_id: digestOf({ created: location, entropy: [...getRandomValues(new Uint32Array(4))] }).slice("sha256:".length, "sha256:".length + 32),
     anchor: physicalAnchor(location),
     genesis_digest: null,
   };
@@ -152,31 +161,22 @@ export function openStore(location, {
   });
 
   const snapshotDirectory = path.join(location, SNAPSHOTS);
-  const snapshotBody = (snapshot) => ({ store_id: snapshot.store_id, seq: snapshot.seq, head_digest: snapshot.head_digest, state: snapshot.state });
 
-  // Returns the newest snapshot that is well-formed and claims to belong to
-  // this store, or null. A snapshot that fails any check is ignored rather
-  // than fatal: it is a cache, and a cache that can stop the store from
-  // opening is not disposable in any useful sense.
-  function loadSnapshot() {
-    let names;
+  // Writes one record of the kernel's own, describing something that happened
+  // to the log itself. Used by tail repair, which must leave a trace: bytes
+  // that vanish without a record are exactly the kind of silent change this
+  // runtime exists to make impossible.
+  function appendKernelRecord(target, { records, headDigest, nextSeq }, { kind, payload, commandId, requestDigest }) {
+    const record = buildRecord({ seq: nextSeq, prev: headDigest, cmd: commandId, req: requestDigest, kind, payload });
+    const handle = fs.openSync(target, "a");
     try {
-      names = fs.readdirSync(snapshotDirectory).filter((name) => /^\d+\.json$/u.test(name));
-    } catch {
-      return null;
+      fs.writeSync(handle, encodeFrame(canonicalJson(record)));
+      fs.fsyncSync(handle);
+    } finally {
+      fs.closeSync(handle);
     }
-    for (const name of names.map((entry) => Number(entry.slice(0, -5))).sort((left, right) => right - left)) {
-      try {
-        const snapshot = JSON.parse(fs.readFileSync(path.join(snapshotDirectory, `${name}.json`), "utf8"));
-        if (snapshot.store_id !== manifest.store_id) continue;
-        if (snapshot.seq !== name) continue;
-        if (digestOf(snapshotBody(snapshot)) !== snapshot.digest) continue;
-        return snapshot;
-      } catch {
-        continue;
-      }
-    }
-    return null;
+    records.push(record);
+    return record;
   }
 
   // Reads the whole log and decides what to do about anything at the end of it
@@ -186,8 +186,9 @@ export function openStore(location, {
     const segments = listSegments(location);
     const records = [];
     const commands = new Map();
-    const snapshot = useSnapshot ? loadSnapshot() : null;
+    const snapshot = useSnapshot ? readNewestSnapshot(snapshotDirectory, manifest.store_id) : null;
     let bytes = 0;
+    let truncated = null;
     for (const segment of segments) {
       const content = fs.readFileSync(segment.file);
       const { frames, trailing } = scanFrames(content);
@@ -210,21 +211,35 @@ export function openStore(location, {
       }
       if (!repair) refuse("STORE_TORN", `${path.basename(segment.file)} ends with an unfinished write at byte ${trailing.offset}`);
       // An unfinished write was never acknowledged to anyone, so discarding it
-      // loses nothing that was ever promised.
+      // loses nothing that was ever promised. It is still recorded below: the
+      // bytes may be worthless, but the fact that they were dropped is not.
+      const discarded = content.subarray(trailing.offset);
       fs.truncateSync(segment.file, trailing.offset);
       bytes = trailing.offset;
+      truncated = { segment: segment.index, offset: trailing.offset, bytes: discarded.length, digest: sha256Hex(discarded) };
     }
     // A usable snapshot lets the chain be verified from where it left off; an
     // unusable one simply is not used. Either way the records themselves are
     // the authority.
-    const usable = snapshot !== null
-      && snapshot.seq <= records.length
-      && (snapshot.seq === 0 || records[snapshot.seq - 1]?.digest === snapshot.head_digest);
+    const usable = snapshotFits(snapshot, records);
     const from = usable ? snapshot.seq : 0;
-    const { nextSeq, headDigest } = assertChain(records.slice(from), {
+    let { nextSeq, headDigest } = assertChain(records.slice(from), {
       anchorDigest: usable ? snapshot.head_digest : manifest.genesis_digest,
       fromSeq: from + 1,
     });
+    if (truncated !== null) {
+      // The repair becomes part of the history, so a later reader can see that
+      // bytes were discarded, how many, and what they hashed to.
+      const record = appendKernelRecord(segments.at(-1).file, { records, headDigest, nextSeq }, {
+        kind: KERNEL_KINDS.TAIL_TRUNCATED,
+        payload: truncated,
+        commandId: `kernel:tail-truncated:${truncated.digest}`,
+        requestDigest: digestOf(truncated),
+      });
+      nextSeq = record.seq + 1;
+      headDigest = record.digest;
+      bytes = fs.statSync(segments.at(-1).file).size;
+    }
     for (const record of records) {
       const seen = commands.get(record.cmd);
       if (seen === undefined) commands.set(record.cmd, { req: record.req, seqs: [record.seq] });
@@ -236,19 +251,7 @@ export function openStore(location, {
     let state = usable ? snapshot.state : initial;
     for (const record of records.slice(from)) state = reduce(state, record);
     const last = segments.at(-1);
-    return { records, commands, state, nextSeq, headDigest, snapshotUsed: usable ? snapshot.seq : null, segment: last.index, segmentFile: last.file, segmentBytes: bytes };
-  }
-
-  function writeSnapshot({ seq, headDigest, state }) {
-    const body = { store_id: manifest.store_id, seq, head_digest: headDigest, state };
-    const snapshot = { ...body, digest: digestOf(body) };
-    const target = path.join(snapshotDirectory, `${seq}.json`);
-    // Written through a temporary file so a crash mid-write cannot leave a
-    // half-snapshot under a name that claims to be complete.
-    const staging = `${target}.partial`;
-    fs.mkdirSync(snapshotDirectory, { recursive: true });
-    writeFileDurably(staging, Buffer.from(`${canonicalJson(snapshot)}\n`, "utf8"));
-    fs.renameSync(staging, target);
+    return { records, commands, state, nextSeq, headDigest, truncated, snapshotUsed: usable ? snapshot.seq : null, segment: last.index, segmentFile: last.file, segmentBytes: bytes };
   }
 
   const api = {
@@ -274,6 +277,7 @@ export function openStore(location, {
       return locks.withLock(CLASSES.STORE, location, () => {
         onPhase("lock_acquired");
         const loaded = load({ repair: true, useSnapshot: true });
+        if (loaded.truncated !== null) onPhase("tail_repaired");
         onPhase("tail_read");
         const seen = loaded.commands.get(commandId);
         if (seen) {
@@ -331,11 +335,53 @@ export function openStore(location, {
           // does not exist yet.
           let state = loaded.state;
           for (const record of records) state = reduce(state, record);
-          writeSnapshot({ seq: head.seq, headDigest: head.digest, state });
+          writeSnapshot(snapshotDirectory, { storeId: manifest.store_id, seq: head.seq, headDigest: head.digest, state }, onPhase);
           onPhase("snapshot_written");
         }
         onPhase("before_release");
         return { seq: head.seq, records, replayed: false };
+      });
+    },
+
+    // The way back from damage that cannot be shown to be an unfinished write.
+    // It is deliberately hard to invoke: the caller must state exactly where
+    // the good bytes end and what the bytes being discarded hash to, and must
+    // say that a person decided this. Anything less would be the runtime
+    // guessing about data it already said it could not judge.
+    recoverTail({ expectValidEndOffset, expectTailDigest, grantedBy, reason }) {
+      if (grantedBy !== "user") refuse("PROVENANCE_REQUIRED", "recovering a damaged tail is a person's decision, not the runtime's");
+      if (typeof reason !== "string" || reason.trim().length === 0) refuse("REASON_REQUIRED", "recovery must record why it was done");
+      if (!Number.isSafeInteger(expectValidEndOffset) || expectValidEndOffset < 0) refuse("INVALID_OFFSET", "recovery needs the byte offset where the good bytes end");
+      return locks.withLock(CLASSES.STORE, location, () => {
+        const segments = listSegments(location);
+        const target = segments.at(-1);
+        const content = fs.readFileSync(target.file);
+        if (expectValidEndOffset > content.length) refuse("RECOVERY_PROOF_MISMATCH", "the declared end offset is past the end of the segment");
+        const discarded = content.subarray(expectValidEndOffset);
+        const digest = sha256Hex(discarded);
+        // Both halves of the proof must hold. Matching only the offset would
+        // let a stale instruction truncate bytes written since it was issued.
+        if (digest !== expectTailDigest) refuse("RECOVERY_PROOF_MISMATCH", `the bytes after ${expectValidEndOffset} hash to ${digest}, not ${expectTailDigest}`);
+        fs.truncateSync(target.file, expectValidEndOffset);
+
+        let loaded;
+        try {
+          loaded = load();
+        } catch (error) {
+          // Refusing here leaves the truncation in place, which is the honest
+          // outcome: the caller proved which bytes to drop, and dropping them
+          // did not produce a readable store. Re-adding them would discard a
+          // decision a person already made.
+          refuse("RECOVERY_INSUFFICIENT", `the store is still unreadable after recovery: ${error.message}`);
+        }
+        const payload = { segment: target.index, offset: expectValidEndOffset, bytes: discarded.length, digest, reason };
+        appendKernelRecord(target.file, loaded, {
+          kind: KERNEL_KINDS.TAIL_RECOVERED,
+          payload,
+          commandId: `kernel:tail-recovered:${digest}`,
+          requestDigest: digestOf(payload),
+        });
+        return { recovered: true, discarded: discarded.length, digest };
       });
     },
   };

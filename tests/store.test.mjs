@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { digestOf } from "../src/canonical.mjs";
+import { digestOf, sha256Hex } from "../src/canonical.mjs";
 import { encodeFrame } from "../src/frame.mjs";
 import { createStore, openStore } from "../src/store.mjs";
 
@@ -23,8 +23,13 @@ function fixture(t, options = {}) {
 const put = (store, id, kind = "example", payload = { id }) =>
   store.append({ commandId: id, requestDigest: REQ(id), prepare: () => [{ kind, payload }] });
 
-const segmentBytes = (location) => fs.readdirSync(path.join(location, "segments")).sort()
-  .map((name) => fs.readFileSync(path.join(location, "segments", name)));
+// Bytes and mtimes together: a refusal that rewrote a file with identical
+// content would still be a write, and the spec asks for neither to move.
+const segmentBytes = (location) => fs.readdirSync(path.join(location, "segments")).sort().map((name) => {
+  const file = path.join(location, "segments", name);
+  const stat = fs.statSync(file, { bigint: true });
+  return { name, bytes: fs.readFileSync(file).toString("base64"), mtime: stat.mtimeNs.toString() };
+});
 
 test("a new store replays its own genesis and nothing else", (t) => {
   const { store } = fixture(t);
@@ -152,9 +157,19 @@ test("LK-10: an unfinished write is truncated by the next append, not by a read"
   assert.equal(fs.readFileSync(segment).length, intact.length + halfFrame.length);
 
   const appended = store.append({ commandId: "after-tear", requestDigest: REQ("after-tear"), prepare: () => [{ kind: "example", payload: {} }] });
-  assert.equal(appended.records[0].seq, 3, "the discarded bytes never held a record");
   const records = store.read();
-  assert.equal(records.length, 3);
+
+  // The bytes are worthless, but the fact that they were dropped is not: the
+  // repair is itself a record, so a later reader can see what happened rather
+  // than finding a log that quietly changed size.
+  const repair = records.find((record) => record.kind === "tail_truncated");
+  assert.ok(repair, "the truncation is recorded");
+  assert.equal(repair.payload.bytes, halfFrame.length);
+  assert.equal(repair.payload.digest, sha256Hex(halfFrame));
+  assert.equal(repair.payload.offset, intact.length);
+
+  assert.equal(appended.records[0].seq, repair.seq + 1, "the command follows the recorded repair");
+  assert.equal(records.length, 4);
   assert.equal(records.at(-1).cmd, "after-tear");
 });
 
