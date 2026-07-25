@@ -7,6 +7,7 @@
 import { refuse } from "./error.mjs";
 import { dependencyState } from "./graph.mjs";
 import { ancestryCheck, loopOf, next } from "./loop.mjs";
+import { unrecordedCommits } from "./receipt.mjs";
 import { isStale, roundsSpent } from "./projection.mjs";
 
 /**
@@ -51,6 +52,18 @@ export function status(store, { loopId, root, ...options } = {}) {
       digest: loop.receipt.digest, mode: loop.receipt.mode, status: loop.receipt.status,
       commit_oid: loop.receipt.commit_oid, paths: [...loop.receipt.paths],
     },
+    // Commits this loop made that no record names. A fact about the repository,
+    // not a step for the loop: putting it in the directive would stop the loop
+    // on something it cannot itself resolve.
+    unrecorded_commits: root === undefined || loop.receipts !== "git"
+      ? null
+      : unrecordedCommits({
+        root,
+        loopId,
+        recordedCommands: new Set(store.read()
+          .filter((record) => record.kind === "loop_receipt" && record.payload.loop_id === loopId)
+          .map((record) => record.cmd)),
+      }),
     next: next(store, { loopId, root, ...options }),
   };
 }

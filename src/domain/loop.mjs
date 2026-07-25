@@ -300,7 +300,7 @@ export function receipt(store, { root, loopId, mode, session, commandId }) {
     const raced = store.commandRecords(commandId);
     if (raced !== null) return replay(raced);
 
-    const taken = takeReceipt({ root, mode, claims: before.claims, storeLocation: store.location });
+    const taken = takeReceipt({ root, mode, claims: before.claims, storeLocation: store.location, loopId, commandId });
     const payload = { ...taken, loop_id: loopId, recorded_by: session };
     return store.append({
       commandId,

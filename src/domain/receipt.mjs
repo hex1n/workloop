@@ -126,7 +126,12 @@ function treeDigest(root, { claims, inScope, commit }) {
  * acting as one. It simply declines to vouch: the operation happens, and the
  * receipt says `uncertain`.
  */
-export function takeReceipt({ root, mode, claims, storeLocation }) {
+// Trailers, not a line of message text: git parses these itself, and a free
+// line of prose is something anybody can write to look the same.
+export const LOOP_TRAILER = "Workloop-Loop";
+export const COMMAND_TRAILER = "Workloop-Command";
+
+export function takeReceipt({ root, mode, claims, storeLocation, loopId = null, commandId = null }) {
   if (mode !== MODE.STAGE && mode !== MODE.COMMIT) refuse("UNKNOWN_RECEIPT_MODE", `${mode} is not a receipt mode`);
   assertGitWorkspace(root);
   const excluded = controlPlane(root, storeLocation);
@@ -158,7 +163,10 @@ export function takeReceipt({ root, mode, claims, storeLocation }) {
     // `--only` is git's default when paths are given: it commits the named
     // paths and leaves every other index entry staged, which is exactly the
     // task-scoped isolation this receipt is about.
-    const attempt = git(root, ["commit", "--only", "-m", "workloop receipt", ...specs], { tolerate: [1] });
+    const provenance = loopId === null || commandId === null
+      ? []
+      : ["-m", `${LOOP_TRAILER}: ${loopId}\n${COMMAND_TRAILER}: ${commandId}`];
+    const attempt = git(root, ["commit", "--only", "-m", "workloop receipt", ...provenance, ...specs], { tolerate: [1] });
     if (attempt.status === 0) {
       commitOid = git(root, ["rev-parse", "HEAD"]).stdout.trim();
       touched = lines(git(root, ["diff-tree", "-r", "--no-commit-id", "--name-only", "--root", commitOid]).stdout);
@@ -239,6 +247,42 @@ export function isAncestorCommit(root, commitOid) {
   if (typeof commitOid !== "string" || commitOid.length === 0) return true;
   assertGitWorkspace(root);
   return git(root, ["merge-base", "--is-ancestor", commitOid, "HEAD"], { tolerate: [1, 128] }).status === 0;
+}
+
+/**
+ * Commits this loop made that the ledger does not name.
+ *
+ * A commit happens before anything can be written about it, and the two are
+ * not inside one atomic boundary — so a process that dies in between leaves a
+ * commit the ledger denies. A retry of the same command heals it: git finds
+ * nothing left to commit and the runtime attests the one already there. What
+ * this finds is the case nobody retries.
+ *
+ * Being able to point at it is the job; repairing it is not. Repair means
+ * rewriting git history, and that is execution, which belongs to the host.
+ */
+export function unrecordedCommits({ root, loopId, recordedCommands, maxCommits = 200 }) {
+  assertGitWorkspace(root);
+  // A trailer's value arrives with its own newline, so a commit's line is not
+  // one line. Records and fields get their own separators rather than relying
+  // on the output happening to be shaped the way it looks.
+  const RECORD = "\u001e";
+  const FIELD = "\u001f";
+  const format = `%x1e%H%x1f%(trailers:key=${LOOP_TRAILER},valueonly)%x1f%(trailers:key=${COMMAND_TRAILER},valueonly)`;
+  const log = git(root, ["log", `--max-count=${maxCommits + 1}`, `--format=${format}`, "HEAD"], { tolerate: [128] });
+  if (log.status !== 0) return { commits: [], exhausted: false };
+
+  const rows = log.stdout.split(RECORD).filter((row) => row.trim().length > 0);
+  const found = [];
+  for (const row of rows.slice(0, maxCommits)) {
+    const [oid, loop, command] = row.split(FIELD).map((part) => part.trim());
+    if (loop !== loopId || command.length === 0) continue;
+    if (recordedCommands.has(command)) continue;
+    found.push({ commit_oid: oid, command_id: command });
+  }
+  // Said out loud rather than passed over: "I did not find one" and "I did not
+  // finish looking" are different answers.
+  return { commits: found, exhausted: rows.length > maxCommits };
 }
 
 /**

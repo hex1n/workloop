@@ -135,6 +135,23 @@ workloop observe --loop <loop_id> --session <会话> \
 **完成条件**:日志里多了一条 `round_observed` 和一条 `round_decided`。用同一个
 `--command` 重跑不会再付一次判据的钱,也不会多出一轮。
 
+### 6.1 账本否认的提交
+
+`status` 里的 `unrecorded_commits` 列出**这个循环造过、而账本没有记下的提交**。
+它只会在一种情况下非空:进程死在 git 提交与账本追加之间。那个窗口关不掉——提交
+先于任何关于它的记录存在。
+
+**完成条件**:`unrecorded_commits.commits` 为空数组。不为空时,用**它给出的那个
+`command_id`** 重跑一次 `receipt`:
+
+```
+workloop receipt --loop <loop_id> --mode commit --session <会话> --command <那个 command_id>
+```
+
+git 会说无可提交,运行时转而为那个已经存在的提交作证并落账,缺口补上。
+
+`exhausted` 为真表示**没走完**——历史比对账的上限还长。那不是"没有",是"没找完"。
+
 ## 查看与收尾
 
 ### 7. 看一个循环的全貌

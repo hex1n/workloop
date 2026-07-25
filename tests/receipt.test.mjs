@@ -14,6 +14,7 @@ import { createStore } from "../src/store.mjs";
 import { EXIT, VERDICT_PREFIX } from "../src/domain/criterion.mjs";
 import { amend, next, observe, openLoop, openLoopStore, receipt } from "../src/domain/loop.mjs";
 import { MODE, STANDING, STATUS, receiptStanding, takeReceipt } from "../src/domain/receipt.mjs";
+import { status } from "../src/domain/query.mjs";
 import { DECISION, VERDICT } from "../src/domain/vocabulary.mjs";
 
 const RECEIPT_CHILD = path.resolve(import.meta.dirname, "helpers", "receipt-child.mjs");
@@ -315,6 +316,40 @@ test("SL-13: an amendment retires the judgments, not the evidence", async (t) =>
   const directive = next(session(), { root, loopId });
   assert.equal(directive.decision, DECISION.IMPLEMENT, "not produce_receipt: the loop is not missing evidence");
   assert.equal(directive.feedback, null);
+});
+
+test("a commit the ledger never learned about can be named, and healed by a retry", async (t) => {
+  const { root, session, criterionFile } = repo(t);
+  const { loopId } = open(session(), ["src"], criterionFile);
+  fs.writeFileSync(path.join(root, "src", "a.txt"), "done\n");
+
+  // The window the design cannot close: git commits before anything can be
+  // written about it. Here the commit happens and the append never does —
+  // exactly what a process dying in between leaves behind.
+  const orphan = takeReceipt({ root, mode: MODE.COMMIT, claims: ["src"], storeLocation: session().location, loopId, commandId: "lost-in-the-crash" });
+  assert.ok(orphan.commit_oid);
+
+  const found = status(session(), { loopId, root }).unrecorded_commits;
+  assert.equal(found.exhausted, false);
+  assert.deepEqual(found.commits, [{ commit_oid: orphan.commit_oid, command_id: "lost-in-the-crash" }],
+    "the runtime can point at the commit its own ledger denies");
+
+  // Healed by the path that already existed: the same command id again finds
+  // nothing left to commit and attests the one already there.
+  const healed = receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "lost-in-the-crash" });
+  assert.equal(payloadOf(healed).commit_oid, orphan.commit_oid, "it vouches for that very commit");
+  assert.deepEqual(status(session(), { loopId, root }).unrecorded_commits.commits, [], "and the ledger no longer denies it");
+});
+
+test("a commit made by somebody else is not this loop's to answer for", (t) => {
+  const { root, session, criterionFile } = repo(t);
+  const { loopId } = open(session(), ["src"], criterionFile);
+  fs.writeFileSync(path.join(root, "src", "a.txt"), "done\n");
+  git(root, "add", "src/a.txt");
+  git(root, "commit", "-q", "-m", "workloop receipt");   // the message alone proves nothing
+
+  assert.deepEqual(status(session(), { loopId, root }).unrecorded_commits.commits, [],
+    "a line of prose anybody can write is not provenance");
 });
 
 test("a loop that declared no receipt regime refuses to produce one", (t) => {
