@@ -1,6 +1,7 @@
 // Properties P1, P3, P4, P6, P8, P10, P11, P12 and scenario LK-10 from
 // greenfield/slices/01-log-kernel.md.
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -190,6 +191,35 @@ test("P11: a missing or renumbered segment fails closed", (t) => {
   assert.ok(segments.length >= 3);
   fs.rmSync(path.join(location, "segments", segments[1]));
   assert.throws(() => store.read(), (error) => error.code === "SEGMENT_GAP");
+});
+
+test("P7: concurrent writers produce one contiguous history with nothing lost or interleaved", async (t) => {
+  const { location } = fixture(t);
+  const WRITERS = 4;
+  const PER_WRITER = 5;
+  const child = path.resolve(import.meta.dirname, "helpers", "append-child.mjs");
+  const results = await Promise.all(Array.from({ length: WRITERS }, (_, index) => new Promise((resolve) => {
+    const process_ = spawn(process.execPath, [child, location, `w${index}`, String(PER_WRITER)], { encoding: "utf8" });
+    let stderr = "";
+    process_.stderr.on("data", (chunk) => { stderr += chunk; });
+    process_.once("exit", (status) => resolve({ index, status, stderr }));
+  })));
+  for (const result of results) assert.equal(result.status, 0, `writer ${result.index}: ${result.stderr}`);
+
+  const records = openStore(location, { reduce: counter, initial: {} }).read();
+  // seq exactly 1..N is the half of this property that needed a real log: the
+  // lock test could only show that writers took turns, not that the history
+  // they produced is gapless.
+  assert.deepEqual(records.map((record) => record.seq), Array.from({ length: records.length }, (_, index) => index + 1));
+  assert.equal(records.length, 1 + WRITERS * PER_WRITER * 2, "every command's every record survived");
+
+  const commands = new Set(records.slice(1).map((record) => record.cmd));
+  assert.equal(commands.size, WRITERS * PER_WRITER, "no command was lost or applied twice");
+  for (const command of commands) {
+    const own = records.filter((record) => record.cmd === command);
+    assert.equal(own.length, 2);
+    assert.equal(own[1].seq - own[0].seq, 1, `${command} was split by another writer's record`);
+  }
 });
 
 test("a copied store is refused because its identity belongs elsewhere", (t) => {

@@ -16,8 +16,24 @@ export const STORE_SCHEMA = 1;
 export const DEFAULT_SEGMENT_MAX_BYTES = 4 * 1024 * 1024;
 const MANIFEST = "manifest.json";
 const SEGMENTS = "segments";
+const SNAPSHOTS = "snapshots";
 const LOCKS = "locks";
 const SEGMENT_DIGITS = 6;
+
+// Named so a crash-injection test can stop the process at an exact point. The
+// hook is inert in production; it exists because "survives a crash here" is
+// only credible when "here" can be pointed at.
+export const PHASES = Object.freeze([
+  "lock_acquired",
+  "tail_read",
+  "idempotence_checked",
+  "prepared",
+  "segment_created",
+  "frames_written",
+  "frames_fsynced",
+  "snapshot_written",
+  "before_release",
+]);
 
 export class StoreError extends Error {
   constructor(code, message) {
@@ -98,6 +114,7 @@ function writeFileDurably(file, bytes) {
 export function createStore({ location, commandId, requestDigest = digestOf({ genesis: true }), kind = "store_created", payload = {} }) {
   if (fs.existsSync(path.join(location, MANIFEST))) refuse("STORE_EXISTS", `${location} already holds a store`);
   fs.mkdirSync(path.join(location, SEGMENTS), { recursive: true });
+  fs.mkdirSync(path.join(location, SNAPSHOTS), { recursive: true });
   fs.mkdirSync(path.join(location, LOCKS), { recursive: true });
   const manifest = {
     store_schema: STORE_SCHEMA,
@@ -115,23 +132,61 @@ export function createStore({ location, commandId, requestDigest = digestOf({ ge
   return store;
 }
 
-export function openStore(location, { reduce = (state) => state, initial = null, segmentMaxBytes = DEFAULT_SEGMENT_MAX_BYTES, verifyAnchor = true } = {}) {
+export function openStore(location, {
+  reduce = (state) => state,
+  initial = null,
+  segmentMaxBytes = DEFAULT_SEGMENT_MAX_BYTES,
+  snapshotEvery = 500,
+  verifyAnchor = true,
+  lockTimeoutMs = 10_000,
+  lockLeaseMs = 60_000,
+  onPhase = () => {},
+} = {}) {
   const manifest = readManifest(location);
   if (verifyAnchor && physicalAnchor(location) !== manifest.anchor) {
     refuse("STORE_COLLISION", "this store's identity belongs to a different location; it looks like a copy");
   }
   const locks = createLockManager({
     resolveLockPath: ({ lockClass, resourceId }) => path.join(location, LOCKS, `${lockClass}-${encodeURIComponent(resourceId)}.lock`),
-    defaults: { timeoutMs: 10_000, leaseMs: 60_000 },
+    defaults: { timeoutMs: lockTimeoutMs, leaseMs: lockLeaseMs },
   });
+
+  const snapshotDirectory = path.join(location, SNAPSHOTS);
+  const snapshotBody = (snapshot) => ({ store_id: snapshot.store_id, seq: snapshot.seq, head_digest: snapshot.head_digest, state: snapshot.state });
+
+  // Returns the newest snapshot that is well-formed and claims to belong to
+  // this store, or null. A snapshot that fails any check is ignored rather
+  // than fatal: it is a cache, and a cache that can stop the store from
+  // opening is not disposable in any useful sense.
+  function loadSnapshot() {
+    let names;
+    try {
+      names = fs.readdirSync(snapshotDirectory).filter((name) => /^\d+\.json$/u.test(name));
+    } catch {
+      return null;
+    }
+    for (const name of names.map((entry) => Number(entry.slice(0, -5))).sort((left, right) => right - left)) {
+      try {
+        const snapshot = JSON.parse(fs.readFileSync(path.join(snapshotDirectory, `${name}.json`), "utf8"));
+        if (snapshot.store_id !== manifest.store_id) continue;
+        if (snapshot.seq !== name) continue;
+        if (digestOf(snapshotBody(snapshot)) !== snapshot.digest) continue;
+        return snapshot;
+      } catch {
+        continue;
+      }
+    }
+    return null;
+  }
 
   // Reads the whole log and decides what to do about anything at the end of it
   // that is not a complete frame. `repair` is only ever true under the store
   // lock: truncation is a write.
-  function load({ repair = false } = {}) {
+  function load({ repair = false, useSnapshot = false } = {}) {
     const segments = listSegments(location);
     const records = [];
     const commands = new Map();
+    const snapshot = useSnapshot ? loadSnapshot() : null;
     let bytes = 0;
     for (const segment of segments) {
       const content = fs.readFileSync(segment.file);
@@ -159,7 +214,17 @@ export function openStore(location, { reduce = (state) => state, initial = null,
       fs.truncateSync(segment.file, trailing.offset);
       bytes = trailing.offset;
     }
-    const { nextSeq, headDigest } = assertChain(records, { anchorDigest: manifest.genesis_digest });
+    // A usable snapshot lets the chain be verified from where it left off; an
+    // unusable one simply is not used. Either way the records themselves are
+    // the authority.
+    const usable = snapshot !== null
+      && snapshot.seq <= records.length
+      && (snapshot.seq === 0 || records[snapshot.seq - 1]?.digest === snapshot.head_digest);
+    const from = usable ? snapshot.seq : 0;
+    const { nextSeq, headDigest } = assertChain(records.slice(from), {
+      anchorDigest: usable ? snapshot.head_digest : manifest.genesis_digest,
+      fromSeq: from + 1,
+    });
     for (const record of records) {
       const seen = commands.get(record.cmd);
       if (seen === undefined) commands.set(record.cmd, { req: record.req, seqs: [record.seq] });
@@ -168,10 +233,22 @@ export function openStore(location, { reduce = (state) => state, initial = null,
         seen.seqs.push(record.seq);
       }
     }
-    let state = initial;
-    for (const record of records) state = reduce(state, record);
+    let state = usable ? snapshot.state : initial;
+    for (const record of records.slice(from)) state = reduce(state, record);
     const last = segments.at(-1);
-    return { records, commands, state, nextSeq, headDigest, segment: last.index, segmentFile: last.file, segmentBytes: bytes };
+    return { records, commands, state, nextSeq, headDigest, snapshotUsed: usable ? snapshot.seq : null, segment: last.index, segmentFile: last.file, segmentBytes: bytes };
+  }
+
+  function writeSnapshot({ seq, headDigest, state }) {
+    const body = { store_id: manifest.store_id, seq, head_digest: headDigest, state };
+    const snapshot = { ...body, digest: digestOf(body) };
+    const target = path.join(snapshotDirectory, `${seq}.json`);
+    // Written through a temporary file so a crash mid-write cannot leave a
+    // half-snapshot under a name that claims to be complete.
+    const staging = `${target}.partial`;
+    fs.mkdirSync(snapshotDirectory, { recursive: true });
+    writeFileDurably(staging, Buffer.from(`${canonicalJson(snapshot)}\n`, "utf8"));
+    fs.renameSync(staging, target);
   }
 
   const api = {
@@ -185,9 +262,9 @@ export function openStore(location, { reduce = (state) => state, initial = null,
       return load().records.filter((record) => record.seq >= fromSeq);
     },
 
-    replay() {
-      const loaded = load();
-      return { state: loaded.state, seq: loaded.nextSeq - 1, headDigest: loaded.headDigest };
+    replay({ useSnapshot = true } = {}) {
+      const loaded = load({ useSnapshot });
+      return { state: loaded.state, seq: loaded.nextSeq - 1, headDigest: loaded.headDigest, snapshotUsed: loaded.snapshotUsed };
     },
 
     append({ commandId, requestDigest, prepare }) {
@@ -195,7 +272,9 @@ export function openStore(location, { reduce = (state) => state, initial = null,
       if (typeof requestDigest !== "string") refuse("INVALID_REQUEST_DIGEST", "append needs a request digest");
       if (typeof prepare !== "function") refuse("INVALID_PREPARE", "append needs a prepare function");
       return locks.withLock(CLASSES.STORE, location, () => {
-        const loaded = load({ repair: true });
+        onPhase("lock_acquired");
+        const loaded = load({ repair: true, useSnapshot: true });
+        onPhase("tail_read");
         const seen = loaded.commands.get(commandId);
         if (seen) {
           // A retry of a command that already landed. Comparing the request
@@ -207,8 +286,10 @@ export function openStore(location, { reduce = (state) => state, initial = null,
           }
           return { seq: loaded.nextSeq - 1, records: loaded.records.filter((record) => record.seq >= seen.seqs[0] && seen.seqs.includes(record.seq)), replayed: true };
         }
+        onPhase("idempotence_checked");
         const drafts = prepare(loaded.state, { seq: loaded.nextSeq });
         if (!Array.isArray(drafts) || drafts.length === 0) refuse("EMPTY_APPEND", "prepare must return at least one record");
+        onPhase("prepared");
 
         // Everything below is built before a single byte is written, so a
         // refusal cannot leave the log half-changed.
@@ -231,15 +312,30 @@ export function openStore(location, { reduce = (state) => state, initial = null,
           // of one command.
           file = path.join(location, SEGMENTS, segmentName(loaded.segment + 1));
           fs.writeFileSync(file, Buffer.alloc(0));
+          onPhase("segment_created");
         }
         const handle = fs.openSync(file, "a");
         try {
           fs.writeSync(handle, Buffer.concat(frames));
+          onPhase("frames_written");
           fs.fsyncSync(handle);
         } finally {
           fs.closeSync(handle);
         }
-        return { seq: records.at(-1).seq, records, replayed: false };
+        onPhase("frames_fsynced");
+
+        const head = records.at(-1);
+        if (snapshotEvery > 0 && Math.floor(head.seq / snapshotEvery) > Math.floor((loaded.nextSeq - 1) / snapshotEvery)) {
+          // The snapshot is taken after the records are durable, never before:
+          // a snapshot that ran ahead of the log would describe a history that
+          // does not exist yet.
+          let state = loaded.state;
+          for (const record of records) state = reduce(state, record);
+          writeSnapshot({ seq: head.seq, headDigest: head.digest, state });
+          onPhase("snapshot_written");
+        }
+        onPhase("before_release");
+        return { seq: head.seq, records, replayed: false };
       });
     },
   };
