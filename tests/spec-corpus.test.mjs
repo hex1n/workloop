@@ -150,3 +150,43 @@ test("no verb selects a worktree, which is the premise D-07 rests on", () => {
     assert.equal(flags.has(selector), false, `--${selector} selects work in the repository; D-07's check now has a caller and must be built`);
   }
 });
+
+test("every relative link between documents resolves, section number and all", () => {
+  // Two dead links got through by two different routes. `[WORKFLOW §2.3](…/SKILL.md)`
+  // survived a path check because the file existed — §2.3 had moved to
+  // CRITERION.md when the criterion branch was disclosed. And a link to a file
+  // deleted in the old-world cleanup survived the sweep run at the time,
+  // because that sweep matched repo-relative strings while the link was written
+  // relative to its own directory. So this resolves the path rather than
+  // matching text, and also reads the `§N` a label promises.
+  const root = path.resolve(import.meta.dirname, "..");
+  const documents = [];
+  const walk = (directory) => {
+    for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
+      if (entry.name.startsWith(".") || entry.name === "node_modules") continue;
+      const full = path.join(directory, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.name.endsWith(".md")) documents.push(full);
+    }
+  };
+  walk(root);
+  assert.ok(documents.length > 10, "no documents were found, so this proves nothing");
+
+  let checked = 0;
+  for (const document of documents) {
+    const text = fs.readFileSync(document, "utf8").replace(/\r\n/gu, "\n");
+    for (const [, label, target] of text.matchAll(/\[([^\]]*)\]\((?!https?:)([^)#\s]+\.md)\)/gu)) {
+      checked += 1;
+      const where = `${path.relative(root, document)} → ${target}`;
+      const resolved = path.resolve(path.dirname(document), target);
+      assert.ok(fs.existsSync(resolved), `${where} does not exist`);
+
+      // A section the label names has to be a section the target has.
+      const section = label.match(/§(\d+(?:\.\d+)?)/u);
+      if (section === null) continue;
+      const headings = [...fs.readFileSync(resolved, "utf8").replace(/\r\n/gu, "\n").matchAll(/^#{2,3} (\d+(?:\.\d+)?)[.\s]/gmu)].map((match) => match[1]);
+      assert.ok(headings.includes(section[1]), `${where} promises §${section[1]}, which is not a heading there (it has ${headings.join(", ") || "none"})`);
+    }
+  }
+  assert.ok(checked > 20, `only ${checked} links were found, so this proves little`);
+});
