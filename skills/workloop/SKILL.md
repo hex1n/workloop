@@ -98,15 +98,23 @@ workloop open --goal <目标> --claim <路径> [--claim <路径>...] \
 
 ### 5. 跑到 terminal
 
-**这是一个循环,不是一串步骤。** 问一次、做一件事、观测,再问——直到运行时说
-`terminal: true`。
+**这是一个循环,不是一串步骤。** 问一次、做一件事、观测,再问——直到循环终结,
+或者它把决定权交回给人。
 
 ```
 while true:
   d = workloop next --loop <loop_id>
-  if d.terminal: break
-  <按下表做 d.decision 说的那一件事>
+  if d.terminal:                              break        # achieved / abandoned
+  if d.decision ∈ {blocked, stuck, suspend}:  停,交给人
+  if d.decision ∉ 下表:                        停,交给人
+  <做下表说的那一件事>
+  workloop observe --command <本轮唯一的 id>                # §5.1
 ```
+
+**四个出口,不是一个。** 只看 `terminal` 的驱动器会永远转下去:一个挂起的循环
+`terminal` 是 `false`——它还能被 `resume`——所以 `terminal` 不是唯一的出口。实测:
+一个漏掉 `suspend` 那一行的驱动器空转了 **423 次**;运行时每次都以 `NOT_LIVE` 拒绝,
+账本一条没多、预算一分没掉,**代价只是时间**。
 
 | `d.decision` | 你做什么 |
 | --- | --- |
