@@ -22,7 +22,7 @@ coverage map, which a gate test keeps honest.
 | What is built, slice by slice | `greenfield/slices/` |
 | Where each scenario lives | `greenfield/COVERAGE.md` |
 | What is deliberately not built | `greenfield/DEBT.md` |
-| How a host drives it | `greenfield/WORKFLOW.md` |
+| How a host drives it | `skills/workloop/SKILL.md` |
 | Working agreement | `AGENTS.md` |
 
 Run it with `node --test`. There is no build step and no dependency.

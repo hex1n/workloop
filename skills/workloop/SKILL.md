@@ -1,3 +1,8 @@
+---
+name: workloop
+description: Drive a goal to a verified finish through the workloop ledger. Use when work must survive across sessions or processes, when several sessions share one repository, or when "done" has to rest on a check the runtime ran itself rather than on an agent's word. Covers opening a loop, writing and trying a criterion, asking for the next legal step, producing receipts, and reading the ledger.
+---
+
 # 宿主工作流
 
 一个宿主(人、agent、CI)如何驱动一个循环。每一步都有**可判定的完成条件**——

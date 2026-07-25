@@ -330,10 +330,10 @@ test("HF-08: what ships is only what is implemented", () => {
   // passed anyway.
   const shipped = npmJson(["pack", "--dry-run"], { cwd: repoRoot })[0].files.map((entry) => entry.path);
   for (const path_ of shipped) {
-    assert.match(path_, /^(src\/|bin\/|greenfield\/WORKFLOW\.md$|package\.json$|README\.md$|LICENSE$)/u, `${path_} is not part of the runtime`);
+    assert.match(path_, /^(src\/|bin\/|skills\/|package\.json$|README\.md$|LICENSE$)/u, `${path_} is not part of the runtime`);
   }
   assert.ok(shipped.includes("bin/workloop.mjs"), "and what is the runtime is there");
-  assert.ok(shipped.includes("greenfield/WORKFLOW.md"), "including the workflow text HF-09 is about");
+  assert.ok(shipped.includes("skills/workloop/SKILL.md"), "including the workflow text HF-09 is about");
 
   // The criterion contract in the documentation is the one the code enforces.
   const contract = readFile("greenfield/slices/02-single-loop.md");
@@ -343,14 +343,37 @@ test("HF-08: what ships is only what is implemented", () => {
   assert.match(contract, new RegExp(VERDICT_PREFIX, "u"), "the documented verdict line is the real one");
 });
 
+const SKILL = path.resolve(import.meta.dirname, "..", "skills", "workloop", "SKILL.md");
+
 test("HF-09: every step of the shipped workflow has a decidable completion condition", () => {
-  const workflow = fs.readFileSync(path.resolve(import.meta.dirname, "..", "greenfield", "WORKFLOW.md"), "utf8");
+  const workflow = fs.readFileSync(SKILL, "utf8");
   const steps = workflow.split("\n").filter((line) => /^### /u.test(line));
   assert.ok(steps.length > 0, "the workflow declares no steps");
   const blocks = workflow.split(/^### /mu).slice(1);
   for (const [index, block] of blocks.entries()) {
     assert.match(block, /\*\*完成条件\*\*/u, `step ${index + 1} (${steps[index]}) has no completion condition`);
   }
+});
+
+test("the workflow is loadable as a skill, not just readable as a document", () => {
+  // The text shipped for a whole slice with no front matter, which meant no
+  // agent would ever load it: the content was in the tarball and unreachable
+  // by the only reader it was written for. What makes it a skill is the header
+  // and the `<root>/<name>/SKILL.md` layout, so both are asserted here rather
+  // than assumed from the file having the right name.
+  const raw = fs.readFileSync(SKILL, "utf8");
+  const front = raw.match(/^---\n([\s\S]*?)\n---\n/u);
+  assert.ok(front, "no YAML front matter, so nothing will discover this");
+
+  const fields = Object.fromEntries([...front[1].matchAll(/^(\w+):\s*(.+)$/gmu)].map((match) => [match[1], match[2].trim()]));
+  // The name is what the host looks up; a name that disagrees with the
+  // directory resolves to nothing and says nothing about why.
+  assert.equal(fields.name, path.basename(path.dirname(SKILL)), "the declared name must be the directory the host finds it under");
+  assert.ok(fields.description?.length > 40, "a description is how a host decides to load it at all");
+  // It has to name the runtime it drives, or the host cannot tell which tool
+  // this is a workflow for.
+  assert.match(fields.description, /workloop/iu);
+  assert.equal(raw.slice(front[0].length).trimStart().startsWith("# "), true, "the body still begins with its own heading");
 });
 
 test("a loop can be named by any prefix that means one loop, and never by one that means two", async (t) => {
