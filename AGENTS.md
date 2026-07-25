@@ -1,58 +1,60 @@
-# Workloop repository
+# Workloop repository (greenfield rebuild)
+
+## What this branch is
+
+A zero-inheritance rebuild of the Workloop loop-engineering runtime. **There is
+no implementation yet.** The previous implementation still exists on `main` and
+in history; it was deliberately removed here so that it cannot leak back into
+the new design.
+
+## Read this before writing any code
+
+- `docs/plans/2026-07-25-greenfield-redesign.md` — the design: five axioms,
+  domain model, storage, addressing, verbs, delivery slices.
+- `greenfield/scenarios/` — **the specification**. 86 acceptance scenarios,
+  translated from the previous implementation's green test gate and then put
+  through a first-principles audit. Implementation is complete when the retained
+  scenarios pass.
+- `greenfield/scenarios/AUDIT-2026-07-25.md` — which mechanisms were ruled out
+  and why. Read it before reintroducing any concept it killed.
+
+## The one rule that this branch exists to enforce
+
+**Do not consult the previous implementation for how to build this.** Its code
+is not a reference. The only thing carried forward is behavioral evidence, and
+that already lives in the scenario corpus.
+
+If a scenario is unclear, resolve it from the design axioms — or from the old
+*test* it cites, retrievable with `git show main:tests/<file>`. Never from the
+old `lib/`.
+
+The same applies to prose: everything under `docs/plans/`, `docs/decisions/`,
+and `docs/research/` dated before 2026-07-25 describes the previous
+implementation and its rulings. Read it as history, never as instruction. The
+current documents are the three listed above.
+
+Concepts already ruled out (audit M1–M8): bypass evidence channel (hooks),
+target-first routing, locator files, home-managed store data, exclusive worktree
+creation by the runtime, attachment recovery verbs, cross-store global
+projections, session uniqueness. Each has a documented flip condition; none may
+return without re-running its Value Gate.
 
 ## Start and verify
 
-This repository implements a provider-neutral loop-engineering runtime.
-
-- `npm test` verifies the runtime, installer, provider matrix, and packaged
-  Skill contract.
-- `node tests/verify-provider-tickets.mjs` verifies the Ticket 02–10 acceptance
-  criteria.
-- `node bin/workloop.mjs help` prints the public Contract and verb surface.
-
-## Architecture
-
-- `bin/workloop.mjs` is the only runtime process entry.
-- `lib/provider-application.mjs` is the only public application assembly.
-- Keep public verbs exactly aligned with `help` and the current Contract.
-- Git and detached-filesystem providers own replayable authority journals;
-  locators are attachments while provider authority remains canonical.
-- Task-scoped Git receipt operations stage and commit only the selected task's
-  paths. Concurrent disjoint tasks may share an attachment; overlapping claims
-  are rejected.
-- Detached-filesystem authority uses an explicit root outside or inside Git and
-  requires non-overlapping roots.
-- Outcome shards in `WORKLOOP_AUTHORITY_HOME` are best-effort projections and
-  never adjudication inputs.
-
-## Host contract
-
-- The host owns execution approval and its Hook files. Workloop installs
-  runtime and Skill assets without rewriting host Hook configuration.
-- `observe` and `nudge` record available evidence and release on routing or
-  configuration failure. Codex Stop always releases.
-- Explicit `deny` PreToolUse is the only Workloop mode that may reject.
-- `claude` and `codex` are the complete Hook profile set.
-- A stale or unsupported `observe`/`nudge` invocation is released with a
-  diagnostic and no recording; explicit `deny` rejects it.
-- Installer activation preflight accepts a discovered Codex Workloop handler
-  only when it uses `--profile codex`, and it replaces only proven
-  Workloop-owned runtime and Skill assets.
-
-## State and recovery
-
-- Treat earlier `.workloop` task artifacts as opaque. Preserve recognized files
-  byte-for-byte with `archive-incompatible-state`, explicit user provenance,
-  and a reason; leave the source in place.
-- Attachment move, copy/collision, reattach, cleanup, and identity fork paths
-  preserve durable truth and use idempotent command provenance.
-- Provider modules stay independent of the retired event/task runtime.
+- `npm test` is bare `node --test`, which discovers every `*.test.mjs` in the
+  repository. The gate globs by design: a test that exists is a test that runs.
+  Never reduce it to an explicit file list — that is how the previous
+  implementation ended up with a third of its suite rotting outside the gate.
+- Today the gate contains only the spec-integrity check, because there is no
+  runtime to test. Slice 1 adds the log-kernel property tests.
 
 ## Change contract
 
-- Assert behavior at public seams. Source-text assertions are reserved for
-  shipped Contract text, package closure, and removed runtime surfaces.
-- Add a focused acceptance test for each new invariant and include it in
-  `npm test`.
-- Keep the source Skill tree, installer package closure, and
-  `tests/skills.test.mjs` synchronized.
+- Scenarios first, then implementation. A new invariant means a new scenario in
+  the corpus, not only a new test.
+- Assert behavior at public seams; the application service is the semantic
+  entry point and the CLI is a shell over it.
+- Fail closed: corrupt state, unknown vocabulary, and failed validation are
+  refusals with diagnostics, never silent degradation.
+- The runtime never executes tools, never creates worktrees or branches, and
+  never overrides host approval.

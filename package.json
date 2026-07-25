@@ -1,41 +1,16 @@
 {
   "name": "workloop",
-  "version": "0.2.0",
-  "description": "Loop engineering runtime with provider-neutral task authority and receipts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Host-neutral loop ledger runtime (greenfield rebuild; no implementation yet)",
   "license": "UNLICENSED",
   "type": "module",
-  "bin": {
-    "workloop": "bin/workloop.mjs"
-  },
   "engines": {
     "node": ">=22"
   },
   "scripts": {
-    "test": "node --test tests/authority-transaction.test.mjs tests/provider-installer.test.mjs tests/skills.test.mjs tests/git-main-authority.test.mjs tests/git-task-receipts.test.mjs tests/git-linked-worktree-authority.test.mjs tests/git-partitioned-multitask-authority.test.mjs tests/git-exclusive-worktree-authority.test.mjs tests/filesystem-detached-authority.test.mjs tests/attachment-recovery-authority.test.mjs",
-    "test:matrix": "node --test tests/authority-transaction.test.mjs tests/provider-installer.test.mjs tests/skills.test.mjs tests/git-main-authority.test.mjs tests/git-linked-worktree-authority.test.mjs tests/git-partitioned-multitask-authority.test.mjs tests/git-exclusive-worktree-authority.test.mjs tests/filesystem-detached-authority.test.mjs tests/attachment-recovery-authority.test.mjs",
-    "test:installer": "node --test tests/provider-installer.test.mjs",
-    "install:user": "node install.mjs",
-    "install:user:dry-run": "node install.mjs --dry-run"
+    "test": "node --test"
   },
-  "files": [
-    "bin/workloop.mjs",
-    "examples/read-only-criterion.mjs",
-    "lib/authority-outcome-projection.mjs",
-    "lib/authority-state.mjs",
-    "lib/authority-tail-recovery.mjs",
-    "lib/authority-transaction.mjs",
-    "lib/criterion.mjs",
-    "lib/filesystem-authority-provider.mjs",
-    "lib/git-authority-provider.mjs",
-    "lib/hook-targets.mjs",
-    "lib/host-hooks.mjs",
-    "lib/prims.mjs",
-    "lib/provider-application.mjs",
-    "skills/",
-    "install.mjs",
-    "uninstall.mjs",
-    "README.zh-CN.md"
-  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/hex1n/workloop.git"

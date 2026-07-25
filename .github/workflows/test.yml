@@ -1,4 +1,4 @@
-name: provider-contract
+name: gate
 
 on:
   push:
@@ -8,11 +8,11 @@ permissions:
   contents: read
 
 jobs:
-  provider:
+  gate:
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-2022, windows-2025]
+        os: [ubuntu-latest, macos-latest, windows-2025]
         node: [22, 24]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 20
@@ -23,9 +23,8 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Runtime
         run: node --version
-      - name: Source help
-        run: node bin/workloop.mjs help
-      - name: Provider authority suite
+      # Bare `node --test` discovers every *.test.mjs: a test that exists is a
+      # test that runs. Today that is the spec-integrity check; slice 1 adds
+      # the log kernel.
+      - name: Gate
         run: npm test
-      - name: Ticket acceptance suite
-        run: node tests/verify-provider-tickets.mjs
