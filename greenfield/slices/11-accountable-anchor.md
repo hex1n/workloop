@@ -162,7 +162,7 @@ requestDigest、记录**由构造只见过完整 digest**。
   **非空验证**:`try` 不以工作区为工作目录 → 变红;`try` 偷写一个字节 → LK-11 变红;
   让 indeterminate 不计预算 → 变红。
 - 2026-07-25:§1 实现完成,全量 228/228。实现期两处发现,都进了
-  [WORKFLOW §2.3](../../skills/workloop/SKILL.md):**判据在大量输出之后立刻 `process.exit()`
+  [CRITERION「两种说了等于没说的写法」](../../skills/workloop/CRITERION.md):**判据在大量输出之后立刻 `process.exit()`
   会把 stdout 截断在 65536 字节**(实测:125KB 的 verdict 行只到 64K,读不出来,
   退回退出码,于是一轮 unsatisfied 而没有任何可辨识的失败);verdict 行超过
   256KB 时同样读不出来。两种情形运行时都降级而不猜,但降级之后就只剩一个退出码。

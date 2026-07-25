@@ -15,7 +15,7 @@ description: workloop drives a goal to a verified finish through an append-only 
 就报 `uncertain`,对账没走完就说"没找完"。**绿是唯一绝不会靠意外发生的答案。**
 你写判据、读输出时,用同一条尺子。
 
-准备一次(§1–§3),然后**跑到 terminal**(§4)。
+准备一次(§1–§4),然后**跑到 terminal**(§5)。
 
 ## 准备
 
@@ -28,22 +28,19 @@ workloop ready                      # 从当前目录向上找
 workloop init --root <path>         # 找不到时,显式建立
 ```
 
-**这一步先做。** 本文只讲怎么驱动运行时,不构成运行时在场的证据;下面每一条命令
-都假定 `workloop` 可执行。
+**这一步先做。** 本文只讲怎么驱动运行时,不构成运行时在场的证据。
 
-`init` 只在你打这条命令时发生,而且每个仓库一次。运行时在你恰好站着的地方开一本
-账,是它明确不做的事。
+`init` 只在你打这条命令时发生,而且每个仓库一次。
 
 **完成条件**:`--version` 打出一个版本号,且 `ready` 返回一个 JSON 数组(可以为空)
 而不是 `NO_STORE_FOUND`。
 
-### 2. 写判据,让它红,交给人确认一次
+### 2. 写判据,让它红
 
-判据是运行时唯一的**锚**,也是它自己验不了的那一环——**写判据之前读
-[CRITERION.md](CRITERION.md)**,它讲形状、退出码约定,以及两种"说了等于没说"的
-写法。
+判据是这个循环的**锚**——**写它之前读 [CRITERION.md](CRITERION.md)**,那里讲它为什么
+是锚、该长什么样,以及两种"说了等于没说"的写法。
 
-判据**由你写**,由人**确认一次**,此后钉住。写完立刻问运行时,别手跑:
+写完立刻问运行时,别手跑:
 
 ```
 workloop try --root <path> --criterion <可执行文件> [--loop <loop_id>]
@@ -57,7 +54,11 @@ workloop try --root <path> --criterion <可执行文件> [--loop <loop_id>]
 `failures` 点得出名字、`exit_code` 是 3、`output_truncated` 是 `false`。四条都对上
 ——**这一次红,是这份判据全部可信度的来源**。
 
-### 2.1 交给人的那一次,一并给全四样
+### 3. 交给人确认一次
+
+判据由你写,由人确认**一次**,此后钉住。**这是自动驾驶里唯一停下来等人的地方。**
+
+一并给全四样:
 
 1. **它检查什么**——一句话,对着目标。
 2. **`try` 的那四项输出**,原样贴出。
@@ -65,13 +66,13 @@ workloop try --root <path> --criterion <可执行文件> [--loop <loop_id>]
    看懂自己写的判据;而人要判的正是这条能不能接受。
 4. **它明确不管什么**——判据之外的东西不会因为循环 achieved 就变好。
 
-**完成条件**:人明确说了可以。这是**闸门**,不是知会——在这之前不要 `open`。
-
 确认之后这把尺子被钉住:`observe` 比对判据文件的 digest,对不上就
 `CRITERION_CHANGED` 拒绝;要换只能 `amend --criterion`,而那在账本里记作
 `granted_by: user`,并让此前所有轮次失效。**你无法在人不知情时换掉它。**
 
-### 3. 开循环
+**完成条件**:人明确说了可以。**§4 在人点头之后才开始。**
+
+### 4. 开循环
 
 ```
 workloop open --goal <目标> --claim <路径> [--claim <路径>...] \
@@ -83,7 +84,7 @@ workloop open --goal <目标> --claim <路径> [--claim <路径>...] \
 四件事必须想清楚:
 
 - **claims** 是字面路径,不是模式。它的作用是让两个循环的意图**可判定地**不重叠。
-- **criterion** 是运行时亲自启动的只读程序。它说了算,不是你说了算。
+- **criterion** 是 §3 里人点过头的那一份。
 - **receipts** 决定这个循环凭什么算完成:`git` 要制品落进提交,`fs` 绑一份文件
   digest 集,`none` 只看判据。
 - **budget** 是自动驾驶的刹车:轮次用尽,循环挂起而不是无限跑下去。
@@ -95,7 +96,7 @@ workloop open --goal <目标> --claim <路径> [--claim <路径>...] \
 
 ## 驱动
 
-### 4. 跑到 terminal
+### 5. 跑到 terminal
 
 **这是一个循环,不是一串步骤。** 问一次、做一件事、观测,再问——直到运行时说
 `terminal: true`。
@@ -109,16 +110,20 @@ while true:
 
 | `d.decision` | 你做什么 |
 | --- | --- |
-| `implement` | 照 `d.goal` 做事 → §4.1 观测 |
-| `repair` | 读 `d.feedback.failures`(结构化的,不用解析散文),修那几条 → §4.1 |
-| `collect_evidence` | 判据没能给出结论:用 `try` 查它、按 CRITERION.md 修好 → §4.1 |
-| `produce_receipt` | §4.2 出具证据 → §4.1 |
-| `judge` | 证据已就位、还没被判过:直接 §4.1 |
+| `implement` | 照 `d.goal` 做事 → §5.1 观测 |
+| `repair` | 读 `d.feedback.failures`(结构化的,不用解析散文),修那几条 → §5.1 |
+| `collect_evidence` | 判据没能给出结论:用 `try` 查它、按 CRITERION.md 修好 → §5.1 |
+| `produce_receipt` | §5.2 出具证据 → §5.1 |
+| `judge` | 证据已就位、还没被判过:直接 §5.1 |
 | `blocked` | 上游没完成,做完也认证不了 → **停,把 `d.reason` 交给人** |
 | `stuck` | 同一失败重复且制品没动 → **停,把 `d.feedback` 交给人** |
 | `suspend` | 预算耗尽或被挂起 → **停,把 `d.reason` 交给人** |
+| **不在此表中的** | **停,把 `d` 原样交给人** |
 
-`blocked` / `stuck` / `suspend` 不是失败,是循环在说**这一步不该由我决定**。把它
+最后一行是这张表的失败关闭:决策的词汇会长(设计里 `review` 就等着 reviewer 出现),
+而**一个不认识的指令是"我不知道",不是"没事发生"**。
+
+`blocked` / `stuck` / `suspend` 也不是失败,是循环在说**这一步不该由我决定**。把它
 交出去,比自己再试一轮诚实。
 
 **`--command` 每一轮都要不同的值。** 同一个 id 拿到的是**重放**——原样返回上次的
@@ -126,9 +131,9 @@ while true:
 轮号或 UUID 都行。
 
 **完成条件**:`next` 返回 `terminal: true`(`achieved` 是达成,`abandoned` 是被人
-放弃),或者你在上面三个出口之一停下并把原因交给了人。
+放弃),或者你在上面四个出口之一停下并把原因交给了人。
 
-### 4.1 提交观测
+### 5.1 提交观测
 
 ```
 workloop observe --loop <loop_id> --session <会话> \
@@ -138,10 +143,10 @@ workloop observe --loop <loop_id> --session <会话> \
 运行时亲自启动判据,读它的退出码与 `WORKLOOP_VERDICT` 行,把裁决、失败标识与随之
 而来的决策记进同一次事务。
 
-**完成条件**:日志里多了一条 `round_observed` 和一条 `round_decided`。回到 §4 再问
+**完成条件**:日志里多了一条 `round_observed` 和一条 `round_decided`。回到 §5 再问
 一次。
 
-### 4.2 出具证据(仅 `--receipts git` 或 `fs`)
+### 5.2 出具证据(仅 `--receipts git` 或 `fs`)
 
 ```
 workloop receipt --loop <loop_id> --mode commit --session <会话> --command <命令 id>
@@ -150,11 +155,11 @@ workloop receipt --loop <loop_id> --mode commit --session <会话> --command <�
 **完成条件**:输出里 `status` 是 `clean` 或 `uncertain`。
 
 `uncertain` 不是错误,是失败关闭:index 里有运行时无法归因于本循环的内容,于是它
-不为这次操作背书。**伪造一个 `clean` 是它唯一不会做的事。**
+不为这次操作背书。
 
 ## 查看与收尾
 
-### 5. 看一个循环的全貌
+### 6. 看一个循环的全貌
 
 ```
 workloop status --loop <loop_id>
@@ -165,7 +170,7 @@ workloop log [--loop <loop_id>] [--limit <n>]
 问几次都是同一个答案,崩溃之后重问是安全的。`log` 给的是记录本身,可以和磁盘上
 的字节对照。
 
-### 5.1 账本否认的提交
+### 6.1 账本否认的提交
 
 `status.unrecorded_commits` 列出**这个循环造过、而账本没有记下的提交**。它只在一种
 情况下非空:进程死在 git 提交与账本追加之间。那个窗口关不掉——提交先于任何关于它
@@ -177,7 +182,7 @@ workloop log [--loop <loop_id>] [--limit <n>]
 **完成条件**:`unrecorded_commits.commits` 为空数组。`exhausted` 为真表示历史比
 对账上限还长——那是"没找完",按失败关闭读,不是"没有"。
 
-### 6. 留档
+### 7. 留档
 
 ```
 workloop export > ledger.json
