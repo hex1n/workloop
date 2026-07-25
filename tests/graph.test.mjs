@@ -50,6 +50,7 @@ function workspace(t, { asRepo = false } = {}) {
   createStore({ location, commandId: "genesis" });
   const session = () => openLoopStore(location);
   const open = (name, extra = {}) => openLoop(session(), {
+    root,
     goal: `${name} must say done`, claims: [name], criterionFile: path.join(root, `check-${name}.mjs`),
     roundsBudget: 5, session: "s1", reason: "fixture", grantedBy: "self",
     receipts: asRepo ? "git" : "none", commandId: `open-${name}`, ...extra,

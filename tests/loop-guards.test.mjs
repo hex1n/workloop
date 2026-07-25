@@ -34,23 +34,24 @@ const valid = (extra = {}) => ({
 });
 
 test("SL-01: opening records who and why, and refuses to proceed without them", (t) => {
-  const { session, criterionFile } = workspace(t);
+  const { root, session, criterionFile } = workspace(t);
   for (const [changes, code] of [
     [{ goal: "  " }, "GOAL_REQUIRED"],
     [{ session: "" }, "SESSION_REQUIRED"],
     [{ reason: "" }, "REASON_REQUIRED"],
     [{ grantedBy: "somebody" }, "PROVENANCE_REQUIRED"],
   ]) {
-    assert.throws(() => openLoop(session(), { ...valid(changes), criterionFile }), (error) => error.code === code, code);
+    assert.throws(() => openLoop(session(), { root, ...valid(changes), criterionFile }), (error) => error.code === code, code);
   }
-  const { loopId } = openLoop(session(), { ...valid(), criterionFile });
+  const { loopId } = openLoop(session(), { root, ...valid(), criterionFile });
   const record = session().read().find((entry) => entry.kind === "loop_opened");
   assert.equal(record.payload.reason, "because");
   assert.equal(record.payload.granted_by, "self");
 });
 
-test("SL-02: claims are literal, relative, distinct and non-overlapping paths", () => {
-  assert.deepEqual(assertClaims(["src/b", "src/a"]), ["src/a", "src/b"], "claims are stored in a stable order");
+test("SL-02: claims are literal, relative, distinct and non-overlapping paths", (t) => {
+  const { root } = workspace(t);
+  assert.deepEqual(assertClaims(root, ["src/b", "src/a"]), ["src/a", "src/b"], "claims are stored in a stable order");
   for (const [claims, code] of [
     [[], "CLAIMS_REQUIRED"],
     [["src/**"], "CLAIM_SHAPE"],
@@ -63,13 +64,13 @@ test("SL-02: claims are literal, relative, distinct and non-overlapping paths", 
     // claims exist to decide.
     [["src", "src/nested"], "CLAIM_OVERLAP"],
   ]) {
-    assert.throws(() => assertClaims(claims), (error) => error.code === code, JSON.stringify(claims));
+    assert.throws(() => assertClaims(root, claims), (error) => error.code === code, JSON.stringify(claims));
   }
 });
 
 test("SL-11: only a session that has taken part may move the loop", (t) => {
-  const { session, criterionFile } = workspace(t);
-  const { loopId } = openLoop(session(), { ...valid(), criterionFile });
+  const { root, session, criterionFile } = workspace(t);
+  const { loopId } = openLoop(session(), { root, ...valid(), criterionFile });
   assert.throws(
     () => suspend(session(), { loopId, outcome: "needs_input", reason: "r", session: "stranger", commandId: "s" }),
     (error) => error.code === "NOT_A_PARTICIPANT",
@@ -82,7 +83,7 @@ test("SL-11: only a session that has taken part may move the loop", (t) => {
 
 test("a retried round does not pay for the criterion a second time", async (t) => {
   const { root, session, criterionFile } = workspace(t);
-  const { loopId } = openLoop(session(), { ...valid(), criterionFile });
+  const { loopId } = openLoop(session(), { root, ...valid(), criterionFile });
   const runs = () => (fs.existsSync(path.join(root, "runs.log")) ? fs.readFileSync(path.join(root, "runs.log"), "utf8").trim().split("\n").length : 0);
 
   const first = await observe(session(), { loopId, root, session: "s1", criterionFile, commandId: "round-1" });

@@ -119,6 +119,7 @@ export function run(argv, { cwd = process.cwd() } = {}) {
   switch (verb) {
     case "open": {
       const result = openLoop(store, {
+        root: common.root,
         goal: options.goal, claims: list(options.claim), criterionFile: options.criterion,
         roundsBudget: integer(options.budget), session: options.session, reason: options.reason,
         grantedBy: options["granted-by"], receipts: options.receipts, dependsOn: list(options["depends-on"]),

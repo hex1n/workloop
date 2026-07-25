@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { digestOf, sha256Hex } from "../canonical.mjs";
 import { CLASSES } from "../locks.mjs";
-import { controlPlanePaths } from "../site.mjs";
+import { controlPlanePaths, realOf } from "../site.mjs";
 import { openStore } from "../store.mjs";
 import { runCriterion } from "./criterion.mjs";
 import { LoopError, refuse } from "./error.mjs";
@@ -110,11 +110,46 @@ export function artifactCheckpoint(root, claims, { storeLocation = null } = {}) 
   return digestOf(entries);
 }
 
-// Claims name paths inside the workspace, relative to its root. Anything that
-// could resolve elsewhere, or that needs expanding before it means anything,
-// is refused: a claim the runtime cannot compare literally is a claim two
-// loops cannot be shown to be disjoint on.
-export function assertClaims(claims) {
+/**
+ * Claims name paths inside the workspace, and what is recorded is the path's
+ * *physical* identity rather than the string the caller typed.
+ *
+ * Comparing the strings is not enough, and the gap is one keystroke wide: on a
+ * case-insensitive volume `Src` and `src` are one directory, and a symlink is
+ * one on every volume. Two loops owning the same files would each issue
+ * receipts contradicting the other — and being able to decide "my paths" is
+ * the single reason claims exist.
+ *
+ * Resolving to the deepest existing ancestor closes both aliases at once:
+ * `realpath` is the definition of the first, and on a case-insensitive volume
+ * it reports the spelling actually on disk, which closes the second. Case
+ * sensitivity is a property of the volume, never of the platform — macOS
+ * volumes can be sensitive and Windows directories can be — so it is resolved,
+ * never assumed.
+ */
+export function claimIdentity(root, claim) {
+  const normalized = path.normalize(claim);
+  const base = realOf(root);
+  const segments = normalized === "." ? [] : normalized.split(path.sep).filter((part) => part.length > 0);
+  let resolved = base;
+  let index = 0;
+  for (; index < segments.length; index += 1) {
+    const candidate = path.join(resolved, segments[index]);
+    if (!fs.existsSync(candidate)) break;
+    resolved = realOf(candidate);
+  }
+  // Whatever does not exist yet keeps the spelling the caller gave it: nobody
+  // has created that directory, so nothing on disk can say what it is called.
+  const identity = path.relative(base, path.join(resolved, ...segments.slice(index)));
+  // Re-checked after resolving, because a symlink can leave the workspace by a
+  // route the textual `..` check below cannot see at all.
+  if (identity.split(path.sep).includes("..") || path.isAbsolute(identity)) {
+    refuse("CLAIM_ESCAPES_ROOT", `${claim} resolves to ${identity}, which is outside the workspace`);
+  }
+  return identity.length === 0 ? "." : identity;
+}
+
+export function assertClaims(root, claims) {
   if (!Array.isArray(claims) || claims.length === 0) refuse("CLAIMS_REQUIRED", "a loop needs at least one write claim");
   for (const claim of claims) {
     if (typeof claim !== "string" || claim.length === 0) refuse("CLAIM_SHAPE", "a claim must be a non-empty path");
@@ -123,7 +158,7 @@ export function assertClaims(claims) {
     const normalized = path.normalize(claim);
     if (normalized.split(path.sep).includes("..")) refuse("CLAIM_SHAPE", `${claim} escapes the workspace root`);
   }
-  const normalized = claims.map((claim) => path.normalize(claim));
+  const normalized = claims.map((claim) => claimIdentity(root, claim));
   if (new Set(normalized).size !== normalized.length) refuse("CLAIM_SHAPE", "claims must be distinct");
   // Overlap makes "my paths" undecidable, which is the one thing claims exist
   // to make decidable.
@@ -134,10 +169,13 @@ export function assertClaims(claims) {
       }
     }
   }
+  // Code unit order, never `localeCompare`: this ordering goes into a digest,
+  // and an order that changes with the machine's language would give the same
+  // claims two different identities on two machines.
   return [...normalized].sort();
 }
 
-export function openLoop(store, { goal, claims, criterionFile, roundsBudget, session, reason, grantedBy, receipts, dependsOn = [], commandId }) {
+export function openLoop(store, { root, goal, claims, criterionFile, roundsBudget, session, reason, grantedBy, receipts, dependsOn = [], commandId }) {
   if (typeof goal !== "string" || goal.trim().length === 0) refuse("GOAL_REQUIRED", "a loop needs a goal");
   if (typeof session !== "string" || session.length === 0) refuse("SESSION_REQUIRED", "a loop records who opened it");
   // Provenance is required at the seam, not merely allowed: a loop that cannot
@@ -151,8 +189,11 @@ export function openLoop(store, { goal, claims, criterionFile, roundsBudget, ses
   // thing the caller left out. A shell filling this in on the caller's behalf
   // would be deciding how long a loop may run, somewhere nobody would look.
   if (!Number.isSafeInteger(roundsBudget) || roundsBudget < 1) refuse("BUDGET_REQUIRED", "a loop needs a rounds budget of at least 1");
+  // A claim's identity is a fact about a filesystem; without knowing which
+  // filesystem there is nothing to resolve it against.
+  if (typeof root !== "string" || root.length === 0) refuse("ROOT_REQUIRED", "opening a loop needs the workspace root its claims are relative to");
   const criterionDigest = criterionDigestOf(criterionFile);
-  const wanted = assertClaims(claims);
+  const wanted = assertClaims(root, claims);
   const base = {
     goal, claims: wanted, criterion_digest: criterionDigest,
     rounds_budget: roundsBudget, opened_by: session, reason, granted_by: grantedBy, receipts,

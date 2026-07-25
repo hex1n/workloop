@@ -67,8 +67,13 @@ export function controlPlanePaths(root, storeLocation) {
   return excluded;
 }
 
+// `.native` deliberately: the JS implementation resolves symlinks but hands
+// back whatever casing it was given, while the platform call reports the
+// spelling actually on disk. On a case-insensitive volume that difference is
+// the whole of CC-03 — without it `src` and `Src` stay two identities for one
+// directory, and two loops can own the same files.
 export const realOf = (target) => {
-  try { return fs.realpathSync(target); } catch { return path.resolve(target); }
+  try { return fs.realpathSync.native(target); } catch { return path.resolve(target); }
 };
 
 export function sitesFor(root) {

@@ -59,7 +59,10 @@ function repo(t) {
   return { root, location, session: () => openLoopStore(location), criterionFile: path.join(root, "check.mjs") };
 }
 
+// The criterion sits at the workspace root, so the fixture can say where the
+// claims are rooted without every call site repeating it.
 const open = (session, claims = ["src"], criterionFile) => openLoop(session, {
+  root: path.dirname(criterionFile),
   goal: "make src/a.txt say done", claims, criterionFile, roundsBudget: 5,
   session: "s1", reason: "fixture", grantedBy: "self", receipts: "git", commandId: "open",
 });
@@ -290,6 +293,7 @@ test("a loop that claims the whole repository can still be certified", async (t)
 test("a loop that declared no receipt regime refuses to produce one", (t) => {
   const { root, session, criterionFile } = repo(t);
   const { loopId } = openLoop(session(), {
+    root,
     goal: "g", claims: ["src"], criterionFile, roundsBudget: 5,
     session: "s1", reason: "fixture", grantedBy: "self", receipts: "none", commandId: "open",
   });
@@ -319,6 +323,7 @@ test("work the host committed itself can still be receipted", (t) => {
 test("git failures are refused rather than turned into a receipt", (t) => {
   const { root, session, criterionFile } = repo(t);
   const { loopId } = openLoop(session(), {
+    root,
     goal: "g", claims: ["absent"], criterionFile, roundsBudget: 5,
     session: "s1", reason: "fixture", grantedBy: "self", receipts: "git", commandId: "open",
   });
