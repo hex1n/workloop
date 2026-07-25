@@ -15,7 +15,9 @@ description: workloop drives a goal to a verified finish through an append-only 
 就报 `uncertain`,对账没走完就说"没找完"。**绿是唯一绝不会靠意外发生的答案。**
 你写判据、读输出时,用同一条尺子。
 
-## 前置
+准备一次(§1–§3),然后**跑到 terminal**(§4)。
+
+## 准备
 
 ### 1. 确认运行时在,再找到或建立 store
 
@@ -29,7 +31,8 @@ workloop init --root <path>         # 找不到时,显式建立
 **这一步先做。** 本文只讲怎么驱动运行时,不构成运行时在场的证据;下面每一条命令
 都假定 `workloop` 可执行。
 
-`init` 只在你打这条命令时发生。运行时在你恰好站着的地方开一本账,是它明确不做的事。
+`init` 只在你打这条命令时发生,而且每个仓库一次。运行时在你恰好站着的地方开一本
+账,是它明确不做的事。
 
 **完成条件**:`--version` 打出一个版本号,且 `ready` 返回一个 JSON 数组(可以为空)
 而不是 `NO_STORE_FOUND`。
@@ -54,9 +57,7 @@ workloop try --root <path> --criterion <可执行文件> [--loop <loop_id>]
 `failures` 点得出名字、`exit_code` 是 3、`output_truncated` 是 `false`。四条都对上,
 这个判据才可以拿去开单。
 
-## 开一个循环
-
-### 3. 声明目标、范围、判据、证据体制
+### 3. 开循环
 
 ```
 workloop open --goal <目标> --claim <路径> [--claim <路径>...] \
@@ -71,43 +72,62 @@ workloop open --goal <目标> --claim <路径> [--claim <路径>...] \
 - **criterion** 是运行时亲自启动的只读程序。它说了算,不是你说了算。
 - **receipts** 决定这个循环凭什么算完成:`git` 要制品落进提交,`fs` 绑一份文件
   digest 集,`none` 只看判据。
-- **depends-on** 一经声明不可更改。换依赖等于换一个循环。
+- **budget** 是自动驾驶的刹车:轮次用尽,循环挂起而不是无限跑下去。
+
+`depends-on` 一经声明不可更改——换依赖等于换一个循环。
 
 **完成条件**:输出里有 `loop_id`。后面每条命令都要它——**给前缀就行**,像 git;
 歧义会被拒绝,不会被猜。
 
-## 每一轮
+## 驱动
 
-### 4. 问下一步
+### 4. 跑到 terminal
+
+**这是一个循环,不是一串步骤。** 问一次、做一件事、观测,再问——直到运行时说
+`terminal: true`。
 
 ```
-workloop next --loop <loop_id> [--root <workspace>]
+while true:
+  d = workloop next --loop <loop_id>
+  if d.terminal: break
+  <按下表做 d.decision 说的那一件事>
 ```
 
-| decision | 意思 |
+| `d.decision` | 你做什么 |
 | --- | --- |
-| `implement` | 还没有观测,去做事 |
-| `repair` | 上一轮失败了,且失败是新的 |
-| `collect_evidence` | 判据没能给出结论,先让它能说话 |
-| `produce_receipt` | 做了事但没有在场的证据 |
-| `judge` | 证据已就位,还没被判过 |
-| `blocked` | 依赖未满足,做完也认证不了 |
-| `stuck` | 同一个失败反复出现且制品没动 |
-| `achieved` / `suspend` | 结束或暂停,附原因 |
+| `implement` | 照 `d.goal` 做事 → §4.1 观测 |
+| `repair` | 读 `d.feedback.failures`(结构化的,不用解析散文),修那几条 → §4.1 |
+| `collect_evidence` | 判据没能给出结论:用 `try` 查它、按 CRITERION.md 修好 → §4.1 |
+| `produce_receipt` | §4.2 出具证据 → §4.1 |
+| `judge` | 证据已就位、还没被判过:直接 §4.1 |
+| `blocked` | 上游没完成,做完也认证不了 → **停,把 `d.reason` 交给人** |
+| `stuck` | 同一失败重复且制品没动 → **停,把 `d.feedback` 交给人** |
+| `suspend` | 预算耗尽或被挂起 → **停,把 `d.reason` 交给人** |
 
-`repair` 的 `feedback.failures` 是判据报的那串**结构化**失败标识,不用回去解析散文。
+`blocked` / `stuck` / `suspend` 不是失败,是循环在说**这一步不该由我决定**。把它
+交出去,比自己再试一轮诚实。
 
-**完成条件**:拿到一个 `decision`。**同样的状态问几次都是同一个答案**,所以崩溃
-之后重问是安全的。
+**`--command` 每一轮都要不同的值。** 同一个 id 拿到的是**重放**——原样返回上次的
+结果、不新增记录。自动驾驶复用它,`next` 就会永远返回同一个决策,**循环原地打转**。
+轮号或 UUID 都行。
 
-### 5. 做事
+**完成条件**:`next` 返回 `terminal: true`(`achieved` 是达成,`abandoned` 是被人
+放弃),或者你在上面三个出口之一停下并把原因交给了人。
 
-这一步没有运行时的输出,也不该有。谁来做、是否允许做,全是宿主的事。
+### 4.1 提交观测
 
-**完成条件**:`workloop try` 说 `satisfied`。这是**免费**的——把它当作"我改完了"
-的判定,而不是自己看一眼觉得像。
+```
+workloop observe --loop <loop_id> --session <会话> \
+  --criterion <可执行文件> --command <本轮唯一的命令 id>
+```
 
-### 6. 出具证据(仅 `--receipts git` 或 `fs`)
+运行时亲自启动判据,读它的退出码与 `WORKLOOP_VERDICT` 行,把裁决、失败标识与随之
+而来的决策记进同一次事务。
+
+**完成条件**:日志里多了一条 `round_observed` 和一条 `round_decided`。回到 §4 再问
+一次。
+
+### 4.2 出具证据(仅 `--receipts git` 或 `fs`)
 
 ```
 workloop receipt --loop <loop_id> --mode commit --session <会话> --command <命令 id>
@@ -118,32 +138,20 @@ workloop receipt --loop <loop_id> --mode commit --session <会话> --command <�
 `uncertain` 不是错误,是失败关闭:index 里有运行时无法归因于本循环的内容,于是它
 不为这次操作背书。**伪造一个 `clean` 是它唯一不会做的事。**
 
-### 7. 提交观测
-
-```
-workloop observe --loop <loop_id> --session <会话> \
-  --criterion <可执行文件> --command <命令 id>
-```
-
-运行时亲自启动判据,读它的退出码与 `WORKLOOP_VERDICT` 行,把裁决、失败标识与随之
-而来的决策记进同一次事务。
-
-**完成条件**:日志里多了一条 `round_observed` 和一条 `round_decided`。用同一个
-`--command` 重跑是**重放**——不会再付一次判据的钱,也不会多出一轮。
-
 ## 查看与收尾
 
-### 8. 看一个循环的全貌
+### 5. 看一个循环的全貌
 
 ```
 workloop status --loop <loop_id>
 workloop log [--loop <loop_id>] [--limit <n>]
 ```
 
-**完成条件**:`status.next` 与 `workloop next` 逐字相同——它们是同一个函数。
-`log` 给的是记录本身,可以和磁盘上的字节对照。
+**完成条件**:`status.next` 与 `workloop next` 逐字相同——它们是同一个函数,所以
+问几次都是同一个答案,崩溃之后重问是安全的。`log` 给的是记录本身,可以和磁盘上
+的字节对照。
 
-### 8.1 账本否认的提交
+### 5.1 账本否认的提交
 
 `status.unrecorded_commits` 列出**这个循环造过、而账本没有记下的提交**。它只在一种
 情况下非空:进程死在 git 提交与账本追加之间。那个窗口关不掉——提交先于任何关于它
@@ -155,7 +163,7 @@ workloop log [--loop <loop_id>] [--limit <n>]
 **完成条件**:`unrecorded_commits.commits` 为空数组。`exhausted` 为真表示历史比
 对账上限还长——那是"没找完",按失败关闭读,不是"没有"。
 
-### 9. 留档
+### 6. 留档
 
 ```
 workloop export > ledger.json
