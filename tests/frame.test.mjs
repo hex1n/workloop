@@ -9,6 +9,15 @@ const payloads = ["{}", '{"a":1}', "x".repeat(1000), "🙂 combining é", ""];
 const logOf = (items) => Buffer.concat(items.map((item) => encodeFrame(item)));
 const texts = (frames) => frames.map((frame) => frame.payload.toString("utf8"));
 
+test("the checksum algorithm is pinned to CRC-32/IEEE by known vector", () => {
+  // Round-tripping through our own encoder would pass with any checksum
+  // function, so it cannot detect a change of algorithm. The frame format is a
+  // wire contract other readers must reproduce, so the algorithm itself is
+  // asserted against the standard check value for "123456789".
+  const frame = encodeFrame("123456789");
+  assert.equal(frame.readUInt32LE(frame.length - 4), 0xcbf43926);
+});
+
 test("frames round-trip and report their own byte extents", () => {
   const { frames, trailing } = scanFrames(logOf(payloads));
   assert.deepEqual(texts(frames), payloads);

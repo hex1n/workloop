@@ -5,7 +5,7 @@
 // written, in the order it was written, with nothing inserted, dropped, or
 // edited. Every check here refuses rather than repairs — a chain that does not
 // verify is not a chain with a problem, it is not this store's history.
-import { canonicalJson, digestOf } from "./canonical.mjs";
+import { canonicalJson, digestOf, isPlainObject } from "./canonical.mjs";
 
 export const RECORD_SCHEMA = 1;
 const FIELDS = ["v", "seq", "prev", "cmd", "kind", "payload", "digest"];
@@ -24,7 +24,9 @@ const refuse = (code, message, seq) => {
   throw new RecordError(code, message, seq);
 };
 
-const isPlainObject = (value) => typeof value === "object" && value !== null && !Array.isArray(value) && Object.getPrototypeOf(value) === Object.prototype;
+// isPlainObject comes from canonical.mjs so that "can this be a payload" and
+// "can this be canonicalized" cannot drift apart: a payload the canonicalizer
+// would accept must not be rejected here, and vice versa.
 const isNonEmptyString = (value) => typeof value === "string" && value.length > 0;
 
 // The digest covers everything except itself, so it is taken over the record

@@ -39,14 +39,27 @@ test("the lock order permits outer classes to reach the store and nothing else",
   }
 });
 
-test("locks are non-reentrant, and two stores name their own invariant", (t) => {
+test("re-taking the same lock is reentrancy; holding two stores is its own fault", (t) => {
   const locks = managerAt(root(t));
-  for (const lockClass of [CLASSES.GIT_INDEX, CLASSES.CRITERION]) {
-    assert.throws(nest(locks, lockClass, lockClass), (error) => error.code === "NON_REENTRANT");
+  // Two distinct invariants, told apart by the resource id. A class-only check
+  // would report the same-resource case as "two stores", which is both the
+  // wrong diagnosis and a rule that would then never be exercised.
+  for (const lockClass of Object.values(CLASSES)) {
+    assert.throws(
+      () => locks.withLock(lockClass, "same", () => locks.withLock(lockClass, "same", () => assert.fail("must not enter"))),
+      (error) => error.code === "NON_REENTRANT",
+      `${lockClass} on one resource`,
+    );
   }
   assert.throws(
     () => locks.withLock(CLASSES.STORE, "a", () => locks.withLock(CLASSES.STORE, "b", () => assert.fail("must not enter"))),
     (error) => error.code === "TWO_STORES",
+  );
+  // Two different outer resources of the same class are still reentrancy by
+  // class, because nothing legitimately needs two Git indexes at once.
+  assert.throws(
+    () => locks.withLock(CLASSES.GIT_INDEX, "a", () => locks.withLock(CLASSES.GIT_INDEX, "b", () => assert.fail("must not enter"))),
+    (error) => error.code === "LOCK_ORDER_VIOLATION",
   );
 });
 
@@ -144,6 +157,46 @@ test("a release that cannot be verified poisons every later acquisition", (t) =>
   }
   // Poisoning is confined to the manager that lost track, not the directory.
   assert.equal(managerAt(dir).withLock(CLASSES.STORE, "r", () => "fresh"), "fresh");
+});
+
+test("a release that cannot remove the lock leaves the evidence in place", { skip: process.platform === "win32" ? "POSIX permission semantics" : false }, (t) => {
+  const dir = root(t);
+  const locks = managerAt(dir);
+  const lockPath = path.join(dir, "store-r.lock");
+  let ownerBytes;
+  assert.throws(
+    () => locks.withLock(CLASSES.STORE, "r", () => {
+      ownerBytes = fs.readFileSync(path.join(lockPath, "owner.json"), "utf8");
+      // Make the parent unwritable so removing the lock directory fails. This
+      // is the branch where evidence must survive, and it is the one a
+      // "does the path still exist" check could never distinguish.
+      fs.chmodSync(dir, 0o500);
+    }),
+    (error) => error.code === "LOCK_RELEASE_FAILED",
+  );
+  assert.ok(locks.poisoned);
+  assert.equal(fs.existsSync(lockPath), true, "the lock directory is kept for inspection");
+  assert.equal(fs.readFileSync(path.join(lockPath, "owner.json"), "utf8"), ownerBytes, "the owner record is untouched");
+  // Restored here rather than in an after-hook: hooks run in registration
+  // order, so the fixture's own cleanup would otherwise hit a read-only parent.
+  fs.chmodSync(dir, 0o700);
+});
+
+test("releasing does not poison when the next holder takes the path immediately", (t) => {
+  const dir = root(t);
+  const locks = managerAt(dir);
+  const other = managerAt(dir);
+  // The release path must judge itself by whether removal succeeded, not by
+  // whether the path is occupied afterwards: the next holder arriving in that
+  // gap is normal contention, not our failure.
+  locks.withLock(CLASSES.STORE, "r", () => "first");
+  other.withLock(CLASSES.STORE, "r", () => "second");
+  for (let round = 0; round < 50; round += 1) {
+    locks.withLock(CLASSES.STORE, "r", () => round);
+    other.withLock(CLASSES.STORE, "r", () => round);
+  }
+  assert.equal(locks.poisoned, null);
+  assert.equal(other.poisoned, null);
 });
 
 test("when the action and the release both fail, neither error is lost", (t) => {

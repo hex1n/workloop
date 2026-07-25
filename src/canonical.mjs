@@ -69,6 +69,15 @@ function encode(value, path) {
   return `{${members.join(",")}}`;
 }
 
+// A value is a plain record-like object if it carries data and nothing else:
+// no class identity, no prototype behaviour. Objects made with a null
+// prototype qualify — they are data by construction.
+export function isPlainObject(value) {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
 export function canonicalJson(value) {
   return encode(value, []);
 }

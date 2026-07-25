@@ -63,14 +63,15 @@ export function createLockManager({ resolveLockPath, now = () => Date.now(), def
   const assertOrder = (lockClass, resourceId) => {
     if (poison) refuse("LOCK_STATE_POISONED", `lock state is poisoned: ${poison}`);
     if (!Object.values(CLASSES).includes(lockClass)) refuse("UNKNOWN_LOCK_CLASS", `unknown lock class ${lockClass}`);
-    // Checked before the general reentrancy rule so the diagnosis names the
-    // invariant that actually matters: one process must never be able to move
-    // two ledgers at once, however it got there.
+    // Two distinct invariants that a class-only check would conflate: taking
+    // the same lock again is reentrancy, while holding two different stores at
+    // once is the thing that must never happen however it was reached. The
+    // resource id is what tells them apart.
+    if (held.some((entry) => entry.lockClass === lockClass && entry.resourceId === resourceId)) {
+      refuse("NON_REENTRANT", `${lockClass} locks are non-reentrant`);
+    }
     if (lockClass === CLASSES.STORE && held.some((entry) => entry.lockClass === CLASSES.STORE)) {
       refuse("TWO_STORES", "two stores cannot be held together");
-    }
-    if (held.some((entry) => entry.lockClass === lockClass)) {
-      refuse("NON_REENTRANT", `${lockClass} locks are non-reentrant`);
     }
     if (OUTER.has(lockClass) && held.some((entry) => entry.lockClass === CLASSES.STORE)) {
       refuse("LOCK_ORDER_VIOLATION", `${lockClass} cannot be taken while a store lock is held`);
@@ -142,16 +143,25 @@ export function createLockManager({ resolveLockPath, now = () => Date.now(), def
       poison = `released a ${entry.lockClass} lock that no longer belonged to this process`;
       refuse("LOCK_RELEASE_FAILED", poison);
     }
+    // Release is a rename, not a recursive delete. Renaming is atomic, so the
+    // moment it returns the lock path is free and the release is proven — no
+    // second look is needed, and none would be trustworthy anyway, since the
+    // next holder may already have taken the path.
+    //
+    // The rename also protects the evidence. A recursive delete removes
+    // owner.json first and only then fails on the directory, which would
+    // destroy the record of who held the lock in exactly the case where
+    // somebody needs to read it.
+    const tombstone = `${entry.lockPath}.released.${entry.token}`;
     try {
-      fs.rmSync(entry.lockPath, { recursive: true });
+      fs.renameSync(entry.lockPath, tombstone);
     } catch (error) {
       poison = `could not release the ${entry.lockClass} lock: ${error.message}`;
       refuse("LOCK_RELEASE_FAILED", poison);
     }
-    if (fs.existsSync(entry.lockPath)) {
-      poison = `the ${entry.lockClass} lock still exists after release`;
-      refuse("LOCK_RELEASE_FAILED", poison);
-    }
+    // The lock is already released; a tombstone that outlives us is litter,
+    // not a correctness problem, and is not worth poisoning a healthy process.
+    fs.rmSync(tombstone, { recursive: true, force: true });
   }
 
   return {
