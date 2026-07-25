@@ -2,7 +2,7 @@
   "name": "workloop",
   "version": "0.0.0",
   "private": true,
-  "description": "Host-neutral loop ledger runtime (greenfield rebuild; no implementation yet)",
+  "description": "Host-neutral loop ledger runtime: an append-only ledger of goals, evidence and the next legal step",
   "license": "UNLICENSED",
   "type": "module",
   "engines": {
@@ -18,5 +18,8 @@
   "bugs": {
     "url": "https://github.com/hex1n/workloop/issues"
   },
-  "homepage": "https://github.com/hex1n/workloop#readme"
+  "homepage": "https://github.com/hex1n/workloop#readme",
+  "bin": {
+    "workloop": "bin/workloop.mjs"
+  }
 }

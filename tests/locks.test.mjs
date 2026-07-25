@@ -9,6 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { pathToFileURL } from "node:url";
+import { sha256Hex } from "../src/canonical.mjs";
 import { CLASSES, createLockManager } from "../src/locks.mjs";
 
 const MODULE_URL = pathToFileURL(path.resolve(import.meta.dirname, "..", "src", "locks.mjs")).href;
@@ -102,6 +103,22 @@ test("a live holder excludes another manager until it releases", (t) => {
     assert.throws(() => contender.withLock(CLASSES.STORE, "r", () => assert.fail("must not enter")), (error) => error.code === "LOCK_UNAVAILABLE");
   });
   assert.equal(contender.withLock(CLASSES.STORE, "r", () => "free"), "free");
+});
+
+test("a deep store can still take and release its locks", (t) => {
+  // The lock filename used to spell out the resource id, so a store more than
+  // a few directories down produced a name longer than the filesystem allows.
+  // It surfaced as a failure to *release*, which poisons the store — a loop
+  // lost because somebody nested a directory.
+  const dir = root(t);
+  let deep = dir;
+  for (let level = 0; level < 12; level += 1) {
+    deep = path.join(deep, `a-fairly-long-directory-name-${level}`);
+    fs.mkdirSync(deep);
+  }
+  const manager = createLockManager({ resolveLockPath: ({ lockClass, resourceId }) => path.join(deep, `${lockClass}-${sha256Hex(resourceId).slice(7, 39)}.lock`) });
+  assert.equal(manager.withLock(CLASSES.STORE, deep, () => "entered"), "entered");
+  assert.equal(manager.poisoned, null, "and it released cleanly");
 });
 
 test("a dead holder is only reaped once its declared lease has also expired", (t) => {

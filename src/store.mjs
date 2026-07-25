@@ -120,7 +120,7 @@ function writeFileDurably(file, bytes) {
   }
 }
 
-export function createStore({ location, commandId, requestDigest = digestOf({ genesis: true }), kind = "store_created", payload = {} }) {
+export function createStore({ location, storeKind = "fs", commandId, requestDigest = digestOf({ genesis: true }), kind = "store_created", payload = {} }) {
   if (fs.existsSync(path.join(location, MANIFEST))) refuse("STORE_EXISTS", `${location} already holds a store`);
   fs.mkdirSync(path.join(location, SEGMENTS), { recursive: true });
   fs.mkdirSync(path.join(location, SNAPSHOTS), { recursive: true });
@@ -128,12 +128,16 @@ export function createStore({ location, commandId, requestDigest = digestOf({ ge
   const manifest = {
     store_schema: STORE_SCHEMA,
     store_id: digestOf({ created: location, entropy: [...getRandomValues(new Uint32Array(4))] }).slice("sha256:".length, "sha256:".length + 32),
+    // Which world this store belongs to. Recorded, never inferred later: a root
+    // that gains a `.git` would otherwise start resolving to a different store
+    // directory, and the two would hold different histories under one name.
+    store_kind: storeKind,
     anchor: physicalAnchor(location),
     genesis_digest: null,
   };
   // The genesis digest anchors the chain and is derived from the manifest's
   // own immutable facts, so a store cannot adopt another store's history.
-  manifest.genesis_digest = digestOf({ store_schema: manifest.store_schema, store_id: manifest.store_id, anchor: manifest.anchor });
+  manifest.genesis_digest = digestOf({ store_schema: manifest.store_schema, store_id: manifest.store_id, store_kind: manifest.store_kind, anchor: manifest.anchor });
   writeFileDurably(path.join(location, MANIFEST), Buffer.from(`${canonicalJson(manifest)}\n`, "utf8"));
   fs.writeFileSync(path.join(location, SEGMENTS, segmentName(1)), Buffer.alloc(0));
   const store = openStore(location);
@@ -156,7 +160,13 @@ export function openStore(location, {
     refuse("STORE_COLLISION", "this store's identity belongs to a different location; it looks like a copy");
   }
   const locks = createLockManager({
-    resolveLockPath: ({ lockClass, resourceId }) => path.join(location, LOCKS, `${lockClass}-${encodeURIComponent(resourceId)}.lock`),
+    // The resource id is hashed, not spelled out. Encoding a full path into a
+    // filename works until the path is deep, and then the name exceeds what the
+    // filesystem allows — which surfaces as a lock that cannot be *released*,
+    // so the store poisons itself over a directory that was merely nested. The
+    // unabbreviated id still goes into the lock's owner record, where evidence
+    // belongs and length costs nothing.
+    resolveLockPath: ({ lockClass, resourceId }) => path.join(location, LOCKS, `${lockClass}-${sha256Hex(resourceId).slice("sha256:".length, "sha256:".length + 32)}.lock`),
     defaults: { timeoutMs: lockTimeoutMs, leaseMs: lockLeaseMs },
   });
 

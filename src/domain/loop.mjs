@@ -42,7 +42,7 @@ export function ready(store, { root, ...options } = {}) {
 
 // Supplied only when the host offers a workspace: the question needs git, and
 // a read that cannot reach git must say so rather than assume the answer.
-const ancestryCheck = (root) =>
+export const ancestryCheck = (root) =>
   (typeof root === "string" ? { isAncestor: (upstream) => isAncestorCommit(root, upstream.certificationCommit) } : {});
 
 export const criterionDigestOf = (file) => sha256Hex(fs.readFileSync(file));
