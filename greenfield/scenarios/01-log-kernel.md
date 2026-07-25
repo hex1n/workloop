@@ -6,8 +6,7 @@
 具体措辞/错误码/枚举/数值按 README「语义不变式与旧世界任意值」默认规则为旧值锚。
 
 实现规格见 [切片 1 规格书](../slices/01-log-kernel.md)(磁盘格式、锁规则、
-完整性策略、性质测试 P0–P12、崩溃注入矩阵 C1–C8)。**该规格书 §4.1 提出对
-下方 LK-10 的一处修订(撕裂尾部自动恢复),待确认后回写。**
+完整性策略、性质测试 P0–P12、崩溃注入矩阵 C1–C8)。
 
 **审计处置**([AUDIT-2026-07-25](AUDIT-2026-07-25.md)):13 保留 / 1 出局。
 出局:**LK-06**(多 store 顺序操作,随 M1 证据通道)。
@@ -86,14 +85,23 @@ attachment-recovery(reattach/fork 重放)
 - 断言:重复调用返回与首次相同的实体 id 集,日志长度不变;同 command_id 改
   入参(scope/provenance/goal 任一)→ 拒绝并诊断 conflicts with durable intent。
 
-### LK-10 撕裂尾部失败关闭,恢复需字节级证明与用户溯源
+### LK-10 不完整写入自动恢复;真损坏才失败关闭〔切片 1 §4.1 修订〕
 来源:git-main「torn authority tails fail closed…」、filesystem「detached authority
-torn tails recover by exact authority selector…」
-- 前置:日志尾部追加半帧垃圾
-- 断言:一切读写拒绝并诊断撕裂;恢复动词要求调用方提交**双证明——有效末端
-  字节偏移 + 被弃尾部 digest**(选项名为旧值锚,双证明是语义)且溯源为 user;
-  self 溯源拒绝且字节不变;恢复后日志尾部出现恢复记录,携带被弃字节 digest;
-  恢复对 git 与 detached 两种 store 语义一致(后者以 store 选择器寻址)。
+torn tails recover by exact authority selector…」——**"一律要人"已修订**。
+推导:旧世界的帧是 JSON 行,截断的行与损坏的行在字节上不可区分,分不清就只能
+一律交给人;长度前缀帧让这个区分变成机械的,而**写到一半的记录从未被确认过**
+(调用方没拿到返回),丢弃它不丢任何已承诺事实。要求每次崩溃都有人介入,与
+"必须能跨崩溃恢复"自相矛盾。
+- **不完整写入**(最后一段末尾,可用字节 < 8 + 声明 LEN):自动截断至上一
+  合法帧,追加 `tail_truncated` 记录(携带被弃字节数与 digest);读写照常;
+  被中断的原命令重跑即应用(与崩溃注入 C2 同一条路径)。
+- **真损坏**(帧完整但 CRC 不符、链断裂、digest 不符、seq 空洞、中段不完整):
+  一切读写失败关闭并给出具体诊断;`recover-tail` 要求调用方提交**双证明——
+  有效末端字节偏移 + 被弃尾部 digest**(选项名为旧值锚,双证明是语义)且溯源
+  为 user;self 溯源拒绝且字节不变;恢复后追加恢复记录携带被弃字节 digest。
+- 保守边界的理由:帧完整而 CRC 不符时,无法区分部分写入与位腐/篡改;若原
+  写入曾被确认,自动丢弃就是静默丢失已承诺事实——故这一类必须要人。
+- 两种 store 语义一致(非 git 者以 store 路径寻址)。
 
 ### LK-11 只读动词零持久化字节变化
 来源:git-main「query verbs observe authority and collisions without changing durable bytes」
