@@ -17,6 +17,12 @@ import { controlPlanePaths as controlPlane, realOf as real, systemPath } from ".
 import { refuse } from "./error.mjs";
 
 export const MODE = Object.freeze({ STAGE: "stage", COMMIT: "commit", SNAPSHOT: "snapshot" });
+
+// Which modes each evidence regime has. A regime that quietly did something
+// other than what the caller named would be handing back evidence of a
+// different kind than the one asked for — `--mode commit` on a filesystem loop
+// used to produce a snapshot and say nothing.
+export const MODES_BY_REGIME = Object.freeze({ git: [MODE.STAGE, MODE.COMMIT], fs: [MODE.SNAPSHOT] });
 export const STATUS = Object.freeze({ CLEAN: "clean", UNCERTAIN: "uncertain" });
 
 // Why a receipt is not in force. `none` and `drifted` are different situations

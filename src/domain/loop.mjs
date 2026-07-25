@@ -9,12 +9,12 @@ import { digestOf, sha256Hex } from "../canonical.mjs";
 import { CLASSES } from "../locks.mjs";
 import { canonicalPath, caseInsensitiveVolume, controlPlanePaths, isUnder, pathContains, realOf, systemPath } from "../site.mjs";
 import { openStore } from "../store.mjs";
-import { reapOrphanedCriterion, runCriterion } from "./criterion.mjs";
+import { findOrphanedCriterion, runCriterion } from "./criterion.mjs";
 import { LoopError, refuse } from "./error.mjs";
 import { decide, nextDirective, progressSignature } from "./policy.mjs";
 import { DEPENDENCY, assertEdges, claimConflicts, dependencyState, ready as readyLoops } from "./graph.mjs";
 import { EMPTY, EMPTY_STORE, PROJECTION_SHAPE, isLive, reduceLoop, reduceStore, roundsSpent } from "./projection.mjs";
-import { STANDING, isAncestorCommit, receiptStanding, takeFilesystemReceipt, takeReceipt } from "./receipt.mjs";
+import { MODES_BY_REGIME, STANDING, isAncestorCommit, receiptStanding, takeFilesystemReceipt, takeReceipt } from "./receipt.mjs";
 import { DECISION, KIND, RECEIPTS, SUSPENSION, TERMINAL, VERDICT, loopVocabulary } from "./vocabulary.mjs";
 
 export { LoopError };
@@ -284,6 +284,10 @@ export function receipt(store, { root, loopId, mode, session, commandId, onPhase
   const before = loopOf(store.replay().state, loopId);
   if (!isLive(before)) refuse("NOT_LIVE", `the loop is ${before.lifecycle}`);
   if (before.receipts === RECEIPTS.NONE) refuse("NO_RECEIPT_REGIME", "this loop was opened with receipts: none");
+  const allowed = MODES_BY_REGIME[before.receipts];
+  if (!allowed.includes(mode)) {
+    refuse("UNKNOWN_RECEIPT_MODE", `a ${before.receipts} loop takes --mode ${allowed.join(" or ")}, not ${mode ?? "(none)"}`);
+  }
 
   // Before anything is asked of the world. A command that already landed is
   // answered from the log, so a retry after a crash still gets its result even
@@ -358,8 +362,12 @@ export async function observe(store, { root, loopId, session, commandId, timeout
 
   // A criterion left running by a runtime that was killed outright. Reaped
   // here because this is where somebody comes back to the loop.
-  const pidFile = path.join(store.location, "locks", `criterion-${loopId.slice("sha256:".length, "sha256:".length + 16)}.pid`);
-  const orphan = reapOrphanedCriterion(pidFile);
+  // One note per attempt, not per loop: two observations of the same loop run
+  // their criteria outside the store lock, and a shared name meant whichever
+  // finished first deleted the other's still-live record.
+  const notes = path.join(store.location, "locks");
+  const pidFile = path.join(notes, `criterion-${sha256Hex(`${loopId}\u0000${commandId}`).slice("sha256:".length, "sha256:".length + 16)}.pid`);
+  const orphan = findOrphanedCriterion(pidFile);
 
   const outcome = await runCriterion({ executable: process.execPath, args: [criterionFile], cwd: root, timeoutMs, pidFile });
   const checkpoint = artifactCheckpoint(root, before.claims, { storeLocation: store.location });
@@ -373,7 +381,7 @@ export async function observe(store, { root, loopId, session, commandId, timeout
     ? { standing: STANDING.NONE }
     : receiptStanding({
       root, receipt: before.receipt, claims: before.claims, storeLocation: store.location,
-      readEntries: artifactEntries, ...ancestryCheck(root),
+      readEntries: artifactEntries,
     });
   const receiptDigest = standing.standing === STANDING.IN_FORCE ? before.receipt.digest : null;
 
@@ -413,7 +421,7 @@ export async function observe(store, { root, loopId, session, commandId, timeout
         // The tail again, not the head. output_tail is already the end of what
         // the criterion printed; taking its first 2000 characters would throw
         // away precisely the part that says what went wrong.
-        summary: `${orphan === null ? "" : `[reaped a criterion left running by a killed runtime: pid ${orphan}]\n`}${outcome.execution.output_tail}`.slice(-2000),
+        summary: `${orphan === null ? "" : `[a criterion from an earlier run may still be alive as pid ${orphan}; the runtime will not kill what it cannot prove is its own]\n`}${outcome.execution.output_tail}`.slice(-2000),
         observed_by: session,
       });
       const projected = reduceLoop(state, { seq: state.revision + 1, ...observation });

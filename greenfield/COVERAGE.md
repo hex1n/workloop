@@ -1,9 +1,10 @@
 # 场景覆盖表
 
-语料里**每一条未出局的场景**,以及它在哪里被满足。两种去处,没有第三种:
+语料里**每一条未出局的场景**,以及它在哪里被满足。三种去处,没有第四种:
 
 - 一个**测试文件**——那条场景的断言住在里面;
-- 一条 **DEBT 编号**——它被明确推迟了,`DEBT.md` 里记着为什么。
+- 一条 **DEBT 编号**——它被明确推迟了,`DEBT.md` 里记着为什么;
+- 一条 **RULED 指向**——它被裁决为不做或已作废,那份切片规格里记着理由与 flip 条件。
 
 `tests/spec-corpus.test.mjs` 用门禁压着这张表:漏一条、指向不存在的文件、指向
 不存在的欠账编号,都会红。
@@ -113,7 +114,7 @@
 
 | 场景 | 满足于 |
 | --- | --- |
-| **HF-06** 安装幂等、版本化激活、从不改写宿主配置〔审计改写〕 | `.github/workflows/test.yml` |
+| **HF-06** 安装幂等、版本化激活、从不改写宿主配置〔审计改写〕 | `RULED:greenfield/slices/10-closeout.md` |
 | **HF-08** 打包闭包只含现行运行时 | `tests/cli.test.mjs` |
 | **HF-09** skill 工作流每步有显式完成条件 | `tests/cli.test.mjs` |
 
@@ -125,7 +126,7 @@
 | **WN-02** 路径变体:空格、Unicode、盘符大小写、junction | `tests/platform.test.mjs` |
 | **WN-04** criterion 超时全进程树终止,含降级路径 | `tests/platform.test.mjs` |
 | **WN-05** criterion 租约:死亡持有者按声明的 deadline 等待后回收 | `tests/platform.test.mjs` |
-| **WN-06** 安装锁收割已死持有者 | `.github/workflows/test.yml` |
+| **WN-06** 安装锁收割已死持有者 | `RULED:greenfield/slices/10-closeout.md` |
 
 ## 语料自身的一处矛盾(留档)
 

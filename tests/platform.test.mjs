@@ -14,7 +14,7 @@ import { createStore } from "../src/store.mjs";
 import { canonicalPath, isUnder, pathContains, systemPath } from "../src/site.mjs";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
-import { EXIT, VERDICT_PREFIX, killTree, reapOrphanedCriterion } from "../src/domain/criterion.mjs";
+import { EXIT, VERDICT_PREFIX, findOrphanedCriterion, killTree } from "../src/domain/criterion.mjs";
 import { assertClaims, claimIdentity, next, observe, openLoop, openLoopStore } from "../src/domain/loop.mjs";
 
 // Spaces and CJK in every path the runtime touches.
@@ -167,26 +167,30 @@ test("WN-04: a kill mechanism that cannot even start counts as a failure, not a 
   assert.equal(child.killed, true, "the child itself is still ended");
 });
 
-test("D-03: a criterion left running by a killed runtime is reaped by whoever comes back", (t) => {
+test("D-03: a criterion left running by a killed runtime is named, not killed", (t) => {
   const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-orphan-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const pidFile = path.join(dir, "criterion.pid");
 
   // A real process standing in for the group a SIGKILLed runtime left behind.
   const orphan = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore", detached: true });
+  t.after(() => { try { process.kill(-orphan.pid, "SIGKILL"); } catch { /* already gone */ } });
   fs.writeFileSync(pidFile, String(orphan.pid));
-  assert.equal(reapOrphanedCriterion(pidFile), orphan.pid, "it is found and named");
+
+  assert.equal(findOrphanedCriterion(pidFile), orphan.pid, "it is found and named");
   assert.equal(fs.existsSync(pidFile), false, "and the note is cleared behind it");
+  // Deliberately still running. A live pid proves only that *some* process
+  // holds that number — pids are recycled — and this used to send SIGKILL to
+  // the whole group on the strength of it.
+  assert.doesNotThrow(() => process.kill(orphan.pid, 0), "the process is left alone");
 
+  process.kill(-orphan.pid, "SIGKILL");
   return new Promise((resolve) => setTimeout(resolve, 200)).then(() => {
-    assert.throws(() => process.kill(orphan.pid, 0), (error) => error.code === "ESRCH", "the process really is gone");
-
-    // A pid file whose process has already exited is the ordinary case: the
-    // file outlived it, and that says nothing worth reporting.
+    // A note whose process has already exited is the ordinary case: the file
+    // outlived it, and that says nothing worth reporting.
     fs.writeFileSync(pidFile, String(orphan.pid));
-    assert.equal(reapOrphanedCriterion(pidFile), null);
-    assert.equal(fs.existsSync(pidFile), false);
-    assert.equal(reapOrphanedCriterion(pidFile), null, "and no note at all is not an event either");
+    assert.equal(findOrphanedCriterion(pidFile), null);
+    assert.equal(findOrphanedCriterion(pidFile), null, "and no note at all is not an event either");
   });
 });
 

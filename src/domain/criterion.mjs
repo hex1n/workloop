@@ -157,16 +157,22 @@ export function killTree(child, report = () => {}, { platform = process.platform
 }
 
 /**
- * Kills a criterion process group left behind by a runtime that was itself
- * killed, and says whether it found one.
+ * Finds a criterion left running by a runtime that was itself killed, and
+ * reports it. It does not kill it.
  *
- * The runtime cleans up when it exits in an orderly way. When it is SIGKILLed
- * there is nobody left to do it, and the group keeps running — so the pid is
- * written down where the next caller will look. What cannot be helped is a
- * loop nobody ever touches again: this is found by coming back, like the
- * commit nobody retries.
+ * The runtime cleans up when it exits in an orderly way; when it is SIGKILLed
+ * there is nobody left to do it, so the pid is written down where the next
+ * caller will look. But a live pid only proves that *some* process holds that
+ * number — pids are recycled, and the kill this used to do targeted a whole
+ * process group. Sending SIGKILL to a group that might belong to somebody
+ * else, on the strength of a number, is the kind of irreversible guess this
+ * runtime refuses everywhere else.
+ *
+ * So it reports. Being able to point at it is the job; ending somebody's
+ * process on a guess is not — the same line drawn for the commit the ledger
+ * denies.
  */
-export function reapOrphanedCriterion(pidFile) {
+export function findOrphanedCriterion(pidFile) {
   let recorded;
   try {
     recorded = Number(fs.readFileSync(pidFile, "utf8").trim());
@@ -178,11 +184,10 @@ export function reapOrphanedCriterion(pidFile) {
   try {
     process.kill(recorded, 0);
   } catch {
-    // Already gone. The file outliving the process is the ordinary case and
-    // says nothing worth recording.
+    // Already gone. The note outliving the process is the ordinary case and
+    // says nothing worth reporting.
     return null;
   }
-  killTree({ exitCode: null, signalCode: null, pid: recorded, kill: () => process.kill(recorded, "SIGKILL") });
   return recorded;
 }
 

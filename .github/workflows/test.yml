@@ -29,13 +29,48 @@ jobs:
       - name: Gate
         run: npm test
 
-      # HF-06 / WN-01, without an installer: the distribution is an npm package
-      # with a bin, so what needs proving is that the packaged thing works once
-      # installed — on every platform, from the shell that platform gives you.
-      # A tarball that only runs from its source tree is not a release.
-      - name: Packaged binary runs where it is installed
+      # WN-01, without an installer: the distribution is an npm package with a
+      # bin, so what needs proving is that the packaged thing works once
+      # installed — from each shell the platform actually gives people, and
+      # from a prefix whose path has a space and non-ASCII in it. A tarball
+      # that only runs from its source tree, or only from bash, is not a
+      # release.
+      - name: Pack and install
+        shell: bash
         run: |
           npm pack --silent
-          npm install --no-save --global ./workloop-0.0.0.tgz
-          workloop --help
-          workloop frobnicate || test $? -eq 1
+          mkdir -p "$RUNNER_TEMP/前缀 with space"
+          npm install --no-save --global --prefix "$RUNNER_TEMP/前缀 with space" ./workloop-0.0.0.tgz
+          npm install --no-save --global --prefix "$RUNNER_TEMP/前缀 with space" ./workloop-0.0.0.tgz
+
+      - name: Installed binary runs (bash)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/前缀 with space/bin/workloop" --help
+          "$RUNNER_TEMP/前缀 with space/bin/workloop" frobnicate && exit 1 || test $? -eq 1
+
+      - name: Installed binary runs (cmd)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: |
+          "%RUNNER_TEMP%\前缀 with space\workloop.cmd" --help || exit /b 1
+          "%RUNNER_TEMP%\前缀 with space\workloop.cmd" frobnicate && exit /b 1 || exit /b 0
+
+      - name: Installed binary runs (Windows PowerShell)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          & "$env:RUNNER_TEMP\前缀 with space\workloop.cmd" --help
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & "$env:RUNNER_TEMP\前缀 with space\workloop.cmd" frobnicate
+          if ($LASTEXITCODE -ne 1) { exit 1 }
+
+      - name: Installed binary runs (pwsh)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "$env:RUNNER_TEMP\前缀 with space\workloop.cmd" --help
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          & "$env:RUNNER_TEMP\前缀 with space\workloop.cmd" frobnicate
+          if ($LASTEXITCODE -ne 1) { exit 1 }

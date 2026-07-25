@@ -68,7 +68,10 @@ test("every scenario the audit kept has somewhere to live", () => {
       assert.ok(debts.has(where.slice("DEBT:".length)), `${id} is deferred to ${where}, which is not in DEBT.md`);
       continue;
     }
-    assert.ok(fs.existsSync(path.join(root, where)), `${id} points at ${where}, which does not exist`);
+    // A ruling is a third honest destination — the audit itself is one — but
+    // it has to point at a document that exists and says so.
+    const target = where.startsWith("RULED:") ? where.slice("RULED:".length) : where;
+    assert.ok(fs.existsSync(path.join(root, target)), `${id} points at ${target}, which does not exist`);
   }
 });
 

@@ -233,6 +233,27 @@ test("SL-06: a filesystem receipt does not vouch for what it could not read", (t
   assert.match(payload.reasons.join(" "), /locked.*could not be read/u);
 });
 
+test("SL-06: a regime takes the modes it has, and says so about the ones it does not", (t) => {
+  const { root, session } = workspace(t);
+  fs.mkdirSync(path.join(root, "src"));
+  fs.writeFileSync(path.join(root, "src", "a.txt"), "x\n");
+  const loopId = openLoop(session(), {
+    root, goal: "g", claims: ["src"], criterionFile: path.join(root, "check.mjs"), roundsBudget: 5,
+    session: "s1", reason: "fixture", grantedBy: "self", receipts: "fs", commandId: "open",
+  }).loopId;
+
+  // Asking for a git commit and getting a filesystem snapshot without being
+  // told is evidence of a different kind than the one requested.
+  for (const mode of ["commit", "stage", "banana", undefined]) {
+    assert.throws(
+      () => receipt(session(), { root, loopId, mode, session: "s1", commandId: `r-${mode}` }),
+      (error) => error.code === "UNKNOWN_RECEIPT_MODE",
+      String(mode),
+    );
+  }
+  assert.ok(receipt(session(), { root, loopId, mode: "snapshot", session: "s1", commandId: "ok" }));
+});
+
 test("CC-04: a session is provenance, not routing — one may hold several loops at once", async (t) => {
   const { root, open, session, criterionFile } = workspace(t);
   for (const name of ["alpha", "beta"]) fs.mkdirSync(path.join(root, name));
