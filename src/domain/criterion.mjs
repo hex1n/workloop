@@ -30,10 +30,15 @@ export const MAX_SCANNED_BYTES = 256 * 1024;
 // Accumulates a stream without keeping it: the digest is folded in chunk by
 // chunk, and only a bounded window of text is retained. A criterion that
 // prints a gigabyte cannot make the runtime hold a gigabyte.
-function streamSink() {
+export function streamSink() {
   const hash = createHash("sha256");
   let kept = "";
   let bytes = 0;
+  // Memoised, because a hash can only be finalised once. Both the failure path
+  // and the close path build an execution record, and on a spawn that fails
+  // both can run — the second call used to throw *after* the promise had
+  // settled, which surfaces as an unhandled exception with no owner.
+  let digested = null;
   return {
     write(chunk) {
       hash.update(chunk);
@@ -42,7 +47,7 @@ function streamSink() {
     },
     get text() { return kept; },
     get truncated() { return bytes > kept.length; },
-    digest: () => `sha256:${hash.digest("hex")}`,
+    digest: () => (digested ??= `sha256:${hash.digest("hex")}`),
   };
 }
 

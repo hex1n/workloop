@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createStore } from "../src/store.mjs";
-import { EXIT, VERDICT_PREFIX } from "../src/domain/criterion.mjs";
+import { EXIT, VERDICT_PREFIX, streamSink } from "../src/domain/criterion.mjs";
 import { artifactCheckpoint, assertClaims, join, observe, openLoop, openLoopStore, suspend } from "../src/domain/loop.mjs";
 
 const CRITERION = `
@@ -97,6 +97,17 @@ test("a retried round does not pay for the criterion a second time", async (t) =
   assert.equal(runs(), 1, "the criterion ran once, not twice");
   assert.deepEqual(again.records.map((entry) => entry.seq), first.records.map((entry) => entry.seq));
   assert.equal(session().read().filter((entry) => entry.kind === "round_observed").length, 1);
+});
+
+test("a stream digest can be asked for twice", () => {
+  // A hash can only be finalised once. Both the failure path and the close
+  // path build an execution record, and a spawn that fails can run both — the
+  // second call then threw *after* the promise had settled, which surfaces as
+  // an unhandled exception with nobody to catch it.
+  const sink = streamSink();
+  sink.write("some output");
+  const first = sink.digest();
+  assert.equal(sink.digest(), first, "asking again gives the same answer instead of throwing");
 });
 
 test("a checkpoint survives what a real tree contains", (t) => {

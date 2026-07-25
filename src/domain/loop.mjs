@@ -48,6 +48,16 @@ export const ancestryCheck = (root) =>
 
 export const criterionDigestOf = (file) => sha256Hex(fs.readFileSync(file));
 
+// A workspace that is not there is not a failing round. Spawning the criterion
+// into a directory that no longer exists produces "could not reach a verdict",
+// which reads as a fact about the work — so the loop would spend a round, and
+// the log would say the check was inconclusive, over a worktree somebody
+// removed. Those are different answers and the loop is entitled to the right one.
+function assertWorkspace(root) {
+  if (typeof root !== "string" || root.length === 0) refuse("ROOT_REQUIRED", "this verb needs the workspace root");
+  if (!fs.existsSync(root)) refuse("NO_SUCH_WORKSPACE", `${root} does not exist; the workspace it names is gone`);
+}
+
 // A checkpoint over the claimed paths: what the artifacts looked like when the
 // round was observed. Two rounds with the same checkpoint changed nothing the
 // loop is responsible for.
@@ -272,6 +282,7 @@ export function receipt(store, { root, loopId, mode, session, commandId }) {
   const before = loopOf(store.replay().state, loopId);
   if (!isLive(before)) refuse("NOT_LIVE", `the loop is ${before.lifecycle}`);
   if (before.receipts !== RECEIPTS.GIT) refuse("NO_RECEIPT_REGIME", `this loop was opened with receipts: ${before.receipts}`);
+  assertWorkspace(root);
 
   const replay = (records) => ({ seq: records.at(-1).seq, records, replayed: true });
   const applied = store.commandRecords(commandId);
@@ -318,6 +329,7 @@ export async function observe(store, { root, loopId, session, commandId, timeout
   const storeState = store.replay().state;
   const before = loopOf(storeState, loopId);
   if (!isLive(before)) refuse("NOT_LIVE", `the loop is ${before.lifecycle}`);
+  assertWorkspace(root);
 
   // A retry of a round that already landed must not run the criterion again.
   // Discovering the replay only at the append layer would mean paying for the

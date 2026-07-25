@@ -185,33 +185,56 @@ export function scanForStores(root, { maxDepth = MAX_SCAN_DEPTH, maxEntries = MA
  * store is rare and being wrong about this is not recoverable by any later
  * check: by then both ledgers have history.
  */
+// Whether a prospective store and one found above it describe different git
+// repositories. Both must be git-kind: only then is there a boundary that
+// something other than this runtime enforces.
+function separateRepositories(root, outer, chosenKind) {
+  if (chosenKind !== KIND.GIT || outer.kind !== KIND.GIT) return false;
+  const mine = gitCommonDirectory(root);
+  return mine !== null && realOf(mine) !== realOf(path.dirname(outer.location));
+}
+
 export function siteForNewStore(root, { kind } = {}) {
   if (!fs.existsSync(root)) refuse("NO_SUCH_ROOT", `${root} does not exist`);
   const existing = resolveSite(root);
   if (existing !== null) refuse("STORE_EXISTS", `${root} already holds a ${existing.kind} store at ${existing.location}`);
 
+  if (kind !== undefined && !Object.values(KIND).includes(kind)) refuse("UNKNOWN_STORE_KIND", `${kind} is not a store kind; use ${Object.values(KIND).join(" or ")}`);
+  const chosenKind = kind ?? (sitesFor(root).git === null ? KIND.FS : KIND.GIT);
   let directory = path.dirname(path.resolve(root));
   for (;;) {
     const above = resolveSite(directory);
-    if (above !== null) refuse("STORE_NESTED_INSIDE", `${root} lies inside ${directory}, which already holds a store`);
+    // Nesting is refused because two ledgers would claim one set of files —
+    // but a nested *repository* is a different set of files, and git is what
+    // says so: the outer repo does not track the inner one's contents and its
+    // pathspecs cannot reach them. So the question is not "is this path
+    // inside that one" but "do these two ledgers describe the same tree".
+    // A filesystem store has no such boundary — its checkpoint walks
+    // everything under the root — so the exemption is git-only.
+    if (above !== null && !separateRepositories(root, above, chosenKind)) {
+      refuse("STORE_NESTED_INSIDE", `${root} lies inside ${directory}, which already holds a store over the same tree`);
+    }
+    if (above !== null) break;
     const parent = path.dirname(directory);
     if (parent === directory) break;
     directory = parent;
   }
 
-  const below = scanForStores(root);
-  if (below.found.length > 0) {
-    refuse("STORE_CONTAINS_NESTED", `${root} contains a store at ${below.found[0]}`);
-  }
-  if (below.exhausted) {
+  const below = scanForStores(root).found.filter((location) => {
+    // Same rule from the other side: a store belonging to a nested repository
+    // describes a tree this one does not reach.
+    const nested = path.dirname(path.dirname(location));
+    return !separateRepositories(nested, { kind: KIND.GIT, location }, chosenKind);
+  });
+  if (below.length > 0) refuse("STORE_CONTAINS_NESTED", `${root} contains a store at ${below[0]} over the same tree`);
+  if (scanForStores(root).exhausted) {
     // Said out loud rather than passed over. A caller that is told the check
     // was complete when it was not would take a silence for a guarantee.
     refuse("STORE_SCAN_INCOMPLETE", `${root} is too large or too deep to check for nested stores (limits: depth ${MAX_SCAN_DEPTH}, entries ${MAX_SCAN_ENTRIES})`);
   }
 
   const sites = sitesFor(root);
-  if (kind !== undefined && !Object.values(KIND).includes(kind)) refuse("UNKNOWN_STORE_KIND", `${kind} is not a store kind; use ${Object.values(KIND).join(" or ")}`);
-  const chosen = kind ?? (sites.git === null ? KIND.FS : KIND.GIT);
+  const chosen = chosenKind;
   if (chosen === KIND.GIT && sites.git === null) refuse("NOT_A_GIT_WORKSPACE", `${root} is not inside a git repository`);
   return { kind: chosen, location: chosen === KIND.GIT ? sites.git : sites.fs, root };
 }
