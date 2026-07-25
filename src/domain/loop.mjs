@@ -37,33 +37,98 @@ export const criterionDigestOf = (file) => sha256Hex(fs.readFileSync(file));
 // A checkpoint over the claimed paths: what the artifacts looked like when the
 // round was observed. Two rounds with the same checkpoint changed nothing the
 // loop is responsible for.
+export const MAX_CHECKPOINT_ENTRIES = 20_000;
+
 export function artifactCheckpoint(root, claims) {
   const entries = [];
-  const walk = (relative) => {
+  const walk = (relative, depth) => {
+    if (entries.length >= MAX_CHECKPOINT_ENTRIES) refuse("CLAIM_TOO_LARGE", `a claim expands past ${MAX_CHECKPOINT_ENTRIES} entries`);
+    // Depth is bounded rather than trusted: a symlink loop under a claim would
+    // otherwise walk until the stack gives out, and a checkpoint that crashes
+    // is worse than one that refuses.
+    if (depth > 64) refuse("CLAIM_TOO_DEEP", `${relative} nests deeper than 64 levels`);
     const absolute = path.join(root, relative);
     let stat;
     try {
-      stat = fs.statSync(absolute);
+      // lstat, not stat: a symlink is recorded as the link it is, so the walk
+      // cannot be led outside the claim or around in a circle.
+      stat = fs.lstatSync(absolute);
     } catch {
-      entries.push([relative, null]);
+      entries.push([relative, "absent"]);
+      return;
+    }
+    if (stat.isSymbolicLink()) {
+      entries.push([relative, `symlink:${sha256Hex(fs.readlinkSync(absolute))}`]);
       return;
     }
     if (stat.isDirectory()) {
-      for (const name of fs.readdirSync(absolute).sort()) walk(path.join(relative, name));
+      let names;
+      try {
+        names = fs.readdirSync(absolute).sort();
+      } catch (error) {
+        // Unreadable is a fact about the artifacts, not a reason to lose the
+        // whole observation: the criterion has already run by now.
+        entries.push([relative, `unreadable:${error.code ?? "unknown"}`]);
+        return;
+      }
+      for (const name of names) walk(path.join(relative, name), depth + 1);
       return;
     }
-    entries.push([relative, sha256Hex(fs.readFileSync(absolute))]);
+    if (!stat.isFile()) {
+      // Sockets, FIFOs and devices have no content worth hashing, and reading
+      // one could block forever.
+      entries.push([relative, `special:${stat.mode & fs.constants.S_IFMT}`]);
+      return;
+    }
+    try {
+      entries.push([relative, sha256Hex(fs.readFileSync(absolute))]);
+    } catch (error) {
+      entries.push([relative, `unreadable:${error.code ?? "unknown"}`]);
+    }
   };
-  for (const claim of [...claims].sort()) walk(claim);
+  for (const claim of [...claims].sort()) walk(claim, 0);
   return digestOf(entries);
 }
 
-export function openLoop(store, { goal, claims, criterionFile, roundsBudget, session, commandId }) {
-  if (typeof goal !== "string" || goal.trim().length === 0) refuse("GOAL_REQUIRED", "a loop needs a goal");
+// Claims name paths inside the workspace, relative to its root. Anything that
+// could resolve elsewhere, or that needs expanding before it means anything,
+// is refused: a claim the runtime cannot compare literally is a claim two
+// loops cannot be shown to be disjoint on.
+export function assertClaims(claims) {
   if (!Array.isArray(claims) || claims.length === 0) refuse("CLAIMS_REQUIRED", "a loop needs at least one write claim");
+  for (const claim of claims) {
+    if (typeof claim !== "string" || claim.length === 0) refuse("CLAIM_SHAPE", "a claim must be a non-empty path");
+    if (path.isAbsolute(claim)) refuse("CLAIM_SHAPE", `${claim} must be relative to the workspace root`);
+    if (/[*?[\]{}]/u.test(claim)) refuse("CLAIM_SHAPE", `${claim} is a pattern; claims are literal paths`);
+    const normalized = path.normalize(claim);
+    if (normalized.split(path.sep).includes("..")) refuse("CLAIM_SHAPE", `${claim} escapes the workspace root`);
+  }
+  const normalized = claims.map((claim) => path.normalize(claim));
+  if (new Set(normalized).size !== normalized.length) refuse("CLAIM_SHAPE", "claims must be distinct");
+  // Overlap makes "my paths" undecidable, which is the one thing claims exist
+  // to make decidable.
+  for (const outer of normalized) {
+    for (const inner of normalized) {
+      if (outer !== inner && (inner === outer || inner.startsWith(`${outer}${path.sep}`))) {
+        refuse("CLAIM_OVERLAP", `${inner} lies inside ${outer}`);
+      }
+    }
+  }
+  return [...normalized].sort();
+}
+
+export function openLoop(store, { goal, claims, criterionFile, roundsBudget, session, reason, grantedBy, commandId }) {
+  if (typeof goal !== "string" || goal.trim().length === 0) refuse("GOAL_REQUIRED", "a loop needs a goal");
   if (typeof session !== "string" || session.length === 0) refuse("SESSION_REQUIRED", "a loop records who opened it");
+  // Provenance is required at the seam, not merely allowed: a loop that cannot
+  // say who opened it and why is a loop nobody can audit later.
+  if (typeof reason !== "string" || reason.trim().length === 0) refuse("REASON_REQUIRED", "opening a loop records why");
+  if (grantedBy !== "self" && grantedBy !== "user") refuse("PROVENANCE_REQUIRED", "granted_by must be self or user");
   const criterionDigest = criterionDigestOf(criterionFile);
-  const payload = { goal, claims: [...claims].sort(), criterion_digest: criterionDigest, rounds_budget: roundsBudget, opened_by: session };
+  const payload = {
+    goal, claims: assertClaims(claims), criterion_digest: criterionDigest,
+    rounds_budget: roundsBudget, opened_by: session, reason, granted_by: grantedBy,
+  };
   return store.append({
     commandId,
     requestDigest: digestOf(payload),
@@ -99,6 +164,12 @@ export async function observe(store, { root, receiptDigest = null, session, comm
   if (!before.opened) refuse("NOT_OPEN", "no loop has been opened in this store");
   if (!isLive(before)) refuse("NOT_LIVE", `the loop is ${before.lifecycle}`);
 
+  // A retry of a round that already landed must not run the criterion again.
+  // Discovering the replay only at the append layer would mean paying for the
+  // whole check — minutes, sometimes — to be told the work was already done.
+  const alreadyApplied = store.commandRecords(commandId);
+  if (alreadyApplied !== null) return { seq: alreadyApplied.at(-1).seq, records: alreadyApplied, replayed: true };
+
   const expectedRevision = before.revision;
   const round = roundsSpent(before) + 1;
   if (criterionDigestOf(criterionFile) !== before.criterionDigest) {
@@ -113,7 +184,11 @@ export async function observe(store, { root, receiptDigest = null, session, comm
 
   return store.append({
     commandId,
-    requestDigest: digestOf({ round, checkpoint, receiptDigest, verdict: outcome.verdict, signature }),
+    // The request, not the result: what the caller asked for is what makes a
+    // retry recognisable. Digesting the outcome would make every retry look
+    // like a different command, because the criterion may legitimately say
+    // something new each time it runs.
+    requestDigest: digestOf({ round, session, receiptDigest, criterion: before.criterionDigest }),
     prepare: (state) => {
       // The optimistic check. It compares this loop's own revision, so a
       // neighbouring loop's activity can never invalidate this round — the
@@ -128,7 +203,10 @@ export async function observe(store, { root, receiptDigest = null, session, comm
         progress_signature: signature,
         artifact_checkpoint: checkpoint,
         receipt_digest: receiptDigest,
-        summary: outcome.execution.output_tail.slice(0, 2000),
+        // The tail again, not the head. output_tail is already the end of what
+        // the criterion printed; taking its first 2000 characters would throw
+        // away precisely the part that says what went wrong.
+        summary: outcome.execution.output_tail.slice(-2000),
         observed_by: session,
       });
       const projected = reduceLoop(state, { seq: state.revision + 1, ...observation });
@@ -150,12 +228,22 @@ export async function observe(store, { root, receiptDigest = null, session, comm
   });
 }
 
+// Pausing and resuming are decisions about someone else's work unless the
+// session making them is part of the loop. Knowing a loop's address is not
+// the same as having standing to move it.
+const assertParticipant = (state, session) => {
+  if (!state.participants.includes(session)) {
+    refuse("NOT_A_PARTICIPANT", `session ${session} has not taken part in this loop`);
+  }
+};
+
 export function suspend(store, { outcome, reason, session, commandId }) {
   return store.append({
     commandId,
-    requestDigest: digestOf({ outcome, reason }),
+    requestDigest: digestOf({ outcome, reason, session }),
     prepare: (state) => {
       if (!isLive(state)) refuse("NOT_LIVE", `the loop is already ${state.lifecycle}`);
+      assertParticipant(state, session);
       return [checked(KIND.SUSPENDED, { outcome, reason, suspended_by: session })];
     },
   });
@@ -164,10 +252,26 @@ export function suspend(store, { outcome, reason, session, commandId }) {
 export function resume(store, { reason, session, commandId }) {
   return store.append({
     commandId,
-    requestDigest: digestOf({ reason }),
+    requestDigest: digestOf({ reason, session }),
     prepare: (state) => {
       if (state.lifecycle !== "suspended") refuse("NOT_SUSPENDED", `the loop is ${state.lifecycle}`);
+      assertParticipant(state, session);
       return [checked(KIND.RESUMED, { reason, resumed_by: session })];
+    },
+  });
+}
+
+// Joining is how a new session gains standing. It is deliberately explicit:
+// the alternative is standing that accrues by accident.
+export function join(store, { session, reason, commandId }) {
+  return store.append({
+    commandId,
+    requestDigest: digestOf({ session, reason }),
+    prepare: (state) => {
+      if (!state.opened) refuse("NOT_OPEN", "no loop has been opened in this store");
+      if (state.lifecycle === "terminal") refuse("ALREADY_TERMINAL", "a finished loop cannot be joined");
+      if (state.participants.includes(session)) refuse("ALREADY_PARTICIPANT", `session ${session} is already taking part`);
+      return [checked(KIND.JOINED, { session, reason })];
     },
   });
 }

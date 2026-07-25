@@ -9,6 +9,7 @@ export const KIND = Object.freeze({
   OPENED: "loop_opened",
   OBSERVED: "round_observed",
   DECIDED: "round_decided",
+  JOINED: "loop_joined",
   SUSPENDED: "loop_suspended",
   RESUMED: "loop_resumed",
   TERMINAL: "loop_terminal",
@@ -22,7 +23,10 @@ export const DECISION = Object.freeze({
   PRODUCE_RECEIPT: "produce_receipt",
   REPAIR: "repair",
   COLLECT_EVIDENCE: "collect_evidence",
-  REVIEW: "review",
+  // `review` is deliberately absent. The design lists it as an option beside
+  // `stuck`, but nothing in this slice can produce a reviewer, and vocabulary
+  // that nothing writes is exactly the residue the audit spent its time
+  // removing. It returns when a reviewer does.
   STUCK: "stuck",
   ACHIEVED: "achieved",
   SUSPEND: "suspend",
@@ -39,6 +43,8 @@ export const loopVocabulary = createVocabulary({
       criterion_digest: { type: "digest" },
       rounds_budget: { type: "integer", min: 1, max: 10_000 },
       opened_by: { type: "string", max: 200 },
+      reason: { type: "string", max: 1000 },
+      granted_by: { type: "enum", values: ["self", "user"] },
     },
   },
   [KIND.OBSERVED]: {
@@ -58,6 +64,12 @@ export const loopVocabulary = createVocabulary({
     fields: {
       round: { type: "integer", min: 1 },
       decision: { type: "enum", values: Object.values(DECISION) },
+      reason: { type: "string", max: 1000 },
+    },
+  },
+  [KIND.JOINED]: {
+    fields: {
+      session: { type: "string", max: 200 },
       reason: { type: "string", max: 1000 },
     },
   },

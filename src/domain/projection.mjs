@@ -17,10 +17,18 @@ export const EMPTY = Object.freeze({
   suspension: null,
   outcome: null,
   rounds: [],
+  // Who is entitled to move this loop. Membership is earned by opening it or
+  // by observing a round, never by simply knowing its address.
+  participants: [],
   revision: 0,
 });
 
-const clone = (state) => ({ ...state, claims: [...state.claims], rounds: state.rounds.map((round) => ({ ...round })) });
+const clone = (state) => ({
+  ...state,
+  claims: [...state.claims],
+  participants: [...state.participants],
+  rounds: state.rounds.map((round) => ({ ...round })),
+});
 
 export function reduceLoop(state = EMPTY, record) {
   const next = clone(state ?? EMPTY);
@@ -36,8 +44,10 @@ export function reduceLoop(state = EMPTY, record) {
       next.claims = [...payload.claims];
       next.criterionDigest = payload.criterion_digest;
       next.roundsBudget = payload.rounds_budget;
+      next.participants = [payload.opened_by];
       break;
     case KIND.OBSERVED:
+      if (!next.participants.includes(payload.observed_by)) next.participants.push(payload.observed_by);
       next.rounds.push({
         round: payload.round,
         verdict: payload.verdict,
@@ -53,6 +63,9 @@ export function reduceLoop(state = EMPTY, record) {
       if (round !== undefined) round.decision = payload.decision;
       break;
     }
+    case KIND.JOINED:
+      if (!next.participants.includes(payload.session)) next.participants.push(payload.session);
+      break;
     case KIND.SUSPENDED:
       next.lifecycle = LIFECYCLE.SUSPENDED;
       next.suspension = payload.outcome;

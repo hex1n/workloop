@@ -12,7 +12,7 @@ import path from "node:path";
 import test from "node:test";
 import { createStore } from "../src/store.mjs";
 import { EXIT, VERDICT_PREFIX, readVerdict } from "../src/domain/criterion.mjs";
-import { abandon, amend, artifactCheckpoint, next, observe, openLoop, openLoopStore, resume, suspend } from "../src/domain/loop.mjs";
+import { abandon, amend, artifactCheckpoint, join, next, observe, openLoop, openLoopStore, resume, suspend } from "../src/domain/loop.mjs";
 import { DECISION, VERDICT } from "../src/domain/vocabulary.mjs";
 
 const OBSERVE_CHILD = path.resolve(import.meta.dirname, "helpers", "observe-child.mjs");
@@ -51,7 +51,7 @@ test("SL-03: three rounds, three sessions, one durable loop", async (t) => {
   const { root, location, session, criterionFile } = workspace(t);
 
   // Session 1 opens the loop and is told to implement.
-  openLoop(session(), { goal: "work.txt must mention alpha and beta", claims: ["work.txt"], criterionFile, roundsBudget: 3, session: "s1", commandId: "open" });
+  openLoop(session(), { goal: "work.txt must mention alpha and beta", claims: ["work.txt"], criterionFile, roundsBudget: 3, session: "s1", reason: "fixture", grantedBy: "self", commandId: "open" });
   const first = next(session());
   assert.equal(first.decision, DECISION.IMPLEMENT);
   assert.equal(first.round, 1);
@@ -106,7 +106,7 @@ test("SL-03: three rounds, three sessions, one durable loop", async (t) => {
 
 test("SL-04: the same failure against unchanged artifacts becomes stuck", async (t) => {
   const { root, session, criterionFile } = workspace(t);
-  openLoop(session(), { goal: "g", claims: ["work.txt"], criterionFile, roundsBudget: 10, session: "s1", commandId: "open" });
+  openLoop(session(), { goal: "g", claims: ["work.txt"], criterionFile, roundsBudget: 10, session: "s1", reason: "fixture", grantedBy: "self", commandId: "open" });
   write(root, "gamma\n");
   for (const round of [1, 2, 3]) {
     await observe(session(), { root, receiptDigest: receiptFor(root), session: "s1", criterionFile, commandId: `observe-${round}` });
@@ -120,7 +120,7 @@ test("SL-04: the same failure against unchanged artifacts becomes stuck", async 
 
 test("SL-05: an exhausted budget suspends, and an amendment brings the loop back", async (t) => {
   const { root, session, criterionFile } = workspace(t);
-  openLoop(session(), { goal: "g", claims: ["work.txt"], criterionFile, roundsBudget: 1, session: "s1", commandId: "open" });
+  openLoop(session(), { goal: "g", claims: ["work.txt"], criterionFile, roundsBudget: 1, session: "s1", reason: "fixture", grantedBy: "self", commandId: "open" });
   write(root, "gamma\n");
   await observe(session(), { root, receiptDigest: receiptFor(root), session: "s1", criterionFile, commandId: "observe-1" });
 
@@ -128,6 +128,10 @@ test("SL-05: an exhausted budget suspends, and an amendment brings the loop back
   assert.equal(session().read().at(-1).payload.outcome, "out_of_budget");
 
   amend(session(), { roundsBudget: 3, reason: "worth another try", commandId: "amend" });
+  // A session that has not taken part has no standing to move the loop, so it
+  // says so explicitly first.
+  assert.throws(() => resume(session(), { reason: "r", session: "s2", commandId: "resume-early" }), (error) => error.code === "NOT_A_PARTICIPANT");
+  join(session(), { session: "s2", reason: "taking over after the budget was raised", commandId: "join-s2" });
   resume(session(), { reason: "budget raised", session: "s2", commandId: "resume" });
   assert.equal(next(session()).decision, DECISION.REPAIR);
 
@@ -139,11 +143,12 @@ test("SL-05: an exhausted budget suspends, and an amendment brings the loop back
 test("SL-07: a round written against a moved loop is refused, not merged", async (t) => {
   const { root, session, criterionFile } = workspace(t);
   const store = session();
-  openLoop(store, { goal: "g", claims: ["work.txt"], criterionFile, roundsBudget: 5, session: "s1", commandId: "open" });
+  openLoop(store, { goal: "g", claims: ["work.txt"], criterionFile, roundsBudget: 5, session: "s1", reason: "fixture", grantedBy: "self", commandId: "open" });
   write(root, "gamma\n");
 
   // Another session suspends the loop while this one is mid-round. The
   // observation must not land on top of a loop that changed underneath it.
+  join(session(), { session: "s2", reason: "second session joins", commandId: "join-s2" });
   const observing = observe(store, { root, receiptDigest: receiptFor(root), session: "s1", criterionFile, commandId: "observe-1" });
   suspend(session(), { outcome: "needs_input", reason: "hold on", session: "s2", commandId: "suspend" });
   await assert.rejects(observing, (error) => error.code === "ROUND_STALE");
@@ -161,7 +166,7 @@ test("SL-09: a criterion that never returns is killed and reads as indeterminate
     fs.writeFileSync(${JSON.stringify(pidFile)}, String(descendant.pid));
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 60000);
   `);
-  openLoop(session(), { goal: "g", claims: ["work.txt"], criterionFile: slow, roundsBudget: 3, session: "s1", commandId: "open" });
+  openLoop(session(), { goal: "g", claims: ["work.txt"], criterionFile: slow, roundsBudget: 3, session: "s1", reason: "fixture", grantedBy: "self", commandId: "open" });
 
   const started = Date.now();
   await observe(session(), { root, receiptDigest: receiptFor(root), session: "s1", criterionFile: slow, timeoutMs: 700, commandId: "observe-1" });
@@ -182,7 +187,7 @@ test("SL-09: a criterion that never returns is killed and reads as indeterminate
 
 test("SL-12: a finished loop refuses further work", async (t) => {
   const { root, session, criterionFile } = workspace(t);
-  openLoop(session(), { goal: "g", claims: ["work.txt"], criterionFile, roundsBudget: 3, session: "s1", commandId: "open" });
+  openLoop(session(), { goal: "g", claims: ["work.txt"], criterionFile, roundsBudget: 3, session: "s1", reason: "fixture", grantedBy: "self", commandId: "open" });
   write(root, "alpha beta\n");
   await observe(session(), { root, receiptDigest: receiptFor(root), session: "s1", criterionFile, commandId: "observe-1" });
 
@@ -196,7 +201,7 @@ test("SL-12: a finished loop refuses further work", async (t) => {
 
 test("the criterion must be the one the loop was opened with", async (t) => {
   const { root, session, criterionFile } = workspace(t);
-  openLoop(session(), { goal: "g", claims: ["work.txt"], criterionFile, roundsBudget: 3, session: "s1", commandId: "open" });
+  openLoop(session(), { goal: "g", claims: ["work.txt"], criterionFile, roundsBudget: 3, session: "s1", reason: "fixture", grantedBy: "self", commandId: "open" });
   fs.appendFileSync(criterionFile, "\n// changed after opening\n");
   await assert.rejects(
     observe(session(), { root, receiptDigest: receiptFor(root), session: "s1", criterionFile, commandId: "observe-1" }),

@@ -35,3 +35,18 @@ test("the design the corpus specifies is present and names the corpus", () => {
   assert.match(design, /greenfield\/scenarios/u, "design does not point at the scenario corpus");
   assert.match(read("README.md"), /AUDIT-2026-07-25/u, "corpus README does not point at its audit");
 });
+
+test("no source file is binary, so nothing can hide from review", () => {
+  // A stray control byte once made src/domain/criterion.mjs read as binary to
+  // git and grep, which meant two review rounds never saw it. The gate now
+  // refuses that class of invisibility outright.
+  const root = path.resolve(import.meta.dirname, "..");
+  const walk = (directory) => fs.readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const full = path.join(directory, entry.name);
+    if (entry.isDirectory()) return entry.name === "node_modules" || entry.name.startsWith(".") ? [] : walk(full);
+    return entry.name.endsWith(".mjs") || entry.name.endsWith(".md") || entry.name.endsWith(".json") ? [full] : [];
+  });
+  for (const file of [...walk(path.join(root, "src")), ...walk(path.join(root, "tests")), ...walk(path.join(root, "greenfield"))]) {
+    assert.equal(fs.readFileSync(file).includes(0), false, `${path.relative(root, file)} contains a NUL byte`);
+  }
+});

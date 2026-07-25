@@ -265,6 +265,16 @@ export function openStore(location, {
       return load().records.filter((record) => record.seq >= fromSeq);
     },
 
+    // The records a command already wrote, or null if it never ran. Lets a
+    // caller recognise its own retry before doing expensive work that the log
+    // would only refuse afterwards.
+    commandRecords(commandId) {
+      const loaded = load();
+      const seen = loaded.commands.get(commandId);
+      if (seen === undefined) return null;
+      return loaded.records.filter((record) => seen.seqs.includes(record.seq));
+    },
+
     replay({ useSnapshot = true } = {}) {
       const loaded = load({ useSnapshot });
       return { state: loaded.state, seq: loaded.nextSeq - 1, headDigest: loaded.headDigest, snapshotUsed: loaded.snapshotUsed };
