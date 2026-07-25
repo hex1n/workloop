@@ -69,6 +69,14 @@ export function assertEdges(edges, { loops }) {
  */
 export function dependencyState(loop, { loops }, { isAncestor = null } = {}) {
   if (loop.dependsOn.length === 0) return { state: DEPENDENCY.NONE, unmet: [] };
+  // Refuse rather than guess. When an upstream certified on a commit, whether
+  // that commit is still reachable is not in the log, and answering from the
+  // log alone would report "satisfied" for the one condition that was never
+  // checked. Success is the answer that must never happen by accident — the
+  // same rule the criterion protocol is built on.
+  if (isAncestor === null && loop.dependsOn.some((edge) => loops[edge.loop_id]?.certificationCommit != null)) {
+    refuse("ANCESTRY_UNCHECKABLE", "this loop depends on work certified on a commit; checking it needs the workspace root");
+  }
   const unmet = [];
   for (const edge of loop.dependsOn) {
     const upstream = loops[edge.loop_id];

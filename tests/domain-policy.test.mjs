@@ -17,10 +17,10 @@ const fold = (records) => records.reduce((state, entry) => reduceLoop(state, ent
 const opened = (budget = 3, receipts = RECEIPTS.NONE) => record(KIND.OPENED, {
   goal: "make it green", claims: ["src"], criterion_digest: CRITERION, rounds_budget: budget, opened_by: "s1", receipts, depends_on: [],
 });
-const observed = (round, verdict, { signature = null, checkpoint = CHECKPOINT(round), receipt = digestOf({ r: round }), receiptState = "in_force" } = {}) =>
+const observed = (round, verdict, { signature = null, checkpoint = CHECKPOINT(round), receipt = digestOf({ r: round }), receiptState = "in_force", dependencyState = "none" } = {}) =>
   record(KIND.OBSERVED, {
     round, verdict, progress_signature: signature, artifact_checkpoint: checkpoint,
-    receipt_digest: receipt, receipt_state: receiptState, dependency_state: "none", summary: "", observed_by: "s1",
+    receipt_digest: receipt, receipt_state: receiptState, dependency_state: dependencyState, summary: "", observed_by: "s1",
   });
 
 test("an unopened loop asks for implementation and nothing else", () => {
@@ -56,6 +56,18 @@ test("GR-06/07: a satisfied criterion is not an achievement while its receipt is
   assert.notEqual(outcome.terminal, true, "and the loop stays open");
   // The same round with the receipt standing certifies.
   assert.equal(decide(fold([opened(3, RECEIPTS.GIT), observed(1, VERDICT.SATISFIED)])).decision, DECISION.ACHIEVED);
+});
+
+test("a round that recorded an unmet dependency blocks, with no help from the caller", () => {
+  // The gate's answer was written into the round, so the policy can reach it
+  // from the log alone — which is what lets a plain reader of the ledger see
+  // why a satisfied loop was not certified.
+  const blocked = fold([opened(3, RECEIPTS.NONE), observed(1, VERDICT.SATISFIED, { dependencyState: "unmet" })]);
+  assert.equal(decide(blocked).decision, DECISION.BLOCKED);
+  assert.notEqual(decide(blocked).terminal, true, "blocked is not an ending");
+  // A caller that has just re-checked overrides the record: the round says
+  // what was true then, not what is true now.
+  assert.equal(decide(blocked, { dependency: { state: "satisfied", unmet: [] } }).decision, DECISION.ACHIEVED);
 });
 
 test("an indeterminate verdict asks for evidence rather than counting as failure", () => {

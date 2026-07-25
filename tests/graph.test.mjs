@@ -9,7 +9,7 @@ import test from "node:test";
 import { createStore } from "../src/store.mjs";
 import { EXIT, VERDICT_PREFIX } from "../src/domain/criterion.mjs";
 import { UNMET } from "../src/domain/graph.mjs";
-import { abandon, amend, next, observe, openLoop, openLoopStore, ready, receipt } from "../src/domain/loop.mjs";
+import { abandon, amend, next, observe, openLoop, openLoopStore, ready, receipt, resume, suspend } from "../src/domain/loop.mjs";
 import { DECISION, VERDICT } from "../src/domain/vocabulary.mjs";
 
 // One criterion, parameterised by the file it checks, so two loops in one store
@@ -80,11 +80,16 @@ test("GE-01: edges are declared at open, validated there, and frozen afterwards"
   const record = session().read().find((entry) => entry.digest === beta);
   assert.deepEqual(record.payload.depends_on, [{ loop_id: alpha, pinned_certification_digest: null }]);
 
-  // Frozen: `amend` has no way to name an edge, so the only route to a
-  // different dependency is a different loop. That is what makes A→B→A
-  // unconstructible rather than merely refused — see §4 of the slice spec.
-  amend(session(), { loopId: alpha, dependsOn: [beta], reason: "try to add an edge", commandId: "amend" });
-  assert.deepEqual(session().replay().state.loops[alpha].dependsOn, [], "amending cannot grow an edge");
+  // Frozen — and frozen out loud. Dropping the argument would leave the caller
+  // believing the dependency had changed, and it is that silence, not the
+  // immutability, that would make the graph untrustworthy.
+  const before = session().read().length;
+  assert.throws(
+    () => amend(session(), { loopId: alpha, dependsOn: [beta], reason: "try to add an edge", commandId: "amend" }),
+    (error) => error.code === "EDGE_IMMUTABLE",
+  );
+  assert.equal(session().read().length, before, "and it writes nothing");
+  assert.deepEqual(session().replay().state.loops[alpha].dependsOn, []);
 });
 
 test("GE-01: an abandoned upstream is refused; longer cycles cannot be built at all", (t) => {
@@ -173,8 +178,27 @@ test("CC-02: two loops in one store cannot claim the same paths", (t) => {
   assert.throws(() => open("beta", { claims: ["."], commandId: "root-claim" }), (error) => error.code === "CLAIM_TAKEN");
 });
 
+test("CC-02: a suspended loop keeps its claims; an abandoned one gives them back", (t) => {
+  const { session, open } = workspace(t);
+  const alpha = open("alpha");
+
+  // Suspension is a pause, not a release: the work is still somebody's.
+  suspend(session(), { loopId: alpha, outcome: "needs_input", reason: "which schema?", session: "s1", commandId: "suspend" });
+  assert.throws(() => open("beta", { claims: ["alpha"], commandId: "while-suspended" }), (error) => error.code === "CLAIM_TAKEN");
+
+  // Abandonment is a release: nobody is coming back for those paths.
+  resume(session(), { loopId: alpha, reason: "answered", session: "s1", commandId: "resume" });
+  abandon(session(), { loopId: alpha, reason: "not doing this after all", commandId: "abandon" });
+  const reopened = open("beta", { claims: ["alpha"], commandId: "after-abandon" });
+  assert.ok(reopened, "the same scope can be claimed again");
+  assert.notEqual(reopened, alpha, "by a new loop, with its own identity");
+});
+
 test("CC-07: disjoint loops interleave for their whole lives without invalidating each other", async (t) => {
-  const { root, session, open, criterionFor } = workspace(t);
+  // In a repository, so the interleaving covers the receipt window the
+  // scenario names — the git index is the one piece of state the two loops
+  // genuinely share, and it is where a false conflict would come from.
+  const { root, session, open, criterionFor } = workspace(t, { asRepo: true });
   const alpha = open("alpha");
   const beta = open("beta");
 
@@ -183,6 +207,7 @@ test("CC-07: disjoint loops interleave for their whole lives without invalidatin
   // stale — the exact failure this design was rebuilt to not have.
   for (const round of [1, 2]) {
     for (const [name, id] of [["alpha", alpha], ["beta", beta]]) {
+      receipt(session(), { root, loopId: id, mode: "commit", session: "s1", commandId: `${name}-receipt-${round}` });
       await observe(session(), { root, loopId: id, session: "s1", criterionFile: criterionFor(name), commandId: `${name}-${round}` });
     }
   }
@@ -196,9 +221,34 @@ test("CC-07: disjoint loops interleave for their whole lives without invalidatin
   // And both finish.
   for (const [name, id] of [["alpha", alpha], ["beta", beta]]) {
     fs.writeFileSync(path.join(root, name, "work.txt"), "done\n");
+    receipt(session(), { root, loopId: id, mode: "commit", session: "s1", commandId: `${name}-receipt-final` });
     await observe(session(), { root, loopId: id, session: "s1", criterionFile: criterionFor(name), commandId: `${name}-final` });
-    assert.equal(next(session(), { loopId: id }).decision, DECISION.ACHIEVED, name);
+    assert.equal(next(session(), { root, loopId: id }).decision, DECISION.ACHIEVED, name);
   }
+});
+
+test("a read that cannot check ancestry refuses rather than reporting satisfied", async (t) => {
+  const { root, session, open, finish } = workspace(t, { asRepo: true });
+  const alpha = open("alpha");
+  const beta = open("beta", { dependsOn: [alpha] });
+  await finish("alpha", alpha);
+
+  // With the workspace in hand both reads answer, and agree with the gate.
+  assert.deepEqual(ready(session(), { root }), [beta]);
+  assert.notEqual(next(session(), { root, loopId: beta }).decision, DECISION.BLOCKED);
+
+  // Without it, the ancestry condition is simply not knowable from the log.
+  // Reporting "satisfied" there would be the runtime certifying on a check it
+  // never ran — so it refuses, and says which answer it is missing.
+  for (const call of [() => ready(session()), () => next(session(), { loopId: beta })]) {
+    assert.throws(call, (error) => error.code === "ANCESTRY_UNCHECKABLE");
+  }
+
+  // The upstream's commit is rewritten away: now both the read and the gate
+  // say the same thing, which is the whole point of asking git in both.
+  git(root, "reset", "-q", "--hard", "HEAD~1");
+  assert.equal(next(session(), { root, loopId: beta }).decision, DECISION.BLOCKED);
+  assert.deepEqual(ready(session(), { root }), []);
 });
 
 test("GE-04 / GE-06: end to end in a repository, across sessions, with ancestry enforced", async (t) => {

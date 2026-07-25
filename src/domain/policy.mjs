@@ -41,6 +41,24 @@ export function decide(state, { stuckThreshold = DEFAULT_STUCK_THRESHOLD, depend
   }
 
   const last = lastRound(state);
+  // The dependency gate, asked once and early. It does not stop the work from
+  // being done or the observation from being recorded — `observe` never reads
+  // a directive — but a directive that says "implement" to a loop whose result
+  // cannot be certified is telling the host something untrue. This is also
+  // what keeps `next` and `ready` answering the same question the same way.
+  // The round recorded what the gate saw, so the log alone can answer it; a
+  // caller that has just re-checked passes its own result and wins, because
+  // the record describes the moment of the round rather than now.
+  const gate = dependency ?? { state: last === null ? DEPENDENCY.NONE : last.dependencyState, unmet: [] };
+  if (gate.state === DEPENDENCY.UNMET) {
+    const first = gate.unmet?.[0];
+    return {
+      decision: DECISION.BLOCKED,
+      reason: first === undefined
+        ? "dependency_unmet: an upstream loop is not finished"
+        : `dependency_unmet: ${first.loop_id.slice(0, 19)} is ${first.reason}`,
+    };
+  }
   // Evidence that arrived after the last round is evidence no judgment has
   // seen. Without this the runtime answers "produce a receipt" to a host that
   // just produced one, and the directive never leads anywhere new.
@@ -51,19 +69,6 @@ export function decide(state, { stuckThreshold = DEFAULT_STUCK_THRESHOLD, depend
     : { decision: DECISION.PRODUCE_RECEIPT, reason: `no receipt is in force (${last.receiptState})` });
 
   if (last !== null && last.verdict === VERDICT.SATISFIED) {
-    // The dependency gate. It stops the certification, never the work: the
-    // criterion has already run, and a loop whose upstream is not finished is
-    // not failing — it is early.
-    const unmet = dependency ?? (last.dependencyState === DEPENDENCY.UNMET ? { state: DEPENDENCY.UNMET, unmet: [] } : null);
-    if (unmet !== null && unmet.state === DEPENDENCY.UNMET) {
-      const first = unmet.unmet?.[0];
-      return {
-        decision: DECISION.BLOCKED,
-        reason: first === undefined
-          ? "a dependency is unmet"
-          : `dependency_unmet: ${first.loop_id.slice(0, 19)} is ${first.reason}`,
-      };
-    }
     // A satisfied criterion is half of an achievement. Under the git regime
     // the other half is evidence that still describes the task paths — a
     // receipt that has drifted, been rebased away, or never landed leaves the

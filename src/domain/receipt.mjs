@@ -250,8 +250,7 @@ export function receiptStanding({ root, receipt, claims, storeLocation }) {
   if (receipt.mode !== MODE.COMMIT || receipt.commit_oid === null) return { standing: STANDING.UNLANDED, drift: [] };
 
   assertGitWorkspace(root);
-  const landed = git(root, ["merge-base", "--is-ancestor", receipt.commit_oid, "HEAD"], { tolerate: [1, 128] });
-  if (landed.status !== 0) return { standing: STANDING.UNLANDED, drift: [] };
+  if (!isAncestorCommit(root, receipt.commit_oid)) return { standing: STANDING.UNLANDED, drift: [] };
 
   const excluded = controlPlane(root, storeLocation);
   const specs = ["--", ...claims, ...excludeSpecs(excluded)];

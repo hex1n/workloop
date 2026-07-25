@@ -36,9 +36,14 @@ export function loopOf(state, loopId) {
 }
 
 // The frontier. A read: it changes nothing, and it hands back ids, not work.
-export function ready(store, options = {}) {
-  return readyLoops(store.replay().state, options);
+export function ready(store, { root, ...options } = {}) {
+  return readyLoops(store.replay().state, { ...options, ...ancestryCheck(root) });
 }
+
+// Supplied only when the host offers a workspace: the question needs git, and
+// a read that cannot reach git must say so rather than assume the answer.
+const ancestryCheck = (root) =>
+  (typeof root === "string" ? { isAncestor: (upstream) => isAncestorCommit(root, upstream.certificationCommit) } : {});
 
 export const criterionDigestOf = (file) => sha256Hex(fs.readFileSync(file));
 
@@ -162,12 +167,13 @@ export function openLoop(store, { goal, claims, criterionFile, roundsBudget, ses
 // Pure read. While the state does not move, this returns the same directive,
 // which is what lets a host ask again after a crash without wondering whether
 // it has been given new work.
-export function next(store, { loopId, ...options } = {}) {
+export function next(store, { loopId, root, ...options } = {}) {
   const { state } = store.replay();
   const loop = loopOf(state, loopId);
+  const checked_ = { ...options, ...ancestryCheck(root) };
   return {
     loop_id: loopId,
-    ...nextDirective(loop, { ...options, dependency: dependencyState(loop, state, options) }),
+    ...nextDirective(loop, { ...checked_, dependency: dependencyState(loop, state, checked_) }),
   };
 }
 
@@ -263,9 +269,7 @@ export async function observe(store, { root, loopId, session, commandId, timeout
 
   // The dependency gate, evaluated now for the same reason the receipt is: the
   // ancestry half of it has to ask git, and the policy stays pure.
-  const dependency = dependencyState(before, storeState, {
-    isAncestor: (upstream) => isAncestorCommit(root, upstream.certificationCommit),
-  });
+  const dependency = dependencyState(before, storeState, ancestryCheck(root));
 
   const signature = outcome.verdict === VERDICT.UNSATISFIED
     ? progressSignature({ criterionDigest: before.criterionDigest, artifactCheckpoint: checkpoint, receiptDigest, failures: outcome.failures })
@@ -373,7 +377,11 @@ export function join(store, { loopId, session, reason, commandId }) {
 
 // Changing what the loop is for is a person's act, never the runtime's, so the
 // vocabulary itself refuses any provenance but "user".
-export function amend(store, { loopId, roundsBudget = null, criterionFile = null, goal = null, reason, commandId }) {
+export function amend(store, { loopId, roundsBudget = null, criterionFile = null, goal = null, reason, dependsOn, commandId }) {
+  // Named, only to be refused. Dropping an unrecognised argument would leave
+  // the caller believing the dependency changed, and it is that silence —
+  // not the immutability — that would make the graph untrustworthy.
+  if (dependsOn !== undefined) refuse("EDGE_IMMUTABLE", "edges are declared when a loop is opened; a different dependency is a different loop");
   const criterionDigest = criterionFile === null ? null : criterionDigestOf(criterionFile);
   const payload = { loop_id: loopId, rounds_budget: roundsBudget, criterion_digest: criterionDigest, goal, reason, granted_by: "user" };
   return store.append({
