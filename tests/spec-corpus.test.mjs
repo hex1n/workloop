@@ -99,3 +99,54 @@ test("no source file is binary, so nothing can hide from review", () => {
     assert.equal(fs.readFileSync(file).includes(0), false, `${path.relative(root, file)} contains a NUL byte`);
   }
 });
+
+test("the runtime only ever reads git, apart from the one write the receipt is", () => {
+  // D-01's flip condition, enforced rather than remembered. The debt ledger's
+  // own rule is that a debt lives here and not in somebody's memory — but the
+  // *premise* of D-01 ("the runtime has no authority to rewrite history") was
+  // living exactly there, re-checked by hand whenever someone thought to.
+  //
+  // Repair means revert, amend, reset, rebase. Those are execution, and
+  // execution belongs to the host. The day one of them appears in this list,
+  // the host contract has changed and D-01 must be reopened — so the list is
+  // what says so, not a note.
+  const root = path.resolve(import.meta.dirname, "..");
+  const subcommands = new Set();
+  for (const relative of fs.readdirSync(path.join(root, "src"), { recursive: true })) {
+    const file = path.join(root, "src", relative);
+    if (!file.endsWith(".mjs") || !fs.statSync(file).isFile()) continue;
+    const source = fs.readFileSync(file, "utf8");
+    for (const match of source.matchAll(/(?:spawnSync\(\s*"git"\s*,\s*|git\([^,]+,\s*)\[\s*"([a-z][a-z-]*)"/gu)) {
+      subcommands.add(match[1]);
+    }
+  }
+  // `add` and `commit` are the receipt, and the receipt is the one thing the
+  // runtime is allowed to do to a repository. Everything else here reads.
+  assert.deepEqual([...subcommands].sort(), [
+    "add", "commit", "diff", "diff-tree", "log", "ls-files", "ls-tree", "merge-base", "rev-parse",
+  ], "the set of git subcommands changed; if a write was added, the host contract changed with it");
+
+  // Rewriting the past never happens by a flag either — `commit --amend` is a
+  // `commit`, and would pass the check above untouched.
+  const sources = [...fs.readdirSync(path.join(root, "src"), { recursive: true })]
+    .filter((relative) => relative.endsWith(".mjs"))
+    .map((relative) => fs.readFileSync(path.join(root, "src", relative), "utf8")).join("\n");
+  for (const rewriting of ["--amend", "--force", "--force-with-lease", "--hard", "--no-verify"]) {
+    assert.equal(sources.includes(`"${rewriting}"`), false, `${rewriting} rewrites or bypasses history, which is the host's to do`);
+  }
+});
+
+test("no verb selects a worktree, which is the premise D-07 rests on", () => {
+  // D-07 is deferred because the check it describes has no caller: nothing
+  // takes a worktree or a branch, so there is nothing to validate. That premise
+  // was re-read by hand and dated in DEBT.md. Here it is asked of the table the
+  // shell actually dispatches on, every run.
+  const root = path.resolve(import.meta.dirname, "..");
+  const shell = fs.readFileSync(path.join(root, "src", "cli.mjs"), "utf8");
+  const flags = new Set([...shell.matchAll(/^ {2}\w+: \[([^\]]+)\],$/gmu)]
+    .flatMap((match) => [...match[1].matchAll(/"([a-z-]+)"/gu)].map((flag) => flag[1])));
+  assert.ok(flags.size > 0, "no flags were found, so this proves nothing");
+  for (const selector of ["worktree", "branch", "ref", "revision", "commit", "head"]) {
+    assert.equal(flags.has(selector), false, `--${selector} selects work in the repository; D-07's check now has a caller and must be built`);
+  }
+});
