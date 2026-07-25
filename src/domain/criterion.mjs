@@ -10,6 +10,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
+import { StringDecoder } from "node:string_decoder";
 import { digestOf } from "../canonical.mjs";
 import { MAX_FAILURES, MAX_FAILURE_ID, VERDICT } from "./vocabulary.mjs";
 
@@ -33,20 +34,32 @@ export const MAX_SCANNED_BYTES = 256 * 1024;
 export function streamSink() {
   const hash = createHash("sha256");
   let kept = "";
-  let bytes = 0;
+  let written = 0;
   // Memoised, because a hash can only be finalised once. Both the failure path
   // and the close path build an execution record, and on a spawn that fails
   // both can run — the second call used to throw *after* the promise had
   // settled, which surfaces as an unhandled exception with no owner.
   let digested = null;
+  // Decoded across chunk boundaries, not per chunk. A chunk ends wherever the
+  // pipe happened to break, and stringifying each one on its own splits any
+  // multi-byte character that straddles the seam into replacement characters —
+  // which lands in the summary a person reads and in the failure identifiers a
+  // signature is built from.
+  const decoder = new StringDecoder("utf8");
   return {
     write(chunk) {
       hash.update(chunk);
-      bytes += chunk.length;
-      kept = (kept + chunk).slice(-MAX_SCANNED_BYTES);
+      const text = decoder.write(chunk);
+      // Counted in the same units as the window it is compared against.
+      // `chunk.length` is bytes and `kept.length` is characters, so every
+      // criterion that printed any non-ASCII reported itself truncated when
+      // nothing had been dropped — and the workflow tells a host to check this
+      // field before trusting a verdict.
+      written += text.length;
+      kept = (kept + text).slice(-MAX_SCANNED_BYTES);
     },
     get text() { return kept; },
-    get truncated() { return bytes > kept.length; },
+    get truncated() { return written > kept.length; },
     digest: () => (digested ??= `sha256:${hash.digest("hex")}`),
   };
 }

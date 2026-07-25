@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createStore } from "../src/store.mjs";
-import { EXIT, VERDICT_PREFIX, streamSink } from "../src/domain/criterion.mjs";
+import { EXIT, MAX_SCANNED_BYTES, VERDICT_PREFIX, streamSink } from "../src/domain/criterion.mjs";
 import { artifactCheckpoint, assertClaims, join, observe, openLoop, openLoopStore, suspend } from "../src/domain/loop.mjs";
 
 const CRITERION = `
@@ -148,4 +148,31 @@ test("a checkpoint survives what a real tree contains", (t) => {
 
   // A claim that names nothing is a fact, not an error.
   assert.match(artifactCheckpoint(root, ["never-created"]), /^sha256:/u);
+});
+
+test("nothing is reported as truncated that was not, and a split character is not broken", () => {
+  // Found by using it: a criterion whose test names are Chinese reported
+  // `output_truncated: true` on a few kilobytes of output. The counter added
+  // `chunk.length` — bytes, because the chunk is a Buffer — and compared it
+  // with `kept.length`, which is characters. Every non-ASCII criterion was
+  // therefore permanently truncated, and the workflow tells a host to check
+  // that field before trusting the verdict.
+  const cjk = streamSink();
+  cjk.write(Buffer.from("分页:第 2 页每页 2 条\n"));
+  assert.equal(cjk.truncated, false, "nothing was dropped, so nothing may say it was");
+
+  // Chunks break wherever the pipe breaks. Stringifying each one alone turns a
+  // character straddling the seam into replacement characters — in the summary
+  // a person reads, and in the identifiers a progress signature is built from.
+  const split = streamSink();
+  const bytes = Buffer.from("第二页\n");
+  split.write(bytes.subarray(0, 4));
+  split.write(bytes.subarray(4));
+  assert.equal(split.text, "第二页\n", "the character survives the seam");
+  assert.equal(split.truncated, false);
+
+  // And the flag still fires when it should.
+  const overflowing = streamSink();
+  overflowing.write(Buffer.from("x".repeat(MAX_SCANNED_BYTES + 1)));
+  assert.equal(overflowing.truncated, true, "past the window, and it says so");
 });
