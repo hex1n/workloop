@@ -8,12 +8,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { sha256Hex } from "../src/canonical.mjs";
+import { digestOf, sha256Hex } from "../src/canonical.mjs";
 import { CLASSES, createLockManager } from "../src/locks.mjs";
 import { createStore } from "../src/store.mjs";
-import { pathContains } from "../src/site.mjs";
-import { EXIT, VERDICT_PREFIX } from "../src/domain/criterion.mjs";
-import { assertClaims, next, observe, openLoop, openLoopStore } from "../src/domain/loop.mjs";
+import { canonicalPath, isUnder, pathContains, systemPath } from "../src/site.mjs";
+import { EventEmitter } from "node:events";
+import { EXIT, VERDICT_PREFIX, killTree } from "../src/domain/criterion.mjs";
+import { assertClaims, claimIdentity, next, observe, openLoop, openLoopStore } from "../src/domain/loop.mjs";
 
 // Spaces and CJK in every path the runtime touches.
 const AWKWARD = "工 作 区 with spaces";
@@ -61,15 +62,34 @@ test("WN-02: a path full of spaces and non-ASCII changes nothing about the seman
   assert.deepEqual(leftovers, [], "no staging files survived");
 });
 
-test("WN-02: path containment is decided on this platform's separator", () => {
-  // The comparison used to hard-code `/`. On Windows a claim identity is built
-  // with `\`, so `src` and `src\nested` did not look nested and two loops could
-  // hold overlapping paths — CC-02's invariant, broken on one platform only.
-  const nested = ["src", "nested"].join(path.sep);
-  assert.equal(pathContains(nested, "src"), true, `${nested} lies inside src`);
-  assert.equal(pathContains("src", nested), true);
+test("WN-02: the log holds one path form, whoever wrote it", (t) => {
+  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-form-")));
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(root, "src", "nested"), { recursive: true });
+
+  // Whatever separator the caller types, the identity that reaches the log is
+  // the same string. Two forms of one path digested differently and lost
+  // containment altogether when a store was written on one platform and read
+  // on another — the same bug as comparing on a hard-coded separator, only
+  // deferred until somebody shared the repository.
+  const identity = claimIdentity(root, path.join("src", "nested"));
+  assert.equal(identity, "src/nested", "one form, not this platform's form");
+  assert.equal(claimIdentity(root, "src/nested"), identity);
+  assert.equal(digestOf([identity]), digestOf(["src/nested"]), "and so one digest, on any machine");
+  // The pair round-trips on every platform. The conversion itself only does
+  // anything where `path.sep` is not `/` — and it must not do anything here,
+  // since a backslash is a legal character in a POSIX filename. So this pins
+  // the contract; only Windows CI can catch the conversion going missing.
+  assert.equal(canonicalPath(["src", "nested"].join(path.sep)), "src/nested");
+  assert.equal(systemPath(canonicalPath(["a b", "c"].join(path.sep))), ["a b", "c"].join(path.sep));
+
+  assert.equal(pathContains("src/nested", "src"), true);
+  assert.equal(pathContains("src", "src/nested"), true);
   assert.equal(pathContains("src", "srcs"), false, "a shared prefix is not containment");
   assert.equal(pathContains(".", "anything"), true, "the root contains everything");
+  // Directional, for exclusions: `.` overlaps everything but is not inside it.
+  assert.equal(isUnder("src/nested", "src"), true);
+  assert.equal(isUnder(".", "src"), false);
 });
 
 test("WN-02: two loops cannot hold a path and a path inside it", (t) => {
@@ -86,10 +106,64 @@ test("WN-02: two loops cannot hold a path and a path inside it", (t) => {
   }).loopId;
 
   open(["src"], "outer");
-  // Nested, expressed the way a caller on this platform would express it.
+  // Nested, expressed the way a caller on this platform would express it. It
+  // is canonicalised on the way in, so the overlap is seen wherever it runs.
   assert.throws(() => open([path.join("src", "nested")], "inner"), (error) => error.code === "CLAIM_TAKEN");
   // And within a single loop's own claims.
   assert.throws(() => assertClaims(root, ["src", path.join("src", "nested")]), (error) => error.code === "CLAIM_OVERLAP");
+});
+
+// A stand-in for `taskkill` that reports whatever the test needs, so the
+// Windows branch runs wherever these tests run. A branch that can only execute
+// on the machine that has the bug is a branch nobody checks.
+const fakeKiller = (outcomes) => {
+  let call = 0;
+  return () => {
+    const outcome = outcomes[Math.min(call, outcomes.length - 1)];
+    call += 1;
+    const emitter = new EventEmitter();
+    queueMicrotask(() => {
+      if (outcome === "unlaunchable") emitter.emit("error", new Error("ENOENT"));
+      else emitter.emit("close", outcome === "felled" ? 0 : 1);
+    });
+    return emitter;
+  };
+};
+
+const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+
+test("WN-04: an exited process is not killed again", () => {
+  let attempted = false;
+  killTree({ exitCode: 0, signalCode: null, pid: 1 }, () => {}, {
+    platform: "win32", spawnKiller: () => { attempted = true; return new EventEmitter(); },
+  });
+  assert.equal(attempted, false, "nothing to fell, nothing attempted");
+});
+
+test("WN-04: the tree kill retries once before giving up", async () => {
+  const child = { exitCode: null, signalCode: null, pid: 1, kill() { this.killed = true; } };
+  let reported = null;
+  killTree(child, (felled) => { reported = felled; }, {
+    platform: "win32", spawnKiller: fakeKiller(["failed", "felled"]),
+  });
+  await settle();
+  assert.equal(reported, true, "a transient failure is the common one, so it is retried");
+  assert.notEqual(child.killed, true, "and the fallback was not needed");
+});
+
+test("WN-04: a kill mechanism that cannot even start counts as a failure, not a success", async () => {
+  // The shape that made this necessary: `spawn` does not throw when the
+  // executable is missing, it emits `error` afterwards. An implementation that
+  // only guarded the call reported every Windows kill as successful —
+  // including the one case the fallback existed for.
+  const child = { exitCode: null, signalCode: null, pid: 1, kill() { this.killed = true; } };
+  let reported = null;
+  killTree(child, (felled) => { reported = felled; }, {
+    platform: "win32", spawnKiller: fakeKiller(["unlaunchable"]),
+  });
+  await settle();
+  assert.equal(reported, false, "an unlaunchable killer is not a felled tree");
+  assert.equal(child.killed, true, "the child itself is still ended");
 });
 
 test("WN-05: the criterion lease waits for a dead owner's deadline, then reclaims it", (t) => {

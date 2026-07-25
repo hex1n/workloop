@@ -13,7 +13,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { digestOf } from "../canonical.mjs";
-import { controlPlanePaths as controlPlane, realOf as real } from "../site.mjs";
+import { controlPlanePaths as controlPlane, realOf as real, systemPath } from "../site.mjs";
 import { refuse } from "./error.mjs";
 
 export const MODE = Object.freeze({ STAGE: "stage", COMMIT: "commit" });
@@ -93,7 +93,7 @@ const stagedPaths = (root) => lines(git(root, ["diff", "--cached", "--name-only"
 // deletion is still staged as the change it is.
 function livePathspecs(root, claims) {
   return claims.filter((claim) =>
-    fs.existsSync(path.join(root, claim))
+    fs.existsSync(path.join(root, systemPath(claim)))
     || lines(git(root, ["ls-files", "--", claim]).stdout).length > 0);
 }
 

@@ -81,15 +81,29 @@ export const realOf = (target) => {
  * other, on this platform's separator.
  *
  * Kept in one place because there used to be two, and one of them compared on
- * a hard-coded `/`. On Windows a claim identity is built with `\`, so `src`
- * and `src\nested` did not look nested and two loops could hold overlapping
- * paths. The git-side comparison in the receipt adapter is deliberately
- * separate: git speaks `/` on every platform, so the same-looking code is
- * correct there for a different reason.
+ * a hard-coded `/` while identities were built with the platform separator.
+ * Both are now `/`: the log holds one form regardless of who wrote it, which
+ * is what makes a claim mean the same thing — and digest the same — wherever
+ * the store is read. The git-side comparison in the receipt adapter stays
+ * separate, and now agrees by construction rather than by coincidence.
  */
 export const pathContains = (left, right) =>
   left === right || left === "." || right === "."
-  || left.startsWith(`${right}${path.sep}`) || right.startsWith(`${left}${path.sep}`);
+  || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+
+// A workspace path as the log writes it, and as the log's readers compare it.
+// One form, chosen once: `\` and `/` for the same place produced different
+// digests and lost containment entirely when a store was written on one
+// platform and read on another — the same class of bug as comparing on a
+// hard-coded separator, only deferred until somebody shared the repository.
+// Directional, unlike `pathContains`: "is this path inside that one". The
+// symmetric form answers "do these two overlap", which is the right question
+// for two claims and the wrong one for an exclusion — `.` overlaps everything,
+// so asking it symmetrically excludes the whole tree.
+export const isUnder = (candidate, prefix) => candidate === prefix || candidate.startsWith(`${prefix}/`);
+
+export const canonicalPath = (value) => value.split(path.sep).join("/");
+export const systemPath = (value) => value.split("/").join(path.sep);
 
 const swapCase = (name) => [...name].map((ch) => (ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase())).join("");
 

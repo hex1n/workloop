@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { digestOf, sha256Hex } from "../canonical.mjs";
 import { CLASSES } from "../locks.mjs";
-import { caseInsensitiveVolume, controlPlanePaths, pathContains, realOf } from "../site.mjs";
+import { canonicalPath, caseInsensitiveVolume, controlPlanePaths, isUnder, pathContains, realOf, systemPath } from "../site.mjs";
 import { openStore } from "../store.mjs";
 import { runCriterion } from "./criterion.mjs";
 import { LoopError, refuse } from "./error.mjs";
@@ -76,8 +76,8 @@ export function artifactCheckpoint(root, claims, { storeLocation = null } = {}) 
     // otherwise walk until the stack gives out, and a checkpoint that crashes
     // is worse than one that refuses.
     if (depth > 64) refuse("CLAIM_TOO_DEEP", `${relative} nests deeper than 64 levels`);
-    if (excluded.some((entry) => relative === entry || relative.startsWith(`${entry}${path.sep}`))) return;
-    const absolute = path.join(root, relative);
+    if (excluded.some((entry) => isUnder(relative, canonicalPath(entry)))) return;
+    const absolute = path.join(root, systemPath(relative));
     let stat;
     try {
       // lstat, not stat: a symlink is recorded as the link it is, so the walk
@@ -101,7 +101,7 @@ export function artifactCheckpoint(root, claims, { storeLocation = null } = {}) 
         entries.push([relative, `unreadable:${error.code ?? "unknown"}`]);
         return;
       }
-      for (const name of names) walk(path.join(relative, name), depth + 1);
+      for (const name of names) walk(relative === "." ? name : `${relative}/${name}`, depth + 1);
       return;
     }
     if (!stat.isFile()) {
@@ -116,7 +116,7 @@ export function artifactCheckpoint(root, claims, { storeLocation = null } = {}) 
       entries.push([relative, `unreadable:${error.code ?? "unknown"}`]);
     }
   };
-  for (const claim of [...claims].sort()) walk(claim, 0);
+  for (const claim of [...claims].sort()) walk(canonicalPath(claim), 0);
   return digestOf(entries);
 }
 
@@ -157,10 +157,10 @@ export function claimIdentity(root, claim) {
   }
   // Whatever does not exist yet keeps the spelling the caller gave it: nobody
   // has created that directory, so nothing on disk can say what it is called.
-  const identity = path.relative(base, path.join(resolved, ...segments.slice(index)));
+  const identity = canonicalPath(path.relative(base, path.join(resolved, ...segments.slice(index))));
   // Re-checked after resolving, because a symlink can leave the workspace by a
   // route the textual `..` check below cannot see at all.
-  if (identity.split(path.sep).includes("..") || path.isAbsolute(identity)) {
+  if (identity.split("/").includes("..") || path.isAbsolute(identity)) {
     refuse("CLAIM_ESCAPES_ROOT", `${claim} resolves to ${identity}, which is outside the workspace`);
   }
   return identity.length === 0 ? "." : identity;
@@ -188,7 +188,7 @@ export function assertClaims(root, claims, { storeLocation = null } = {}) {
   // or vouch for its own scope — an unwinnable loop, accepted in silence.
   const control = controlPlanePaths(root, storeLocation);
   for (const claim of normalized) {
-    if (control.some((entry) => claim === entry || claim.startsWith(`${entry}${path.sep}`))) {
+    if (control.some((entry) => isUnder(claim, canonicalPath(entry)))) {
       refuse("CLAIM_IS_CONTROL_PLANE", `${claim} belongs to the runtime, which never treats it as work`);
     }
   }

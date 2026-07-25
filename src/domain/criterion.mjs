@@ -99,53 +99,60 @@ export function readVerdict({ stdout, code, signal }) {
   return { verdict: parsed.verdict, failures: normalizeFailures(parsed.failures), source: "verdict_line" };
 }
 
-const treeKill = (child) => {
-  if (process.platform === "win32") {
-    // Windows has no process group. `taskkill /T` is the whole mechanism.
-    const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
-    killer.once("error", () => {});
-    return killer;
-  }
-  // Negative pid targets the whole process group, which the child got by being
-  // spawned detached. Killing only the child would leave whatever it started
-  // running after the runtime believed the criterion was over.
-  process.kill(-child.pid, "SIGKILL");
-  return null;
-};
-
 /**
- * Ends the criterion and everything it started, and reports how sure it is.
+ * Ends the criterion and everything it started, and says how sure it is.
  *
- * The fallback is honest about its reach. A failed tree-kill is usually a
- * process that had already exited, so it is retried once. If the mechanism
- * itself is unavailable — `taskkill` off the PATH — nothing Node exposes can
- * reach a grandchild on Windows; the equivalent of a process group there is a
- * job object, which Node does not surface. So the runtime kills what it can
- * and *says* the descendants may have survived, rather than reporting a tree
- * it did not fell.
+ * On POSIX the answer is immediate: a negative pid targets the process group
+ * the child got by being spawned detached, and `ESRCH` means the group had
+ * already gone — nothing to kill is not a failure to kill it.
  *
- * Returning promptly is not negotiable either way: a timeout that hangs is
- * the one thing a timeout must never do.
+ * On Windows there is no process group; `taskkill /T` is the whole mechanism,
+ * and it is another process. That matters: `spawn` does not throw when the
+ * executable is missing, it emits `error` later. An earlier shape wrapped the
+ * spawn in try/catch and so reported every Windows kill as successful —
+ * including the one case the fallback existed for. The outcome is therefore
+ * reported through a callback, once the killer has actually said something.
+ *
+ * When even that fails, nothing Node exposes can reach a grandchild on
+ * Windows — the equivalent of a process group there is a job object, which
+ * Node does not surface. So the runtime kills what it can and reports the
+ * descendants as uncertain, rather than a tree it did not fell.
  */
-function killTree(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return { felled: true };
-  try {
-    treeKill(child);
-    return { felled: true };
-  } catch (error) {
-    // Nothing there to kill is not a failure to kill it. Reporting the group
-    // as possibly-surviving because it had already exited would cry wolf on
-    // the one outcome that needs no attention at all.
-    if (error.code === "ESRCH") return { felled: true };
+export function killTree(child, report = () => {}, { platform = process.platform, spawnKiller = spawn } = {}) {
+  if (child.exitCode !== null && child.exitCode !== undefined) return report(true);
+  if (child.signalCode !== null && child.signalCode !== undefined) return report(true);
+
+  const posix = () => {
     try {
-      treeKill(child);
-      return { felled: true };
-    } catch (retry) {
-      if (retry.code === "ESRCH") return { felled: true };
-      try { child.kill("SIGKILL"); } catch { /* already gone */ }
-      return { felled: false };
+      process.kill(-child.pid, "SIGKILL");
+      return true;
+    } catch (error) {
+      return error.code === "ESRCH";
     }
-  }
+  };
+  const windows = (onOutcome) => {
+    const killer = spawnKiller("taskkill", ["/pid", String(child.pid), "/T", "/F"], { stdio: "ignore" });
+    // Both, and once each. `spawn` reports a missing executable through this
+    // event rather than by throwing, so an implementation that only guarded
+    // the call reported every Windows kill as a success.
+    killer.once("error", () => onOutcome(false));
+    killer.once("close", (code) => onOutcome(code === 0 || code === 128));
+  };
+  // The platform and the spawn are both injectable, so the Windows branch is
+  // exercised wherever the tests run. A branch that can only be executed on
+  // the machine that has the bug is a branch nobody checks.
+  const tryOnce = platform === "win32" ? windows : (onOutcome) => onOutcome(posix());
+
+  tryOnce((felled) => {
+    if (felled) return report(true);
+    // Retried once: a transient failure is the common one, and the retry costs
+    // nothing next to leaving a process tree behind.
+    tryOnce((again) => {
+      if (again) return report(true);
+      try { child.kill("SIGKILL"); } catch { /* already gone */ }
+      report(false);
+    });
+  });
 }
 
 export async function runCriterion({ executable, args = [], cwd, timeoutMs = 120_000, env = {} }) {
@@ -176,7 +183,7 @@ export async function runCriterion({ executable, args = [], cwd, timeoutMs = 120
     const onExit = () => { if (child !== undefined) killTree(child); };
     const timer = setTimeout(() => {
       timedOut = true;
-      if (child !== undefined) descendantsUncertain = !killTree(child).felled;
+      if (child !== undefined) killTree(child, (felled) => { descendantsUncertain = !felled; });
     }, timeoutMs);
 
     const failed = (source, message) => settle({
@@ -214,7 +221,7 @@ export async function runCriterion({ executable, args = [], cwd, timeoutMs = 120
       settle({
         ...read,
         execution: {
-          error: timedOut ? (descendantsUncertain ? "timeout_descendants_uncertain" : "timeout") : null,
+          error: timedOut ? "timeout" : null,
           duration_ms: Date.now() - started,
           exit_code: code,
           signal,
@@ -225,7 +232,10 @@ export async function runCriterion({ executable, args = [], cwd, timeoutMs = 120
           output_digest: digestOf({ stdout: out.digest(), stderr: err.digest() }),
           // The tail, not the head: when a check fails, what went wrong is at
           // the end of what it printed.
-          output_tail: bounded(out.text + err.text),
+          // Prepended rather than kept beside the record, because nothing
+          // reads `error` — a fact the runtime states only to itself is not a
+          // disclosure. The summary is what a person and the log both see.
+          output_tail: bounded((descendantsUncertain ? "[the criterion's descendants could not be confirmed dead]\n" : "") + out.text + err.text),
         },
       });
     });
