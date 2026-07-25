@@ -14,7 +14,14 @@ export const KIND = Object.freeze({
   RESUMED: "loop_resumed",
   TERMINAL: "loop_terminal",
   AMENDED: "loop_amended",
+  RECEIPT: "loop_receipt",
 });
+
+// What a loop must show before it may be certified. Declared when the loop is
+// opened and never inferred: this is the standard the loop is judged against,
+// and a standard that changes because somebody ran `git init` halfway through
+// is not a standard.
+export const RECEIPTS = Object.freeze({ NONE: "none", GIT: "git" });
 
 export const VERDICT = Object.freeze({ SATISFIED: "satisfied", UNSATISFIED: "unsatisfied", INDETERMINATE: "indeterminate" });
 
@@ -45,6 +52,7 @@ export const loopVocabulary = createVocabulary({
       opened_by: { type: "string", max: 200 },
       reason: { type: "string", max: 1000 },
       granted_by: { type: "enum", values: ["self", "user"] },
+      receipts: { type: "enum", values: Object.values(RECEIPTS) },
     },
   },
   [KIND.OBSERVED]: {
@@ -56,6 +64,11 @@ export const loopVocabulary = createVocabulary({
       progress_signature: { type: "digest", nullable: true },
       artifact_checkpoint: { type: "digest" },
       receipt_digest: { type: "digest", nullable: true },
+      // Why the receipt is or is not in force. `receipt_digest: null` alone
+      // cannot tell "no receipt was ever produced" from "one was, and it has
+      // since drifted" — two very different situations for whoever is reading
+      // the log to find out what went wrong.
+      receipt_state: { type: "enum", values: ["none", "in_force", "uncertain", "unlanded", "drifted"] },
       summary: { type: "string", max: 2000, min: 0 },
       observed_by: { type: "string", max: 200 },
     },
@@ -104,6 +117,21 @@ export const loopVocabulary = createVocabulary({
       // Amending is a person changing what the loop is for, so it never
       // carries "self": the runtime may not rewrite its own objective.
       granted_by: { type: "enum", values: ["user"] },
+    },
+  },
+  [KIND.RECEIPT]: {
+    fields: {
+      mode: { type: "enum", values: ["stage", "commit"] },
+      // Two states, because the runtime does not own the index and cannot
+      // honestly offer a third. `clean` is witnessed, never inferred.
+      status: { type: "enum", values: ["clean", "uncertain"] },
+      reasons: { type: "strings", max: 21 },
+      paths: { type: "strings", max: 4096 },
+      head_before: { type: "string", max: 64, nullable: true },
+      commit_oid: { type: "string", max: 64, nullable: true },
+      parent_oid: { type: "string", max: 64, nullable: true },
+      tree_digest: { type: "digest" },
+      recorded_by: { type: "string", max: 200 },
     },
   },
 });

@@ -6,23 +6,16 @@
 import fs from "node:fs";
 import path from "node:path";
 import { digestOf, sha256Hex } from "../canonical.mjs";
+import { CLASSES } from "../locks.mjs";
 import { openStore } from "../store.mjs";
 import { runCriterion } from "./criterion.mjs";
+import { LoopError, refuse } from "./error.mjs";
 import { decide, nextDirective, progressSignature } from "./policy.mjs";
 import { EMPTY, isLive, reduceLoop, roundsSpent } from "./projection.mjs";
-import { DECISION, KIND, SUSPENSION, TERMINAL, VERDICT, loopVocabulary } from "./vocabulary.mjs";
+import { STANDING, receiptStanding, takeReceipt } from "./receipt.mjs";
+import { DECISION, KIND, RECEIPTS, SUSPENSION, TERMINAL, VERDICT, loopVocabulary } from "./vocabulary.mjs";
 
-export class LoopError extends Error {
-  constructor(code, message) {
-    super(message);
-    this.name = "LoopError";
-    this.code = code;
-  }
-}
-
-const refuse = (code, message) => {
-  throw new LoopError(code, message);
-};
+export { LoopError };
 
 // Every record this service writes goes through the vocabulary first, so an
 // unvalidated payload cannot reach the log by way of a code path that forgot.
@@ -117,17 +110,20 @@ export function assertClaims(claims) {
   return [...normalized].sort();
 }
 
-export function openLoop(store, { goal, claims, criterionFile, roundsBudget, session, reason, grantedBy, commandId }) {
+export function openLoop(store, { goal, claims, criterionFile, roundsBudget, session, reason, grantedBy, receipts, commandId }) {
   if (typeof goal !== "string" || goal.trim().length === 0) refuse("GOAL_REQUIRED", "a loop needs a goal");
   if (typeof session !== "string" || session.length === 0) refuse("SESSION_REQUIRED", "a loop records who opened it");
   // Provenance is required at the seam, not merely allowed: a loop that cannot
   // say who opened it and why is a loop nobody can audit later.
   if (typeof reason !== "string" || reason.trim().length === 0) refuse("REASON_REQUIRED", "opening a loop records why");
   if (grantedBy !== "self" && grantedBy !== "user") refuse("PROVENANCE_REQUIRED", "granted_by must be self or user");
+  // No default. This is the standard the loop will be certified against, and a
+  // certification standard that nobody stated is one nobody agreed to.
+  if (!Object.values(RECEIPTS).includes(receipts)) refuse("RECEIPTS_REQUIRED", `receipts must be one of ${Object.values(RECEIPTS)}`);
   const criterionDigest = criterionDigestOf(criterionFile);
   const payload = {
     goal, claims: assertClaims(claims), criterion_digest: criterionDigest,
-    rounds_budget: roundsBudget, opened_by: session, reason, granted_by: grantedBy,
+    rounds_budget: roundsBudget, opened_by: session, reason, granted_by: grantedBy, receipts,
   };
   return store.append({
     commandId,
@@ -158,7 +154,40 @@ export function next(store, options = {}) {
  * written — so work happening elsewhere cannot invalidate this round, and a
  * change to *this* loop cannot be silently overwritten.
  */
-export async function observe(store, { root, receiptDigest = null, session, commandId, timeoutMs, criterionFile, stuckThreshold }) {
+/**
+ * Produces a receipt: the runtime performs one task-scoped git operation and
+ * records what it saw.
+ *
+ * Held under the git_index lock, which is declared outer to the store lock, so
+ * the order here is git_index → store. The criterion runs outside every lock
+ * because it takes minutes; this takes milliseconds, and the index is the one
+ * piece of genuinely shared mutable state in the picture.
+ */
+export function receipt(store, { root, mode, session, commandId }) {
+  if (typeof session !== "string" || session.length === 0) refuse("SESSION_REQUIRED", "a receipt records who took it");
+  const before = store.replay().state;
+  if (!before.opened) refuse("NOT_OPEN", "no loop has been opened in this store");
+  if (!isLive(before)) refuse("NOT_LIVE", `the loop is ${before.lifecycle}`);
+  if (before.receipts !== RECEIPTS.GIT) refuse("NO_RECEIPT_REGIME", `this loop was opened with receipts: ${before.receipts}`);
+
+  const applied = store.commandRecords(commandId);
+  if (applied !== null) return { seq: applied.at(-1).seq, records: applied, replayed: true };
+
+  return store.withLock(CLASSES.GIT_INDEX, root, () => {
+    const taken = takeReceipt({ root, mode, claims: before.claims, storeLocation: store.location });
+    const payload = { ...taken, recorded_by: session };
+    return store.append({
+      commandId,
+      requestDigest: digestOf({ mode, session, claims: before.claims }),
+      prepare: (state) => {
+        if (!isLive(state)) refuse("NOT_LIVE", `the loop is ${state.lifecycle}`);
+        return [checked(KIND.RECEIPT, payload)];
+      },
+    });
+  });
+}
+
+export async function observe(store, { root, session, commandId, timeoutMs, criterionFile, stuckThreshold }) {
   if (typeof session !== "string" || session.length === 0) refuse("SESSION_REQUIRED", "an observation records who made it");
   const before = store.replay().state;
   if (!before.opened) refuse("NOT_OPEN", "no loop has been opened in this store");
@@ -178,6 +207,17 @@ export async function observe(store, { root, receiptDigest = null, session, comm
 
   const outcome = await runCriterion({ executable: process.execPath, args: [criterionFile], cwd: root, timeoutMs });
   const checkpoint = artifactCheckpoint(root, before.claims);
+
+  // The receipt is re-verified here rather than taken on trust — and rather
+  // than accepted from the caller, which is what this used to do and what made
+  // the anchor axiom half-honoured. A receipt that no longer describes the task
+  // paths is simply not in force: the round records the observation and says
+  // why, instead of throwing away a criterion run that already happened.
+  const standing = before.receipts === RECEIPTS.GIT
+    ? receiptStanding({ root, receipt: before.receipt, claims: before.claims, storeLocation: store.location })
+    : { standing: STANDING.NONE };
+  const receiptDigest = standing.standing === STANDING.IN_FORCE ? before.receipt.digest : null;
+
   const signature = outcome.verdict === VERDICT.UNSATISFIED
     ? progressSignature({ criterionDigest: before.criterionDigest, artifactCheckpoint: checkpoint, receiptDigest, failures: outcome.failures })
     : null;
@@ -188,7 +228,7 @@ export async function observe(store, { root, receiptDigest = null, session, comm
     // retry recognisable. Digesting the outcome would make every retry look
     // like a different command, because the criterion may legitimately say
     // something new each time it runs.
-    requestDigest: digestOf({ round, session, receiptDigest, criterion: before.criterionDigest }),
+    requestDigest: digestOf({ round, session, criterion: before.criterionDigest }),
     prepare: (state) => {
       // The optimistic check. It compares this loop's own revision, so a
       // neighbouring loop's activity can never invalidate this round — the
@@ -203,6 +243,7 @@ export async function observe(store, { root, receiptDigest = null, session, comm
         progress_signature: signature,
         artifact_checkpoint: checkpoint,
         receipt_digest: receiptDigest,
+        receipt_state: standing.standing,
         // The tail again, not the head. output_tail is already the end of what
         // the criterion printed; taking its first 2000 characters would throw
         // away precisely the part that says what went wrong.

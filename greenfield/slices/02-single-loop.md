@@ -9,7 +9,8 @@
 上承:[SL 族场景](../scenarios/02-single-loop.md)(13 条)、
 [GR 族场景](../scenarios/04-receipts-git.md)(7 条)、
 [设计稿](../../docs/plans/2026-07-25-greenfield-redesign.md)。
-完成判据:SL 族与 GR 族保留场景全绿。**当前未达成**(见 §6)。
+完成判据:SL 族与 GR 族保留场景全绿。**已达成**;GR 族见
+[02-git-receipt](02-git-receipt.md),剩余挂账见 §6。
 
 ## 1. 分层
 
@@ -115,7 +116,7 @@ artifact checkpoint 用 `lstat` 不跟随符号链接(否则会被引出 claim �
 
 | 项 | 状态 | 备注 |
 | --- | --- | --- |
-| **git receipt(GR 全族)** | **未做** | 切片 2 完成判据的一半。当前 `observe` 接受调用方传入的 `receiptDigest`,既不计算也不校验,更没有按 claims 界定范围;e2e 测试里 receipt 与 checkpoint 是同一个值,故 SL-06 的 receipt 绑定从未被真正测过。**这是本切片最大的缺口。** |
+| **git receipt(GR 全族)** | **已做** | 见 [02-git-receipt](02-git-receipt.md)。`observe` 不再接受调用方传入的 `receiptDigest`——receipt 由运行时自己产生、自己复核,补上了公理 2 一直敞着的那一半。 |
 | SL-13 amend 使旧 judgment stale | 部分 | 目前只靠 signature 漂移隐式生效,没有显式标记 |
 | `status` / `log` / `ready` 动词 | 未做 | 查询面,切片 4 |
 | 运行时被 SIGKILL 时判据进程组成孤儿 | 已知限制 | 运行时正常退出时已清理;自身被强杀时无人接管。需要持久化 pid 才能事后收割 |

@@ -259,6 +259,12 @@ export function openStore(location, {
     manifest: Object.freeze({ ...manifest }),
     get poisoned() { return locks.poisoned; },
 
+    // Exposed so that work which must happen outside the store lock but still
+    // under a declared lock class — taking a git receipt, for one — goes
+    // through *this* manager. A second manager would keep its own record of
+    // what is held, and the class ordering it enforces would become advisory.
+    withLock: (lockClass, resourceId, fn) => locks.withLock(lockClass, resourceId, fn),
+
     // Read-only: never repairs, so a torn tail is reported rather than silently
     // rewritten by something the caller believed was a query.
     read({ fromSeq = 1 } = {}) {

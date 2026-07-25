@@ -3,7 +3,7 @@
 // A pure fold over the log. It holds no opinion about what to do next — that
 // is the policy's job, and keeping the two apart is what lets the policy change
 // without rewriting history.
-import { KIND, TERMINAL, VERDICT } from "./vocabulary.mjs";
+import { KIND, RECEIPTS, TERMINAL, VERDICT } from "./vocabulary.mjs";
 
 export const LIFECYCLE = Object.freeze({ ACTIVE: "active", SUSPENDED: "suspended", TERMINAL: "terminal" });
 
@@ -13,6 +13,11 @@ export const EMPTY = Object.freeze({
   claims: [],
   criterionDigest: null,
   roundsBudget: 0,
+  // The evidence regime this loop was opened under, and the newest receipt
+  // recorded for it. The receipt is carried by digest, not by copying its
+  // facts: entities couple only through content addresses.
+  receipts: RECEIPTS.NONE,
+  receipt: null,
   lifecycle: LIFECYCLE.ACTIVE,
   suspension: null,
   outcome: null,
@@ -44,7 +49,14 @@ export function reduceLoop(state = EMPTY, record) {
       next.claims = [...payload.claims];
       next.criterionDigest = payload.criterion_digest;
       next.roundsBudget = payload.rounds_budget;
+      next.receipts = payload.receipts;
       next.participants = [payload.opened_by];
+      break;
+    case KIND.RECEIPT:
+      if (!next.participants.includes(payload.recorded_by)) next.participants.push(payload.recorded_by);
+      // Only the newest receipt stands. An older one describes a state of the
+      // task paths that a later receipt has already superseded.
+      next.receipt = { ...payload, digest: record.digest ?? null };
       break;
     case KIND.OBSERVED:
       if (!next.participants.includes(payload.observed_by)) next.participants.push(payload.observed_by);
@@ -54,6 +66,7 @@ export function reduceLoop(state = EMPTY, record) {
         progressSignature: payload.progress_signature,
         artifactCheckpoint: payload.artifact_checkpoint,
         receiptDigest: payload.receipt_digest,
+        receiptState: payload.receipt_state,
         summary: payload.summary,
         decision: null,
       });

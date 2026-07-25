@@ -30,7 +30,7 @@ function workspace(t) {
 
 const valid = (extra = {}) => ({
   goal: "g", claims: ["work.txt"], roundsBudget: 3, session: "s1",
-  reason: "because", grantedBy: "self", commandId: "open", ...extra,
+  reason: "because", grantedBy: "self", receipts: "none", commandId: "open", ...extra,
 });
 
 test("SL-01: opening records who and why, and refuses to proceed without them", (t) => {
@@ -85,13 +85,13 @@ test("a retried round does not pay for the criterion a second time", async (t) =
   openLoop(session(), { ...valid(), criterionFile });
   const runs = () => (fs.existsSync(path.join(root, "runs.log")) ? fs.readFileSync(path.join(root, "runs.log"), "utf8").trim().split("\n").length : 0);
 
-  const first = await observe(session(), { root, receiptDigest: artifactCheckpoint(root, ["work.txt"]), session: "s1", criterionFile, commandId: "round-1" });
+  const first = await observe(session(), { root, session: "s1", criterionFile, commandId: "round-1" });
   assert.equal(first.replayed, false);
   assert.equal(runs(), 1);
 
   // The same command again: recognised before the criterion is spawned, so a
   // retry after a crash costs nothing and cannot record a second round.
-  const again = await observe(session(), { root, receiptDigest: artifactCheckpoint(root, ["work.txt"]), session: "s1", criterionFile, commandId: "round-1" });
+  const again = await observe(session(), { root, session: "s1", criterionFile, commandId: "round-1" });
   assert.equal(again.replayed, true);
   assert.equal(runs(), 1, "the criterion ran once, not twice");
   assert.deepEqual(again.records.map((entry) => entry.seq), first.records.map((entry) => entry.seq));

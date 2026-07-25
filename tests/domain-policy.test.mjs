@@ -6,7 +6,7 @@ import test from "node:test";
 import { digestOf } from "../src/canonical.mjs";
 import { EMPTY, reduceLoop, repeatedFailures, roundsSpent } from "../src/domain/projection.mjs";
 import { DEFAULT_STUCK_THRESHOLD, decide, nextDirective, progressSignature } from "../src/domain/policy.mjs";
-import { DECISION, KIND, SUSPENSION, TERMINAL, VERDICT } from "../src/domain/vocabulary.mjs";
+import { DECISION, KIND, RECEIPTS, SUSPENSION, TERMINAL, VERDICT } from "../src/domain/vocabulary.mjs";
 
 const CRITERION = digestOf({ criterion: 1 });
 const CHECKPOINT = (value) => digestOf({ artifacts: value });
@@ -14,13 +14,13 @@ let seq = 0;
 const record = (kind, payload) => ({ seq: (seq += 1), kind, payload });
 const fold = (records) => records.reduce((state, entry) => reduceLoop(state, entry), EMPTY);
 
-const opened = (budget = 3) => record(KIND.OPENED, {
-  goal: "make it green", claims: ["src"], criterion_digest: CRITERION, rounds_budget: budget, opened_by: "s1",
+const opened = (budget = 3, receipts = RECEIPTS.NONE) => record(KIND.OPENED, {
+  goal: "make it green", claims: ["src"], criterion_digest: CRITERION, rounds_budget: budget, opened_by: "s1", receipts,
 });
-const observed = (round, verdict, { signature = null, checkpoint = CHECKPOINT(round), receipt = digestOf({ r: round }) } = {}) =>
+const observed = (round, verdict, { signature = null, checkpoint = CHECKPOINT(round), receipt = digestOf({ r: round }), receiptState = "in_force" } = {}) =>
   record(KIND.OBSERVED, {
     round, verdict, progress_signature: signature, artifact_checkpoint: checkpoint,
-    receipt_digest: receipt, summary: "", observed_by: "s1",
+    receipt_digest: receipt, receipt_state: receiptState, summary: "", observed_by: "s1",
   });
 
 test("an unopened loop asks for implementation and nothing else", () => {
@@ -38,9 +38,24 @@ test("an unsatisfied round with a new failure asks for repair", () => {
   assert.equal(decide(state).decision, DECISION.REPAIR);
 });
 
-test("an unsatisfied round with no receipt asks for a receipt first", () => {
-  const state = fold([opened(), observed(1, VERDICT.UNSATISFIED, { signature: digestOf({ f: "a" }), receipt: null })]);
+test("under the git regime, a round with no receipt in force asks for one first", () => {
+  const unreceipted = { signature: digestOf({ f: "a" }), receipt: null, receiptState: "none" };
+  const state = fold([opened(3, RECEIPTS.GIT), observed(1, VERDICT.UNSATISFIED, unreceipted)]);
   assert.equal(decide(state).decision, DECISION.PRODUCE_RECEIPT);
+  // A loop that declared no receipt regime has no way to produce one, so it is
+  // never handed a directive it cannot discharge.
+  assert.equal(decide(fold([opened(3, RECEIPTS.NONE), observed(1, VERDICT.UNSATISFIED, unreceipted)])).decision, DECISION.REPAIR);
+});
+
+test("GR-06/07: a satisfied criterion is not an achievement while its receipt is absent", () => {
+  const drifted = { receipt: null, receiptState: "drifted" };
+  const state = fold([opened(3, RECEIPTS.GIT), observed(1, VERDICT.SATISFIED, drifted)]);
+  const outcome = decide(state);
+  assert.equal(outcome.decision, DECISION.PRODUCE_RECEIPT, "passing over artifacts nothing vouches for is not achieved");
+  assert.match(outcome.reason, /drifted/u, "the log says which of the ways it failed to hold");
+  assert.notEqual(outcome.terminal, true, "and the loop stays open");
+  // The same round with the receipt standing certifies.
+  assert.equal(decide(fold([opened(3, RECEIPTS.GIT), observed(1, VERDICT.SATISFIED)])).decision, DECISION.ACHIEVED);
 });
 
 test("an indeterminate verdict asks for evidence rather than counting as failure", () => {

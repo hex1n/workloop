@@ -5,7 +5,7 @@
 // involved, because a policy that cannot be evaluated cannot be improved: you
 // could never tell "the strategy worked" from "the model happened to succeed".
 import { digestOf } from "../canonical.mjs";
-import { DECISION, SUSPENSION, VERDICT } from "./vocabulary.mjs";
+import { DECISION, RECEIPTS, SUSPENSION, VERDICT } from "./vocabulary.mjs";
 import { isLive, lastRound, repeatedFailures, roundsSpent } from "./projection.mjs";
 
 export const DEFAULT_STUCK_THRESHOLD = 3;
@@ -42,6 +42,13 @@ export function decide(state, { stuckThreshold = DEFAULT_STUCK_THRESHOLD } = {})
 
   const last = lastRound(state);
   if (last !== null && last.verdict === VERDICT.SATISFIED) {
+    // A satisfied criterion is half of an achievement. Under the git regime
+    // the other half is evidence that still describes the task paths — a
+    // receipt that has drifted, been rebased away, or never landed leaves the
+    // loop with a passing check over artifacts nothing vouches for.
+    if (state.receipts === RECEIPTS.GIT && last.receiptDigest === null) {
+      return { decision: DECISION.PRODUCE_RECEIPT, reason: `the criterion is satisfied but no receipt is in force (${last.receiptState})` };
+    }
     return { decision: DECISION.ACHIEVED, reason: "the criterion is satisfied", terminal: true };
   }
 
@@ -60,8 +67,11 @@ export function decide(state, { stuckThreshold = DEFAULT_STUCK_THRESHOLD } = {})
   if (repeats >= stuckThreshold) {
     return { decision: DECISION.STUCK, reason: `the same failure survived ${repeats} rounds with no change in the artifacts`, terminal: false };
   }
-  if (last.receiptDigest === null) {
-    return { decision: DECISION.PRODUCE_RECEIPT, reason: "the last round changed things without producing a receipt" };
+  // Only loops that declared the git regime are asked for receipts. A loop
+  // opened with `receipts: none` has no way to produce one, and asking anyway
+  // would hand its host a directive it can never discharge.
+  if (state.receipts === RECEIPTS.GIT && last.receiptDigest === null) {
+    return { decision: DECISION.PRODUCE_RECEIPT, reason: `the last round changed things without a receipt in force (${last.receiptState})` };
   }
   return { decision: DECISION.REPAIR, reason: "the criterion is unsatisfied and the failure is new" };
 }
