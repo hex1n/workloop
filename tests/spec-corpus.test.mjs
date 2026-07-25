@@ -46,7 +46,7 @@ test("no source file is binary, so nothing can hide from review", () => {
     if (entry.isDirectory()) return entry.name === "node_modules" || entry.name.startsWith(".") ? [] : walk(full);
     return entry.name.endsWith(".mjs") || entry.name.endsWith(".md") || entry.name.endsWith(".json") ? [full] : [];
   });
-  for (const file of [...walk(path.join(root, "src")), ...walk(path.join(root, "tests")), ...walk(path.join(root, "greenfield"))]) {
+  for (const file of [...walk(path.join(root, "src")), ...walk(path.join(root, "tests")), ...walk(path.join(root, "greenfield")), ...walk(path.join(root, "bin"))]) {
     assert.equal(fs.readFileSync(file).includes(0), false, `${path.relative(root, file)} contains a NUL byte`);
   }
 });

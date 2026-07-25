@@ -8,6 +8,7 @@ import path from "node:path";
 import test from "node:test";
 import { createStore, openStore } from "../src/store.mjs";
 import { KIND, assertKind, discover, resolveSite, scanForStores, siteForNewStore } from "../src/site.mjs";
+import { artifactCheckpoint } from "../src/domain/loop.mjs";
 
 const git = (root, ...args) => {
   const result = spawnSync("git", args, { cwd: root, encoding: "utf8" });
@@ -73,6 +74,47 @@ test("FS-01: a git workspace keeps its ledger in the common directory, shared by
   const found = discover(worktree);
   assert.equal(fs.realpathSync(found.location), fs.realpathSync(site.location));
   assert.equal(openStore(found.location).manifest.store_kind, KIND.GIT);
+});
+
+test("FS-01: a git store found from a subdirectory reports the worktree, not the subdirectory", (t) => {
+  const root = scratch(t);
+  git(root, "init", "-q", ".");
+  git(root, "config", "user.email", "gate@workloop.test");
+  git(root, "config", "user.name", "gate");
+  fs.writeFileSync(path.join(root, "README"), "seed\n");
+  git(root, "add", "README");
+  git(root, "commit", "-q", "-m", "seed");
+  init(root);
+
+  // `--git-common-dir` answers the same from any depth, so a search that used
+  // it alone stopped at the first directory it tried and called *that* the
+  // workspace. Every git-regime verb then measured claims against the wrong
+  // tree and refused outright.
+  const deep = path.join(root, "src", "nested");
+  fs.mkdirSync(deep, { recursive: true });
+  const found = discover(deep);
+  assert.equal(found.kind, KIND.GIT);
+  assert.equal(fs.realpathSync(found.root), root, "the workspace is the worktree, not where the search began");
+});
+
+test("FS-02: the runtime's own files are never artifacts", (t) => {
+  const root = scratch(t);
+  const site = init(root);
+  fs.writeFileSync(path.join(root, "work.txt"), "a\n");
+
+  const before = artifactCheckpoint(root, ["."], { storeLocation: site.location });
+  // Writing to the ledger is not a change to the tree the loop is working on.
+  // Counted as one, a loop claiming "." would see its artifacts move on every
+  // append — its progress signature would never repeat, and stuck detection
+  // would go on existing while never firing again.
+  openStore(site.location).append({
+    commandId: "unrelated", requestDigest: `sha256:${"0".repeat(64)}`,
+    prepare: () => [{ kind: "store_created", payload: {} }],
+  });
+  assert.equal(artifactCheckpoint(root, ["."], { storeLocation: site.location }), before, "the ledger writing itself is not artifact drift");
+
+  fs.writeFileSync(path.join(root, "work.txt"), "b\n");
+  assert.notEqual(artifactCheckpoint(root, ["."], { storeLocation: site.location }), before, "and real work still moves it");
 });
 
 test("FS-03: moving a root keeps its identity; deleting it takes the history with it", (t) => {

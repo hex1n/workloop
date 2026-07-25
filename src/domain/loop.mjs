@@ -7,6 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { digestOf, sha256Hex } from "../canonical.mjs";
 import { CLASSES } from "../locks.mjs";
+import { controlPlanePaths } from "../site.mjs";
 import { openStore } from "../store.mjs";
 import { runCriterion } from "./criterion.mjs";
 import { LoopError, refuse } from "./error.mjs";
@@ -52,7 +53,12 @@ export const criterionDigestOf = (file) => sha256Hex(fs.readFileSync(file));
 // loop is responsible for.
 export const MAX_CHECKPOINT_ENTRIES = 20_000;
 
-export function artifactCheckpoint(root, claims) {
+export function artifactCheckpoint(root, claims, { storeLocation = null } = {}) {
+  // The runtime's own files are not artifacts (FS-02). Without this a loop
+  // that claims "." sees its own ledger change on every append, so its progress
+  // signature moves every round and it can never be found stuck — the check
+  // would still be there, and it would never fire again.
+  const excluded = controlPlanePaths(root, storeLocation);
   const entries = [];
   const walk = (relative, depth) => {
     if (entries.length >= MAX_CHECKPOINT_ENTRIES) refuse("CLAIM_TOO_LARGE", `a claim expands past ${MAX_CHECKPOINT_ENTRIES} entries`);
@@ -60,6 +66,7 @@ export function artifactCheckpoint(root, claims) {
     // otherwise walk until the stack gives out, and a checkpoint that crashes
     // is worse than one that refuses.
     if (depth > 64) refuse("CLAIM_TOO_DEEP", `${relative} nests deeper than 64 levels`);
+    if (excluded.some((entry) => relative === entry || relative.startsWith(`${entry}${path.sep}`))) return;
     const absolute = path.join(root, relative);
     let stat;
     try {
@@ -140,6 +147,10 @@ export function openLoop(store, { goal, claims, criterionFile, roundsBudget, ses
   // No default. This is the standard the loop will be certified against, and a
   // certification standard that nobody stated is one nobody agreed to.
   if (!Object.values(RECEIPTS).includes(receipts)) refuse("RECEIPTS_REQUIRED", `receipts must be one of ${Object.values(RECEIPTS)}`);
+  // Checked here rather than left to the vocabulary, so the refusal names the
+  // thing the caller left out. A shell filling this in on the caller's behalf
+  // would be deciding how long a loop may run, somewhere nobody would look.
+  if (!Number.isSafeInteger(roundsBudget) || roundsBudget < 1) refuse("BUDGET_REQUIRED", "a loop needs a rounds budget of at least 1");
   const criterionDigest = criterionDigestOf(criterionFile);
   const wanted = assertClaims(claims);
   const base = {
@@ -255,7 +266,7 @@ export async function observe(store, { root, loopId, session, commandId, timeout
   }
 
   const outcome = await runCriterion({ executable: process.execPath, args: [criterionFile], cwd: root, timeoutMs });
-  const checkpoint = artifactCheckpoint(root, before.claims);
+  const checkpoint = artifactCheckpoint(root, before.claims, { storeLocation: store.location });
 
   // The receipt is re-verified here rather than taken on trust — and rather
   // than accepted from the caller, which is what this used to do and what made

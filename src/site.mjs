@@ -43,6 +43,34 @@ export function gitCommonDirectory(root) {
  * Returning both is the point: when two exist, no rule can pick one without
  * hiding a history, so the caller refuses instead of choosing.
  */
+// The top of the working tree, or null outside a repository. `--git-common-dir`
+// answers the same thing from any depth, which is exactly why it cannot stand
+// in for this one: a command run three directories down would otherwise call
+// that directory the workspace.
+export function worktreeRoot(from) {
+  const result = spawnSync("git", ["rev-parse", "--path-format=absolute", "--show-toplevel"], { cwd: from, encoding: "utf8" });
+  if (result.error !== undefined || result.status !== 0) return null;
+  const top = result.stdout.trim();
+  return top.length === 0 ? null : top;
+}
+
+// Paths the runtime keeps for itself. They are never artifacts, never receipt
+// content, and never claimed work — a ledger that counted its own writes as
+// changes to the tree would report drift on every append, and the loop that
+// noticed would be the one whose stuck detection quietly stopped working.
+export function controlPlanePaths(root, storeLocation) {
+  const excluded = [".git"];
+  if (typeof storeLocation === "string") {
+    const relative = path.relative(realOf(root), realOf(storeLocation));
+    if (relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative)) excluded.push(relative);
+  }
+  return excluded;
+}
+
+export const realOf = (target) => {
+  try { return fs.realpathSync(target); } catch { return path.resolve(target); }
+};
+
 export function sitesFor(root) {
   const common = gitCommonDirectory(root);
   return {
@@ -61,8 +89,10 @@ export function sitesFor(root) {
 export function resolveSite(root) {
   const sites = sitesFor(root);
   const present = [
-    ...(sites.git !== null && isStore(sites.git) ? [{ kind: KIND.GIT, location: sites.git }] : []),
-    ...(isStore(sites.fs) ? [{ kind: KIND.FS, location: sites.fs }] : []),
+    // A git store belongs to the working tree, not to whichever directory the
+    // search started in — its ledger is shared by every worktree of the repo.
+    ...(sites.git !== null && isStore(sites.git) ? [{ kind: KIND.GIT, location: sites.git, root: worktreeRoot(root) ?? root }] : []),
+    ...(isStore(sites.fs) ? [{ kind: KIND.FS, location: sites.fs, root }] : []),
   ];
   if (present.length > 1) {
     refuse("STORE_KIND_CONFLICT", `${root} holds both a git ledger (${sites.git}) and a filesystem ledger (${sites.fs}); one of them must be moved or exported before either can be used`);
@@ -82,7 +112,7 @@ export function discover(from) {
   let directory = path.resolve(from);
   for (;;) {
     const found = resolveSite(directory);
-    if (found !== null) return { ...found, root: directory };
+    if (found !== null) return { root: directory, ...found };
     const parent = path.dirname(directory);
     if (parent === directory) return null;
     directory = parent;
@@ -152,6 +182,7 @@ export function siteForNewStore(root, { kind } = {}) {
   }
 
   const sites = sitesFor(root);
+  if (kind !== undefined && !Object.values(KIND).includes(kind)) refuse("UNKNOWN_STORE_KIND", `${kind} is not a store kind; use ${Object.values(KIND).join(" or ")}`);
   const chosen = kind ?? (sites.git === null ? KIND.FS : KIND.GIT);
   if (chosen === KIND.GIT && sites.git === null) refuse("NOT_A_GIT_WORKSPACE", `${root} is not inside a git repository`);
   return { kind: chosen, location: chosen === KIND.GIT ? sites.git : sites.fs, root };

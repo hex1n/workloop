@@ -68,8 +68,8 @@ test("the shell holds no rules of its own: a bad request fails with the service 
   const root = workspace(t);
   run(["init", "--root", root]);
   for (const [args, code] of [
-    [["open", "--root", root, "--goal", "g", "--claim", "work", "--criterion", path.join(root, "check.mjs"), "--session", "s1", "--reason", "r", "--granted-by", "self", "--command", "x"], "RECEIPTS_REQUIRED"],
-    [["open", "--root", root, "--goal", "g", "--claim", "work/**", "--criterion", path.join(root, "check.mjs"), "--session", "s1", "--reason", "r", "--granted-by", "self", "--receipts", "none", "--command", "y"], "CLAIM_SHAPE"],
+    [["open", "--root", root, "--goal", "g", "--claim", "work", "--budget", "5", "--criterion", path.join(root, "check.mjs"), "--session", "s1", "--reason", "r", "--granted-by", "self", "--command", "x"], "RECEIPTS_REQUIRED"],
+    [["open", "--root", root, "--goal", "g", "--claim", "work/**", "--budget", "5", "--criterion", path.join(root, "check.mjs"), "--session", "s1", "--reason", "r", "--granted-by", "self", "--receipts", "none", "--command", "y"], "CLAIM_SHAPE"],
     [["next", "--root", root, "--loop", `sha256:${"0".repeat(64)}`], "NO_SUCH_LOOP"],
   ]) {
     assert.throws(() => run(args), (error) => error.code === code, code);
@@ -137,6 +137,69 @@ test("log hands back records, and export hands back a ledger that verifies on it
   // from: the chain is in it, so the chain can be re-verified from it alone.
   assertChain(exported.records, { anchorDigest: exported.manifest.genesis_digest });
   assert.equal(openLoopStore(path.join(root, ".workloop")).manifest.store_id, exported.manifest.store_id);
+});
+
+test("the shell invents nothing the service layer does not have", (t) => {
+  const root = workspace(t);
+  run(["init", "--root", root]);
+  // A budget the caller did not state must not be supplied by the shell. The
+  // service has no default for it, so inventing one here would be a policy
+  // decision living where nobody can see it.
+  assert.throws(() => run([
+    "open", "--root", root, "--goal", "g", "--claim", "work", "--criterion", path.join(root, "check.mjs"),
+    "--session", "s1", "--reason", "r", "--granted-by", "self", "--receipts", "none", "--command", "no-budget",
+  ]), (error) => error.code === "BUDGET_REQUIRED");
+
+  const loopId = open(root);
+  // Nor a receipt mode.
+  assert.throws(() => run(["receipt", "--root", root, "--loop", loopId, "--session", "s1", "--command", "r"]),
+    (error) => error.code === "NO_RECEIPT_REGIME" || error.code === "UNKNOWN_RECEIPT_MODE");
+});
+
+test("a flag nobody reads is refused, not dropped", (t) => {
+  const root = workspace(t);
+  run(["init", "--root", root]);
+  // `--bugdet 5` used to parse cleanly and vanish, and the loop quietly got
+  // whatever the missing value happened to default to.
+  assert.throws(() => run(["ready", "--root", root, "--bugdet", "5"]), (error) => error.code === "UNKNOWN_FLAG");
+  assert.throws(() => run(["ready", "--root", root, "--loop", "x"]), (error) => error.code === "UNKNOWN_FLAG");
+  assert.throws(() => parseArgs(["ready", "positional"]), (error) => error.code === "UNEXPECTED_ARGUMENT");
+});
+
+const repoRoot = process.cwd();
+const observeVia = (location, loopId, root) => run([
+  "observe", "--store", location, "--loop", loopId, "--session", "s1",
+  "--criterion", path.join(root, "check.mjs"), "--command", "o-via-store",
+]);
+
+test("an explicit --store takes its root from the store, not from where the caller stands", (t) => {
+  const root = workspace(t);
+  const created = run(["init", "--root", root]);
+  // A bare directory: nothing here resembles the workspace, so a wrong root
+  // cannot accidentally find something that looks right.
+  const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-elsewhere-")));
+  t.after(() => fs.rmSync(elsewhere, { recursive: true, force: true }));
+
+  // Standing somewhere unrelated, naming the store outright. The root that
+  // reaches the verbs must be the store's own, or every path comparison after
+  // this compares against the wrong tree.
+  const loopId = run([
+    "open", "--store", created.location, "--goal", "g", "--claim", "work",
+    "--criterion", path.join(root, "check.mjs"), "--budget", "5", "--session", "s1",
+    "--reason", "fixture", "--granted-by", "self", "--receipts", "none", "--command", "open",
+  ]).loop_id;
+  assert.deepEqual(run(["ready", "--store", created.location]), [loopId]);
+  assert.notEqual(elsewhere, root);
+
+  // The criterion runs with the workspace as its working directory, so this is
+  // where a wrong root shows: it would look for `work/a.txt` under whatever
+  // directory the caller happened to be in and report an unknown instead.
+  process.chdir(elsewhere);
+  t.after(() => process.chdir(repoRoot));
+  return observeVia(created.location, loopId, root).then((result) => {
+    const round = result.records.find((record) => record.kind === "round_observed").payload;
+    assert.equal(round.verdict, "unsatisfied", "the criterion found the workspace, so it could reach a verdict");
+  });
 });
 
 test("HF-08: what ships is only what is implemented", () => {

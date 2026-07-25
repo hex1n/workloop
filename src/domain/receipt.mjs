@@ -13,6 +13,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { digestOf } from "../canonical.mjs";
+import { controlPlanePaths as controlPlane, realOf as real } from "../site.mjs";
 import { refuse } from "./error.mjs";
 
 export const MODE = Object.freeze({ STAGE: "stage", COMMIT: "commit" });
@@ -47,10 +48,6 @@ function git(cwd, args, { tolerate = [] } = {}) {
 
 const lines = (text) => text.split("\n").map((line) => line.trim()).filter((line) => line.length > 0);
 
-const real = (target) => {
-  try { return fs.realpathSync(target); } catch { return path.resolve(target); }
-};
-
 // The workspace root must *be* the repository root. Otherwise claims are
 // relative to one origin while git's own path output is relative to another,
 // and every comparison in this file would silently compare the wrong strings.
@@ -60,18 +57,6 @@ export function assertGitWorkspace(root) {
     refuse("NOT_REPOSITORY_ROOT", `${root} is not the root of its repository (${top} is)`);
   }
   return top;
-}
-
-// Paths git must never touch on this runtime's behalf. The ledger may live
-// inside the repository it records, and a claim of "." would otherwise stage
-// the ledger into the very repository it is the record of.
-function controlPlane(root, storeLocation) {
-  const excluded = [".git"];
-  if (typeof storeLocation === "string") {
-    const relative = path.relative(real(root), real(storeLocation));
-    if (relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative)) excluded.push(relative);
-  }
-  return excluded;
 }
 
 const excludeSpecs = (excluded) => excluded.map((entry) => `:(exclude)${entry}`);

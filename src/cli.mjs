@@ -6,7 +6,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { createStore, openStore } from "./store.mjs";
-import { assertKind, discover, siteForNewStore } from "./site.mjs";
+import { KIND, assertKind, discover, siteForNewStore, worktreeRoot } from "./site.mjs";
 import { abandon, amend, join, next, observe, openLoop, openLoopStore, ready, receipt, resume, suspend } from "./domain/loop.mjs";
 import { exportStore, log, status } from "./domain/query.mjs";
 
@@ -18,12 +18,18 @@ export const VERBS = Object.freeze([
 // `--flag value`, `--flag=value`, and repeatable flags that collect. No
 // positional arguments beyond the verb: a flag says what it is, and a script
 // that reorders them keeps working.
+const shellError = (code, message) => {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+};
+
 export function parseArgs(argv) {
   const [verb, ...rest] = argv;
   const options = {};
   for (let index = 0; index < rest.length; index += 1) {
     const token = rest[index];
-    if (!token.startsWith("--")) throw new Error(`unexpected argument ${token}`);
+    if (!token.startsWith("--")) throw shellError("UNEXPECTED_ARGUMENT", `unexpected argument ${token}; every input is a --flag`);
     const equals = token.indexOf("=");
     const name = equals === -1 ? token.slice(2) : token.slice(2, equals);
     let value;
@@ -37,20 +43,48 @@ export function parseArgs(argv) {
 }
 
 const list = (value) => (value === undefined ? [] : [value].flat());
-const integer = (value, fallback) => (value === undefined ? fallback : Number(value));
+const integer = (value) => (value === undefined ? undefined : Number(value));
+
+// Which flags each verb reads. Declared, so a flag nobody reads is refused
+// instead of ignored: `--bugdet 5` used to parse cleanly and vanish, and the
+// loop got whatever the missing value defaulted to.
+const FLAGS = Object.freeze({
+  init: ["root", "kind", "command"],
+  open: ["store", "root", "goal", "claim", "criterion", "budget", "session", "reason", "granted-by", "receipts", "depends-on", "command"],
+  next: ["store", "root", "loop"],
+  observe: ["store", "root", "loop", "session", "criterion", "timeout", "command"],
+  receipt: ["store", "root", "loop", "mode", "session", "command"],
+  join: ["store", "root", "loop", "session", "reason", "command"],
+  suspend: ["store", "root", "loop", "session", "outcome", "reason", "command"],
+  resume: ["store", "root", "loop", "session", "reason", "command"],
+  amend: ["store", "root", "loop", "goal", "budget", "criterion", "reason", "depends-on", "command"],
+  abandon: ["store", "root", "loop", "reason", "command"],
+  status: ["store", "root", "loop"],
+  log: ["store", "root", "loop", "from", "limit"],
+  ready: ["store", "root"],
+  export: ["store", "root"],
+});
 
 // Resolving the store is the one thing every verb but `init` needs. Explicit
 // wins; otherwise walk up from the working directory the way git finds `.git`.
 // Nothing is created here — a runtime that quietly starts a ledger wherever
 // somebody happened to be standing is one whose history nobody can account for.
 function resolve(options) {
-  const explicit = typeof options.store === "string" ? path.resolve(options.store) : null;
-  const root = typeof options.root === "string" ? path.resolve(options.root) : process.cwd();
-  const site = explicit === null ? discover(root) : { location: explicit, root, kind: null };
+  const from = typeof options.root === "string" ? path.resolve(options.root) : process.cwd();
+  if (typeof options.store === "string") {
+    const location = path.resolve(options.store);
+    const store = openLoopStore(location);
+    // The root comes from the store, not from wherever the caller happens to
+    // be standing. Checking the kind against an unrelated directory reported
+    // conflicts that were not there and missed the ones that were — and the
+    // kind check is the whole reason FS-07 exists.
+    const root = store.manifest.store_kind === KIND.FS ? path.dirname(location) : worktreeRoot(from) ?? from;
+    assertKind(root, store.manifest);
+    return { store, root, location };
+  }
+  const site = discover(from);
   if (site === null) {
-    const error = new Error(`no store found at or above ${root}; run \`workloop init --root <path>\` or pass --store`);
-    error.code = "NO_STORE_FOUND";
-    throw error;
+    throw shellError("NO_STORE_FOUND", `no store found at or above ${from}; run \`workloop init --root <path>\` or pass --store`);
   }
   const store = openLoopStore(site.location);
   assertKind(site.root, store.manifest);
@@ -66,11 +100,9 @@ const commonOf = (options, root) => ({
 
 export function run(argv, { cwd = process.cwd() } = {}) {
   const { verb, options } = parseArgs(argv);
-  if (!VERBS.includes(verb)) {
-    const error = new Error(`unknown verb ${verb}; known verbs are ${VERBS.join(", ")}`);
-    error.code = "UNKNOWN_VERB";
-    throw error;
-  }
+  if (!VERBS.includes(verb)) throw shellError("UNKNOWN_VERB", `unknown verb ${verb}; known verbs are ${VERBS.join(", ")}`);
+  const unknown = Object.keys(options).filter((flag) => !FLAGS[verb].includes(flag));
+  if (unknown.length > 0) throw shellError("UNKNOWN_FLAG", `${verb} does not take --${unknown[0]}; it takes ${FLAGS[verb].map((flag) => `--${flag}`).join(", ")}`);
 
   if (verb === "init") {
     const root = path.resolve(typeof options.root === "string" ? options.root : cwd);
@@ -88,15 +120,15 @@ export function run(argv, { cwd = process.cwd() } = {}) {
     case "open": {
       const result = openLoop(store, {
         goal: options.goal, claims: list(options.claim), criterionFile: options.criterion,
-        roundsBudget: integer(options.budget, 10), session: options.session, reason: options.reason,
+        roundsBudget: integer(options.budget), session: options.session, reason: options.reason,
         grantedBy: options["granted-by"], receipts: options.receipts, dependsOn: list(options["depends-on"]),
         commandId: options.command,
       });
       return { loop_id: result.loopId, seq: result.seq };
     }
     case "next": return next(store, common);
-    case "observe": return observe(store, { ...common, criterionFile: options.criterion, timeoutMs: integer(options.timeout, undefined) });
-    case "receipt": return receipt(store, { ...common, mode: options.mode ?? "commit" });
+    case "observe": return observe(store, { ...common, criterionFile: options.criterion, timeoutMs: integer(options.timeout) });
+    case "receipt": return receipt(store, { ...common, mode: options.mode });
     case "join": return join(store, { ...common, reason: options.reason });
     case "suspend": return suspend(store, { ...common, outcome: options.outcome, reason: options.reason });
     case "resume": return resume(store, { ...common, reason: options.reason });
