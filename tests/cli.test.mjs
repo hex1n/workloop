@@ -374,6 +374,19 @@ test("the workflow is loadable as a skill, not just readable as a document", () 
   // this is a workflow for.
   assert.match(fields.description, /workloop/iu);
   assert.equal(raw.slice(front[0].length).trimStart().startsWith("# "), true, "the body still begins with its own heading");
+
+  // Everything the skill points at has to be there and has to ship. A pointer
+  // into a file that is missing — or that `files` does not carry — reads as a
+  // complete instruction and delivers nothing, which is the quietest way for a
+  // skill to be wrong.
+  const pointed = [...raw.matchAll(/\]\((?!https?:)([^)#]+\.md)\)/gu)].map((match) => match[1]);
+  assert.ok(pointed.length > 0, "the skill discloses nothing, so this proves nothing");
+  const shipped = new Set(npmJson(["pack", "--dry-run"], { cwd: path.resolve(import.meta.dirname, "..") })[0].files.map((entry) => entry.path));
+  for (const target of pointed) {
+    const full = path.join(path.dirname(SKILL), target);
+    assert.ok(fs.existsSync(full), `the skill points at ${target}, which does not exist`);
+    assert.ok(shipped.has(`skills/workloop/${target}`), `${target} is pointed at but does not ship`);
+  }
 });
 
 test("a loop can be named by any prefix that means one loop, and never by one that means two", async (t) => {
