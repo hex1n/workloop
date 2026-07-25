@@ -17,6 +17,9 @@ the new design.
   scenarios pass.
 - `greenfield/scenarios/AUDIT-2026-07-25.md` — which mechanisms were ruled out
   and why. Read it before reintroducing any concept it killed.
+- `greenfield/slices/` — implementation specs, one per delivery slice. Slice 1
+  (log kernel) is written: on-disk format, lock rules, integrity policy,
+  property tests, and the crash-injection matrix.
 
 ## The one rule that this branch exists to enforce
 
