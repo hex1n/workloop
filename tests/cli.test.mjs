@@ -361,7 +361,13 @@ test("the workflow is loadable as a skill, not just readable as a document", () 
   // by the only reader it was written for. What makes it a skill is the header
   // and the `<root>/<name>/SKILL.md` layout, so both are asserted here rather
   // than assumed from the file having the right name.
-  const raw = fs.readFileSync(SKILL, "utf8");
+  // Normalised before parsing, and `.gitattributes` normalises the checkout as
+  // well. Belt and braces because this is the second gate CRLF has broken —
+  // the projection stamp hashed different bytes on Windows, and this one
+  // stopped seeing front matter at all, because `^---\n` does not match
+  // `---\r\n`. A test that only works when git is configured right is a test
+  // that reports on git's configuration.
+  const raw = fs.readFileSync(SKILL, "utf8").replace(/\r\n/gu, "\n");
   const front = raw.match(/^---\n([\s\S]*?)\n---\n/u);
   assert.ok(front, "no YAML front matter, so nothing will discover this");
 

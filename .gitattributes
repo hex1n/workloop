@@ -1,0 +1,7 @@
+# One byte sequence, every platform. This repository is built on digests of
+# file content and on tests that parse its own text, and Windows checks out
+# CRLF by default — which has now broken two gates in two different ways: the
+# projection-shape stamp hashed different bytes there, and the skill's front
+# matter stopped matching `^---\n`. Normalising the checkout removes the class
+# rather than the two instances.
+* text=auto eol=lf
