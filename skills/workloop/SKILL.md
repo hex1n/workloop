@@ -17,16 +17,22 @@ description: workloop drives a goal to a verified finish through an append-only 
 
 ## 前置
 
-### 1. 找到或建立 store
+### 1. 确认运行时在,再找到或建立 store
 
 ```
+workloop --version                  # 不在 PATH 上,就先装:
+                                    #   npm i -g <tarball 路径 或 git+ssh://…#main>
 workloop ready                      # 从当前目录向上找
 workloop init --root <path>         # 找不到时,显式建立
 ```
 
+**这一步先做。** 本文只讲怎么驱动运行时,不构成运行时在场的证据;下面每一条命令
+都假定 `workloop` 可执行。
+
 `init` 只在你打这条命令时发生。运行时在你恰好站着的地方开一本账,是它明确不做的事。
 
-**完成条件**:`ready` 返回一个 JSON 数组(可以为空)而不是 `NO_STORE_FOUND`。
+**完成条件**:`--version` 打出一个版本号,且 `ready` 返回一个 JSON 数组(可以为空)
+而不是 `NO_STORE_FOUND`。
 
 ### 2. 写判据,并让它红过一次
 
