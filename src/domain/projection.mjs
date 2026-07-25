@@ -31,6 +31,10 @@ export const EMPTY = Object.freeze({
   outcome: null,
   certification: null,
   certificationCommit: null,
+  // The seq of the last amendment that changed what "done" means. Every round
+  // before it was judged by a different rule, or answered a different
+  // question, and says so rather than passing for current.
+  amendedAt: 0,
   rounds: [],
   // Who is entitled to move this loop. Membership is earned by opening it or
   // by observing a round, never by simply knowing its address.
@@ -139,6 +143,10 @@ export function reduceLoop(state = EMPTY, record) {
       if (payload.rounds_budget !== null) next.roundsBudget = payload.rounds_budget;
       if (payload.criterion_digest !== null) next.criterionDigest = payload.criterion_digest;
       if (payload.goal !== null) next.goal = payload.goal;
+      // A budget change is not one of these. The budget says how much may
+      // still be spent, never what counts as finished — a judgment does not
+      // stop being true because the allowance moved.
+      if (payload.criterion_digest !== null || payload.goal !== null) next.amendedAt = record.seq;
       break;
     default:
       // Kernel records (tail repairs, the store's own genesis) pass through:
@@ -149,8 +157,14 @@ export function reduceLoop(state = EMPTY, record) {
   return next;
 }
 
+// Rounds still judged by the terms in force. Spent rounds are counted
+// separately: an amendment invalidates a judgment, not the fact that the work
+// happened, and refunding the budget would be a back door around it.
+export const isStale = (state, round) => round.seq < state.amendedAt;
+export const standingRounds = (state) => state.rounds.filter((round) => !isStale(state, round));
+
 export const roundsSpent = (state) => state.rounds.length;
-export const lastRound = (state) => (state.rounds.length === 0 ? null : state.rounds.at(-1));
+export const lastRound = (state) => (standingRounds(state).at(-1) ?? null);
 export const isLive = (state) => state.lifecycle === LIFECYCLE.ACTIVE;
 export const achieved = (state) => state.lifecycle === LIFECYCLE.TERMINAL && state.outcome === TERMINAL.ACHIEVED;
 
@@ -160,9 +174,10 @@ export const achieved = (state) => state.lifecycle === LIFECYCLE.TERMINAL && sta
 export function repeatedFailures(state) {
   const last = lastRound(state);
   if (last === null || last.progressSignature === null || last.verdict !== VERDICT.UNSATISFIED) return 0;
+  const standing = standingRounds(state);
   let count = 0;
-  for (let index = state.rounds.length - 1; index >= 0; index -= 1) {
-    if (state.rounds[index].progressSignature !== last.progressSignature) break;
+  for (let index = standing.length - 1; index >= 0; index -= 1) {
+    if (standing[index].progressSignature !== last.progressSignature) break;
     count += 1;
   }
   return count;

@@ -50,7 +50,7 @@
 | **SL-10** verdict 通道独占:JSON 末行优先,tri-state 退出码兜底 | `tests/loop-e2e.test.mjs` |
 | **SL-11** suspend/resume/abandon 要求参与会话与溯源 | `tests/loop-guards.test.mjs` |
 | **SL-12** terminal 节点拒绝一切后续变更且不触碰外部状态 | `tests/loop-e2e.test.mjs` |
-| **SL-13** amend 作废受影响的旧 judgment 并记录溯源 | `DEBT:D-04` |
+| **SL-13** amend 作废受影响的旧 judgment 并记录溯源 | `tests/domain-policy.test.mjs` |
 
 ## 03-claims-concurrency
 

@@ -117,9 +117,9 @@ artifact checkpoint 用 `lstat` 不跟随符号链接(否则会被引出 claim �
 | 项 | 状态 | 备注 |
 | --- | --- | --- |
 | **git receipt(GR 全族)** | **已做** | 见 [02-git-receipt](02-git-receipt.md)。`observe` 不再接受调用方传入的 `receiptDigest`——receipt 由运行时自己产生、自己复核,补上了公理 2 一直敞着的那一半。 |
-| SL-13 amend 使旧 judgment stale | 部分 | 目前只靠 signature 漂移隐式生效,没有显式标记 |
-| `status` / `log` / `ready` 动词 | 未做 | 查询面,切片 4 |
-| 运行时被 SIGKILL 时判据进程组成孤儿 | 已知限制 | 运行时正常退出时已清理;自身被强杀时无人接管。需要持久化 pid 才能事后收割 |
+| SL-13 amend 使旧 judgment stale | 已做 | 见 [08-amendment](08-amendment.md)。此前「靠 signature 漂移隐式生效」只对了一半:改判据会让 stuck 归零,只改目标不会,而且两种情形下指令都仍把旧裁决当反馈递出去 |
+| `status` / `log` / `ready` 动词 | 已做 | 查询面,见 [04-host-face](04-host-face.md) |
+| 运行时被 SIGKILL 时判据进程组成孤儿 | 已知限制 | DEBT D-03 |
 
 ## 7. 修订记录
 

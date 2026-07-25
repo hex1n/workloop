@@ -70,6 +70,60 @@ test("a round that recorded an unmet dependency blocks, with no help from the ca
   assert.equal(decide(blocked, { dependency: { state: "satisfied", unmet: [] } }).decision, DECISION.ACHIEVED);
 });
 
+test("SL-13: an amendment that changes the terms retires the judgments made under the old ones", () => {
+  const stale = { signature: digestOf({ f: "measured by the old rule" }) };
+  const before = fold([opened(5), observed(1, VERDICT.UNSATISFIED, stale)]);
+  assert.equal(decide(before).decision, DECISION.REPAIR);
+  assert.ok(nextDirective(before).feedback, "while the terms hold, the failure is what to repair");
+
+  // A different criterion measured a different thing; a different goal asked a
+  // different question. Handing that verdict back as feedback would send an
+  // agent to fix a rule that is no longer asked for.
+  for (const change of [{ criterion_digest: digestOf({ criterion: 2 }), goal: null }, { criterion_digest: null, goal: "something else" }]) {
+    const after = reduceLoop(before, record(KIND.AMENDED, {
+      rounds_budget: null, reason: "the terms changed", granted_by: "user", ...change,
+    }));
+    assert.equal(decide(after).decision, DECISION.IMPLEMENT, "nothing has been observed under the terms now in force");
+    assert.equal(nextDirective(after).feedback, null, "and no verdict from the old terms is offered as one");
+    assert.equal(roundsSpent(after), 1, "the round still happened, and still costs");
+  }
+
+  // A budget change is not a change of terms: how much may still be spent is
+  // not what counts as finished.
+  const funded = reduceLoop(before, record(KIND.AMENDED, {
+    rounds_budget: 9, criterion_digest: null, goal: null, reason: "more time", granted_by: "user",
+  }));
+  assert.equal(decide(funded).decision, DECISION.REPAIR, "the judgment still stands");
+  assert.ok(nextDirective(funded).feedback);
+});
+
+test("SL-13: the same failure either side of an amendment is not the same failure", () => {
+  const signature = digestOf({ f: "same text, different rule" });
+  const records = [opened(10)];
+  for (let round = 1; round <= DEFAULT_STUCK_THRESHOLD; round += 1) records.push(observed(round, VERDICT.UNSATISFIED, { signature }));
+  assert.equal(decide(fold(records)).decision, DECISION.STUCK);
+
+  // Retired rounds do not accumulate towards stuck: a loop is not stuck for
+  // having failed three times against a rule nobody is asking about now.
+  const amended = reduceLoop(fold(records), record(KIND.AMENDED, {
+    rounds_budget: null, criterion_digest: digestOf({ criterion: 2 }), goal: null, reason: "new rule", granted_by: "user",
+  }));
+  assert.equal(repeatedFailures(amended), 0);
+  assert.equal(decide(amended).decision, DECISION.IMPLEMENT);
+
+  // The case that makes the filter load-bearing rather than redundant: only
+  // the goal changed, so the criterion digest — and with it the signature — is
+  // unchanged, and a fresh round can carry the very same one. Counting across
+  // the amendment would call the loop stuck on its first round under the new
+  // terms, on the strength of failures nobody is asking about any more.
+  const regoaled = reduceLoop(fold(records), record(KIND.AMENDED, {
+    rounds_budget: null, criterion_digest: null, goal: "a different question", reason: "new goal", granted_by: "user",
+  }));
+  const fresh = reduceLoop(regoaled, observed(DEFAULT_STUCK_THRESHOLD + 1, VERDICT.UNSATISFIED, { signature }));
+  assert.equal(repeatedFailures(fresh), 1, "one failure under the terms in force, not four");
+  assert.equal(decide(fresh).decision, DECISION.REPAIR);
+});
+
 test("an indeterminate verdict asks for evidence rather than counting as failure", () => {
   const state = fold([opened(), observed(1, VERDICT.INDETERMINATE)]);
   assert.equal(decide(state).decision, DECISION.COLLECT_EVIDENCE);

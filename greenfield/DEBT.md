@@ -40,14 +40,6 @@
 
 ## 语义
 
-### D-04 SL-13:amend 未显式标记既往 judgment 陈旧
-
-目前只靠 progress signature 漂移隐式生效,没有显式标记。
-见 [02-single-loop §6](slices/02-single-loop.md)。
-
-- **为什么没做**:隐式路径在当前场景下行为正确,显式标记要新增记录种类。
-- **什么会迫使它**:出现一个 amend 后 signature 恰好不变的情形。
-
 ## 发行
 
 ### D-05 安装器(HF-06)

@@ -7,7 +7,7 @@
 import { refuse } from "./error.mjs";
 import { dependencyState } from "./graph.mjs";
 import { ancestryCheck, loopOf, next } from "./loop.mjs";
-import { roundsSpent } from "./projection.mjs";
+import { isStale, roundsSpent } from "./projection.mjs";
 
 /**
  * Everything known about one loop, plus the step it would be given.
@@ -21,6 +21,9 @@ export function status(store, { loopId, root, ...options } = {}) {
   const loop = loopOf(state, loopId);
   const rounds = loop.rounds.map((round) => ({
     round: round.round,
+    // Marked, not hidden: it happened, it just no longer answers the question
+    // the loop is now asking.
+    stale: isStale(loop, round),
     verdict: round.verdict,
     decision: round.decision,
     receipt_state: round.receiptState,
