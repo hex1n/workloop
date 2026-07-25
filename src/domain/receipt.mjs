@@ -183,15 +183,21 @@ export function takeReceipt({ root, mode, claims, storeLocation }) {
 
   const paths = touched.filter(inScope);
 
-  // A claim that exists on disk but contributed nothing is an emptiness the
-  // runtime cannot account for — and an unaccountable emptiness must never
-  // read as `clean`. The case that found this: a directory renamed by case
-  // only, which git still tracks under the old spelling, so every pathspec
-  // matched nothing and a receipt that staged nothing reported that everything
-  // was fine. The rule is written against that shape rather than that cause,
-  // so the next cause with the same shape is caught too. A claim that names
-  // nothing yet is a different thing and stays clean: `live` already excludes it.
-  const silent = live.filter((claim) => !paths.some((entry) => claim === "." || entry === claim || entry.startsWith(`${claim}/`)));
+  // A claim that exists on disk and that git knows nothing about is an
+  // emptiness the runtime cannot account for — and an unaccountable emptiness
+  // must never read as `clean`. The case that found this: a directory renamed
+  // by case only, which git still tracks under the old spelling, so every
+  // pathspec matched nothing and a receipt that staged nothing reported that
+  // everything was fine.
+  //
+  // The question is what git can see under the claim, *not* whether the claim
+  // contributed to this operation. An earlier version asked the latter and so
+  // flagged every untouched claim: a commit carries only what changed, so a
+  // loop with two claims could never get a clean receipt unless both changed
+  // in the same round. That surfaced on the first real use.
+  const silent = live.filter((claim) =>
+    lines(git(root, ["ls-files", "--", claim]).stdout).length === 0
+    && !paths.some((entry) => claim === "." || entry === claim || entry.startsWith(`${claim}/`)));
 
   // The staged set is read after the operation, deliberately: `--only` leaves
   // foreign entries staged, so what remains is precisely the content this

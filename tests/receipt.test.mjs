@@ -320,6 +320,26 @@ test("work the host committed itself can still be receipted", (t) => {
   assert.equal(receiptStanding({ root, receipt: attested, claims: ["src"], storeLocation: session().location }).standing, STANDING.IN_FORCE);
 });
 
+test("a claim that simply did not change this round is still clean", (t) => {
+  const { root, session, criterionFile } = repo(t);
+  fs.mkdirSync(path.join(root, "docs2"));
+  fs.writeFileSync(path.join(root, "docs2", "notes.md"), "notes\n");
+  git(root, "add", "docs2");
+  git(root, "commit", "-q", "-m", "a second claim, tracked");
+
+  const { loopId } = open(session(), ["src", "docs2"], criterionFile);
+  fs.writeFileSync(path.join(root, "src", "a.txt"), "done\n");
+  const commit = payloadOf(receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" }));
+
+  // Only `src` changed, so only `src` is in the commit. An earlier rule asked
+  // whether each claim contributed to the operation and flagged the ones that
+  // had not — which meant a loop with two claims could never be vouched for
+  // unless both changed in the same round. It surfaced the first time the
+  // runtime was pointed at a real repository.
+  assert.equal(commit.status, STATUS.CLEAN, `an untouched claim is not an unaccountable one: ${commit.reasons}`);
+  assert.deepEqual(commit.reasons, []);
+});
+
 test("a receipt never reports clean over a claim it could not see", (t) => {
   const { root, session, criterionFile } = repo(t);
   // git tracks `Src/a.txt`; the directory is then renamed by case only, which
