@@ -101,9 +101,28 @@ const commonOf = (options, root) => ({
   root,
 });
 
+// Built from the same tables the shell dispatches on, so a verb or a flag
+// cannot exist without appearing here — the usage text is derived, never
+// transcribed.
+export function usage() {
+  const width = Math.max(...VERBS.map((verb) => verb.length));
+  return [
+    "workloop — a ledger of goals, evidence, and the next legal step",
+    "",
+    "  workloop <verb> [--store <path>] [--root <path>] [options]",
+    "",
+    ...VERBS.map((verb) => `  ${verb.padEnd(width)}  ${FLAGS[verb].map((flag) => `--${flag}`).join(" ")}`),
+    "",
+    "Every input is a --flag; there are no positional arguments.",
+    "Output is JSON on stdout. A refusal prints `CODE: message` on stderr and exits non-zero.",
+  ].join("\n");
+}
+
 export function run(argv, { cwd = process.cwd() } = {}) {
   const { verb, options } = parseArgs(argv);
-  if (!VERBS.includes(verb)) throw shellError("UNKNOWN_VERB", `unknown verb ${verb}; known verbs are ${VERBS.join(", ")}`);
+  if (!VERBS.includes(verb)) {
+    throw shellError("UNKNOWN_VERB", `unknown verb ${verb === undefined ? "" : verb}\n\n${usage()}`.trim());
+  }
   const unknown = Object.keys(options).filter((flag) => !FLAGS[verb].includes(flag));
   if (unknown.length > 0) throw shellError("UNKNOWN_FLAG", `${verb} does not take --${unknown[0]}; it takes ${FLAGS[verb].map((flag) => `--${flag}`).join(", ")}`);
 
@@ -151,14 +170,34 @@ export function run(argv, { cwd = process.cwd() } = {}) {
   }
 }
 
+const HELP = new Set(["--help", "-h", "help", undefined]);
+
 export async function main(argv) {
+  // Asking what this is, is not an error. A first command that answers with a
+  // refusal teaches the reader that the tool is hostile before it teaches them
+  // anything else.
+  if (argv.length === 0 || HELP.has(argv[0])) {
+    write(process.stdout, `${usage()}\n`);
+    return 0;
+  }
   try {
     const result = await run(argv);
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    write(process.stdout, `${JSON.stringify(result, null, 2)}\n`);
     return 0;
   } catch (error) {
     // The code a person greps for in stderr is the code a test asserts on.
-    process.stderr.write(`${error.code ?? "ERROR"}: ${error.message}\n`);
+    write(process.stderr, `${error.code ?? "ERROR"}: ${error.message}\n`);
     return 1;
+  }
+}
+
+// `workloop log | head` closes the pipe while this is still writing. That is
+// the reader saying "enough", not a failure — printing a stack trace at it is
+// the tool complaining about being used correctly.
+function write(stream, text) {
+  try {
+    stream.write(text);
+  } catch (error) {
+    if (error.code !== "EPIPE") throw error;
   }
 }

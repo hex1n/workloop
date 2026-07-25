@@ -38,6 +38,47 @@ workloop open --goal <目标> --claim <路径> [--claim <路径>...] \
 
 **完成条件**:输出里有 `loop_id`。记下它——后面每条命令都要它。
 
+### 2.1 判据怎么写(这里最容易出错)
+
+判据是运行时唯一的锚。**一个写错的判据,运行时检测不出来**——它能识破的只有
+"判据自相矛盾"(末行说的话与自己的退出码打架),识不破"判据一贯地错"。
+
+第一次拿这套东西跑真实仓库时,作者自己的判据就撒了谎:它用正则从测试输出里找
+失败,而测试运行器**根本没跑起来**(参数用错),于是零个失败,于是报告 satisfied。
+退出码和 verdict 行完全一致,运行时毫无理由怀疑。
+
+所以判据要**朝失败的方向写**:
+
+```js
+import { spawnSync } from "node:child_process";
+const run = spawnSync(process.execPath, ["--test"], { encoding: "utf8" });
+process.stdout.write(run.stdout);
+
+const failures = [...run.stdout.matchAll(/^✖ (.+?) \(\d/gmu)].map((m) => ({ id: m[1].trim() }));
+
+// 关键的一行:检查器本身跑起来了吗?
+// 「没找到失败」和「没能去找」是两件事,而只有前者是绿的。
+if (run.status !== 0 && failures.length === 0) process.exit(1);   // → indeterminate
+
+console.log("WORKLOOP_VERDICT " + JSON.stringify({
+  verdict: failures.length === 0 ? "satisfied" : "unsatisfied", failures,
+}));
+process.exit(failures.length === 0 ? 4 : 3);
+```
+
+三条经验:
+
+- **让"不知道"有专属出口。** 任何非 3 非 4 的退出码都读作 indeterminate,而
+  indeterminate 不消耗判重、不累积 stuck——所以宁可退不知道,不要退绿。
+- **别只信字符串匹配。** 匹配不到,可能是没有失败,也可能是输出根本不是你以为的
+  那个格式。把运行器自己的退出码一并算进去。
+- **先让它红一次。** 在开单之前手工跑一遍,确认它对着一个已知坏掉的仓库真的说
+  unsatisfied。一个从没红过的判据,和没有判据是一样的。
+
+**完成条件**:在**尚未修复**的仓库里手工跑判据,`echo $?` 是 3,且末行的
+`WORKLOOP_VERDICT` 里 `verdict` 是 `unsatisfied`、`failures` 非空。两条都对上,
+这个判据才可以拿去开单。
+
 ## 每一轮
 
 ### 3. 问下一步

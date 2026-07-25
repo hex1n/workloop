@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { EXIT, VERDICT_PREFIX } from "../src/domain/criterion.mjs";
-import { VERBS, parseArgs, run } from "../src/cli.mjs";
+import { VERBS, main, parseArgs, run } from "../src/cli.mjs";
 import { openLoopStore } from "../src/domain/loop.mjs";
 import { assertChain } from "../src/record.mjs";
 
@@ -41,8 +41,41 @@ test("arguments parse as flags, in any order, with repeats collecting", () => {
   assert.throws(() => parseArgs(["open", "positional"]), /unexpected argument/u);
 });
 
-test("a verb the shell does not know is refused by name, not by silence", () => {
-  assert.throws(() => run(["frobnicate"]), (error) => error.code === "UNKNOWN_VERB");
+test("a verb the shell does not know is refused by name, and shown what there is", () => {
+  assert.throws(() => run(["frobnicate"]), (error) => error.code === "UNKNOWN_VERB" && error.message.includes("workloop <verb>"));
+});
+
+test("asking what this is, is not an error", async () => {
+  // A first command that answers with a refusal teaches the reader the tool is
+  // hostile before it teaches them anything else.
+  const printed = [];
+  const stdout = process.stdout.write;
+  process.stdout.write = (text) => { printed.push(text); return true; };
+  try {
+    for (const argv of [[], ["--help"], ["-h"], ["help"]]) {
+      assert.equal(await main(argv), 0, JSON.stringify(argv));
+    }
+  } finally {
+    process.stdout.write = stdout;
+  }
+  assert.equal(printed.length, 4);
+  // Derived from the tables the shell dispatches on, so a verb cannot exist
+  // without appearing here.
+  for (const verb of VERBS) assert.match(printed[0], new RegExp(`\\b${verb}\\b`, "u"), verb);
+  assert.match(printed[0], /--granted-by/u, "and its flags with it");
+});
+
+test("a reader that stops listening is not a failure", () => {
+  // `workloop log | head` closes the pipe mid-write. Printing a stack trace at
+  // that is the tool complaining about being used correctly.
+  const broken = { write() { const error = new Error("EPIPE"); error.code = "EPIPE"; throw error; } };
+  const stdout = process.stdout;
+  Object.defineProperty(process, "stdout", { value: broken, configurable: true });
+  try {
+    return main(["--help"]).then((code) => assert.equal(code, 0));
+  } finally {
+    Object.defineProperty(process, "stdout", { value: stdout, configurable: true });
+  }
 });
 
 test("every verb runs through the CLI, and the store is found by walking up", async (t) => {
