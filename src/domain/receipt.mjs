@@ -16,7 +16,7 @@ import { digestOf } from "../canonical.mjs";
 import { controlPlanePaths as controlPlane, realOf as real, systemPath } from "../site.mjs";
 import { refuse } from "./error.mjs";
 
-export const MODE = Object.freeze({ STAGE: "stage", COMMIT: "commit" });
+export const MODE = Object.freeze({ STAGE: "stage", COMMIT: "commit", SNAPSHOT: "snapshot" });
 export const STATUS = Object.freeze({ CLEAN: "clean", UNCERTAIN: "uncertain" });
 
 // Why a receipt is not in force. `none` and `drifted` are different situations
@@ -131,8 +131,35 @@ function treeDigest(root, { claims, inScope, commit }) {
 export const LOOP_TRAILER = "Workloop-Loop";
 export const COMMAND_TRAILER = "Workloop-Command";
 
+/**
+ * A receipt with no version history behind it: the digests of the claimed
+ * paths, as they are now.
+ *
+ * There is no "landed" here — nothing to be an ancestor of. A filesystem
+ * receipt holds while the same paths still hash to the same thing, and stops
+ * holding the moment they do not. `clean` means the runtime read everything it
+ * claimed; anything it could not read leaves it saying so, on the same rule
+ * the git side follows — an emptiness nobody can account for is never clean.
+ */
+export function takeFilesystemReceipt({ root, claims, storeLocation, readEntries }) {
+  const excluded = controlPlane(root, storeLocation);
+  const inScope = scopeOf(claims, excluded);
+  const entries = readEntries(root, claims, { storeLocation });
+  const unreadable = entries.filter(([, digest]) => String(digest).startsWith("unreadable:"));
+  return {
+    mode: MODE.SNAPSHOT,
+    status: unreadable.length === 0 ? STATUS.CLEAN : STATUS.UNCERTAIN,
+    reasons: unreadable.slice(0, MAX_REASONS).map(([entry, why]) => `${entry} could not be read (${why.slice("unreadable:".length)})`),
+    paths: entries.map(([entry]) => entry).filter(inScope).sort(),
+    head_before: null,
+    commit_oid: null,
+    parent_oid: null,
+    tree_digest: digestOf(entries),
+  };
+}
+
 export function takeReceipt({ root, mode, claims, storeLocation, loopId = null, commandId = null }) {
-  if (mode !== MODE.STAGE && mode !== MODE.COMMIT) refuse("UNKNOWN_RECEIPT_MODE", `${mode} is not a receipt mode`);
+  if (mode !== MODE.STAGE && mode !== MODE.COMMIT) refuse("UNKNOWN_RECEIPT_MODE", `${mode} is not a git receipt mode`);
   assertGitWorkspace(root);
   const excluded = controlPlane(root, storeLocation);
   const live = livePathspecs(root, claims);
@@ -293,9 +320,18 @@ export function unrecordedCommits({ root, loopId, recordedCommands, maxCommits =
  * invalidates my certification" failure is the one this whole design is built
  * to not have.
  */
-export function receiptStanding({ root, receipt, claims, storeLocation }) {
+export function receiptStanding({ root, receipt, claims, storeLocation, readEntries = null }) {
   if (receipt === null || receipt === undefined) return { standing: STANDING.NONE, drift: [] };
   if (receipt.status !== STATUS.CLEAN) return { standing: STANDING.UNCERTAIN, drift: [] };
+  if (receipt.mode === MODE.SNAPSHOT) {
+    // No history to be reachable from, so the only question is whether the
+    // paths still hash to what they hashed to. Recomputed rather than trusted.
+    if (readEntries === null) refuse("ARTIFACTS_UNCHECKABLE", "checking a filesystem receipt needs the workspace");
+    const now = digestOf(readEntries(root, claims, { storeLocation }));
+    return now === receipt.tree_digest
+      ? { standing: STANDING.IN_FORCE, drift: [] }
+      : { standing: STANDING.DRIFTED, drift: ["the claimed paths no longer hash to what the receipt recorded"] };
+  }
   // Staging is not durable: nothing about an index entry survives a checkout,
   // and nothing can be shown to be an ancestor of HEAD. Only a commit lands.
   if (receipt.mode !== MODE.COMMIT || receipt.commit_oid === null) return { standing: STANDING.UNLANDED, drift: [] };

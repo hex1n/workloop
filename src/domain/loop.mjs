@@ -9,12 +9,12 @@ import { digestOf, sha256Hex } from "../canonical.mjs";
 import { CLASSES } from "../locks.mjs";
 import { canonicalPath, caseInsensitiveVolume, controlPlanePaths, isUnder, pathContains, realOf, systemPath } from "../site.mjs";
 import { openStore } from "../store.mjs";
-import { runCriterion } from "./criterion.mjs";
+import { reapOrphanedCriterion, runCriterion } from "./criterion.mjs";
 import { LoopError, refuse } from "./error.mjs";
 import { decide, nextDirective, progressSignature } from "./policy.mjs";
 import { DEPENDENCY, assertEdges, claimConflicts, dependencyState, ready as readyLoops } from "./graph.mjs";
 import { EMPTY, EMPTY_STORE, PROJECTION_SHAPE, isLive, reduceLoop, reduceStore, roundsSpent } from "./projection.mjs";
-import { STANDING, isAncestorCommit, receiptStanding, takeReceipt } from "./receipt.mjs";
+import { STANDING, isAncestorCommit, receiptStanding, takeFilesystemReceipt, takeReceipt } from "./receipt.mjs";
 import { DECISION, KIND, RECEIPTS, SUSPENSION, TERMINAL, VERDICT, loopVocabulary } from "./vocabulary.mjs";
 
 export { LoopError };
@@ -63,7 +63,12 @@ function assertWorkspace(root) {
 // loop is responsible for.
 export const MAX_CHECKPOINT_ENTRIES = 20_000;
 
-export function artifactCheckpoint(root, claims, { storeLocation = null } = {}) {
+export const artifactCheckpoint = (root, claims, options = {}) => digestOf(artifactEntries(root, claims, options));
+
+// The same walk the checkpoint is a digest of. A filesystem receipt is that
+// list of digests, so there is one traversal and one definition of "what the
+// claimed paths currently are" — two would disagree on the first symlink.
+export function artifactEntries(root, claims, { storeLocation = null } = {}) {
   // The runtime's own files are not artifacts (FS-02). Without this a loop
   // that claims "." sees its own ledger change on every append, so its progress
   // signature moves every round and it can never be found stuck — the check
@@ -117,7 +122,7 @@ export function artifactCheckpoint(root, claims, { storeLocation = null } = {}) 
     }
   };
   for (const claim of [...claims].sort()) walk(canonicalPath(claim), 0);
-  return digestOf(entries);
+  return entries;
 }
 
 /**
@@ -278,7 +283,7 @@ export function receipt(store, { root, loopId, mode, session, commandId, onPhase
   if (typeof session !== "string" || session.length === 0) refuse("SESSION_REQUIRED", "a receipt records who took it");
   const before = loopOf(store.replay().state, loopId);
   if (!isLive(before)) refuse("NOT_LIVE", `the loop is ${before.lifecycle}`);
-  if (before.receipts !== RECEIPTS.GIT) refuse("NO_RECEIPT_REGIME", `this loop was opened with receipts: ${before.receipts}`);
+  if (before.receipts === RECEIPTS.NONE) refuse("NO_RECEIPT_REGIME", "this loop was opened with receipts: none");
 
   // Before anything is asked of the world. A command that already landed is
   // answered from the log, so a retry after a crash still gets its result even
@@ -303,7 +308,9 @@ export function receipt(store, { root, loopId, mode, session, commandId, onPhase
     const raced = store.commandRecords(commandId);
     if (raced !== null) return replay(raced);
 
-    const taken = takeReceipt({ root, mode, claims: before.claims, storeLocation: store.location, loopId, commandId });
+    const taken = before.receipts === RECEIPTS.FS
+      ? takeFilesystemReceipt({ root, claims: before.claims, storeLocation: store.location, readEntries: artifactEntries })
+      : takeReceipt({ root, mode, claims: before.claims, storeLocation: store.location, loopId, commandId });
     const payload = { ...taken, loop_id: loopId, recorded_by: session };
     return store.append({
       commandId,
@@ -349,7 +356,12 @@ export async function observe(store, { root, loopId, session, commandId, timeout
     refuse("CRITERION_CHANGED", "the criterion file no longer matches the one this loop was opened with");
   }
 
-  const outcome = await runCriterion({ executable: process.execPath, args: [criterionFile], cwd: root, timeoutMs });
+  // A criterion left running by a runtime that was killed outright. Reaped
+  // here because this is where somebody comes back to the loop.
+  const pidFile = path.join(store.location, "locks", `criterion-${loopId.slice("sha256:".length, "sha256:".length + 16)}.pid`);
+  const orphan = reapOrphanedCriterion(pidFile);
+
+  const outcome = await runCriterion({ executable: process.execPath, args: [criterionFile], cwd: root, timeoutMs, pidFile });
   const checkpoint = artifactCheckpoint(root, before.claims, { storeLocation: store.location });
 
   // The receipt is re-verified here rather than taken on trust — and rather
@@ -357,9 +369,12 @@ export async function observe(store, { root, loopId, session, commandId, timeout
   // the anchor axiom half-honoured. A receipt that no longer describes the task
   // paths is simply not in force: the round records the observation and says
   // why, instead of throwing away a criterion run that already happened.
-  const standing = before.receipts === RECEIPTS.GIT
-    ? receiptStanding({ root, receipt: before.receipt, claims: before.claims, storeLocation: store.location })
-    : { standing: STANDING.NONE };
+  const standing = before.receipts === RECEIPTS.NONE
+    ? { standing: STANDING.NONE }
+    : receiptStanding({
+      root, receipt: before.receipt, claims: before.claims, storeLocation: store.location,
+      readEntries: artifactEntries, ...ancestryCheck(root),
+    });
   const receiptDigest = standing.standing === STANDING.IN_FORCE ? before.receipt.digest : null;
 
   // The dependency gate, evaluated now for the same reason the receipt is: the
@@ -398,7 +413,7 @@ export async function observe(store, { root, loopId, session, commandId, timeout
         // The tail again, not the head. output_tail is already the end of what
         // the criterion printed; taking its first 2000 characters would throw
         // away precisely the part that says what went wrong.
-        summary: outcome.execution.output_tail.slice(-2000),
+        summary: `${orphan === null ? "" : `[reaped a criterion left running by a killed runtime: pid ${orphan}]\n`}${outcome.execution.output_tail}`.slice(-2000),
         observed_by: session,
       });
       const projected = reduceLoop(state, { seq: state.revision + 1, ...observation });

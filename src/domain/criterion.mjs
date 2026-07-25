@@ -9,6 +9,7 @@
 // success is the one answer that must never happen by accident.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import fs from "node:fs";
 import { digestOf } from "../canonical.mjs";
 import { VERDICT } from "./vocabulary.mjs";
 
@@ -155,7 +156,37 @@ export function killTree(child, report = () => {}, { platform = process.platform
   });
 }
 
-export async function runCriterion({ executable, args = [], cwd, timeoutMs = 120_000, env = {} }) {
+/**
+ * Kills a criterion process group left behind by a runtime that was itself
+ * killed, and says whether it found one.
+ *
+ * The runtime cleans up when it exits in an orderly way. When it is SIGKILLed
+ * there is nobody left to do it, and the group keeps running — so the pid is
+ * written down where the next caller will look. What cannot be helped is a
+ * loop nobody ever touches again: this is found by coming back, like the
+ * commit nobody retries.
+ */
+export function reapOrphanedCriterion(pidFile) {
+  let recorded;
+  try {
+    recorded = Number(fs.readFileSync(pidFile, "utf8").trim());
+  } catch {
+    return null;
+  }
+  fs.rmSync(pidFile, { force: true });
+  if (!Number.isSafeInteger(recorded) || recorded <= 1) return null;
+  try {
+    process.kill(recorded, 0);
+  } catch {
+    // Already gone. The file outliving the process is the ordinary case and
+    // says nothing worth recording.
+    return null;
+  }
+  killTree({ exitCode: null, signalCode: null, pid: recorded, kill: () => process.kill(recorded, "SIGKILL") });
+  return recorded;
+}
+
+export async function runCriterion({ executable, args = [], cwd, timeoutMs = 120_000, env = {}, pidFile = null }) {
   return new Promise((resolve) => {
     const started = Date.now();
     const out = streamSink();
@@ -174,6 +205,7 @@ export async function runCriterion({ executable, args = [], cwd, timeoutMs = 120
       settled = true;
       clearTimeout(timer);
       process.off("exit", onExit);
+      if (pidFile !== null) fs.rmSync(pidFile, { force: true });
       resolve(value);
     };
     // If the runtime exits first, the detached group would outlive it with
@@ -210,6 +242,11 @@ export async function runCriterion({ executable, args = [], cwd, timeoutMs = 120
       return;
     }
     process.once("exit", onExit);
+    // Written where the next caller will look, and removed when this settles.
+    // A runtime that is killed outright leaves it behind on purpose.
+    if (pidFile !== null) {
+      try { fs.writeFileSync(pidFile, String(child.pid)); } catch { /* the reaping is best effort */ }
+    }
 
     child.stdout.on("data", (chunk) => out.write(chunk));
     child.stderr.on("data", (chunk) => err.write(chunk));

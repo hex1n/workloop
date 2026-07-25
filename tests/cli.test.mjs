@@ -6,6 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { EXIT, VERDICT_PREFIX } from "../src/domain/criterion.mjs";
+import { spawnSync } from "node:child_process";
 import { VERBS, main, parseArgs, run } from "../src/cli.mjs";
 import { openLoopStore } from "../src/domain/loop.mjs";
 import { assertChain } from "../src/record.mjs";
@@ -264,12 +265,24 @@ test("HF-08: what ships is only what is implemented", () => {
     assert.equal(sources.includes(retired), false, `${retired} was ruled out but appears in the shipped runtime`);
   }
 
+  // Asked of the release itself, not of the source tree. Reading the sources
+  // said nothing about what ships: the tarball carried 139 files of the
+  // previous implementation's documentation, and every string check here
+  // passed anyway.
+  const packed = JSON.parse(spawnSync("npm", ["pack", "--dry-run", "--json"], { cwd: repoRoot, encoding: "utf8" }).stdout);
+  const shipped = packed[0].files.map((entry) => entry.path);
+  for (const path_ of shipped) {
+    assert.match(path_, /^(src\/|bin\/|greenfield\/WORKFLOW\.md$|package\.json$|README\.md$|LICENSE$)/u, `${path_} is not part of the runtime`);
+  }
+  assert.ok(shipped.includes("bin/workloop.mjs"), "and what is the runtime is there");
+  assert.ok(shipped.includes("greenfield/WORKFLOW.md"), "including the workflow text HF-09 is about");
+
   // The criterion contract in the documentation is the one the code enforces.
   const contract = readFile("greenfield/slices/02-single-loop.md");
-  assert.match(contract, new RegExp(`\\b4 = satisfied`, "u"));
+  assert.match(contract, /\b4 = satisfied/u);
   assert.equal(EXIT.SATISFIED, 4);
   assert.equal(EXIT.UNSATISFIED, 3);
-  assert.match(contract, new RegExp(VERDICT_PREFIX.replace(/_/gu, "_"), "u"), "the documented verdict line is the real one");
+  assert.match(contract, new RegExp(VERDICT_PREFIX, "u"), "the documented verdict line is the real one");
 });
 
 test("HF-09: every step of the shipped workflow has a decidable completion condition", () => {

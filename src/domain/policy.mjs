@@ -63,7 +63,7 @@ export function decide(state, { stuckThreshold = DEFAULT_STUCK_THRESHOLD, depend
   // seen. Without this the runtime answers "produce a receipt" to a host that
   // just produced one, and the directive never leads anywhere new.
   const unjudgedReceipt = last !== null && state.receipt !== null && state.receipt.seq > last.seq;
-  const wantsReceipt = state.receipts === RECEIPTS.GIT && last !== null && last.receiptDigest === null;
+  const wantsReceipt = state.receipts !== RECEIPTS.NONE && last !== null && last.receiptDigest === null;
   const evidenceStep = () => (unjudgedReceipt
     ? { decision: DECISION.JUDGE, reason: "a receipt was produced that no round has been judged against" }
     : { decision: DECISION.PRODUCE_RECEIPT, reason: `no receipt is in force (${last.receiptState})` });

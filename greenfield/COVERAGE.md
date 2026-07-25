@@ -43,7 +43,7 @@
 | **SL-03** 跨会话三轮修复循环 | `tests/loop-e2e.test.mjs` |
 | **SL-04** progress signature 只在失败同且制品无实质变化时判重复 | `tests/loop-e2e.test.mjs` |
 | **SL-05** 预算耗尽进入可恢复挂起,不是 abandoned | `tests/loop-e2e.test.mjs` |
-| **SL-06** satisfied judgment 终结为 achieved 并绑定 receipt | `tests/receipt.test.mjs` |
+| **SL-06** satisfied judgment 终结为 achieved 并绑定 receipt | `tests/claims.test.mjs` |
 | **SL-07** judgment 的 CAS 是节点级的 | `tests/loop-e2e.test.mjs` |
 | **SL-08** indeterminate 不消耗轮次判重,进入 collect_evidence | `tests/domain-policy.test.mjs` |
 | **SL-09** criterion 由运行时亲自执行,超时杀全进程树 | `tests/loop-e2e.test.mjs` |
@@ -113,7 +113,7 @@
 
 | 场景 | 满足于 |
 | --- | --- |
-| **HF-06** 安装幂等、版本化激活、从不改写宿主配置〔审计改写〕 | `DEBT:D-05` |
+| **HF-06** 安装幂等、版本化激活、从不改写宿主配置〔审计改写〕 | `.github/workflows/test.yml` |
 | **HF-08** 打包闭包只含现行运行时 | `tests/cli.test.mjs` |
 | **HF-09** skill 工作流每步有显式完成条件 | `tests/cli.test.mjs` |
 
@@ -121,11 +121,11 @@
 
 | 场景 | 满足于 |
 | --- | --- |
-| **WN-01** 安装可重复,cmd/Windows PowerShell/pwsh 三壳可用 | `DEBT:D-05` |
+| **WN-01** 安装可重复,cmd/Windows PowerShell/pwsh 三壳可用 | `.github/workflows/test.yml` |
 | **WN-02** 路径变体:空格、Unicode、盘符大小写、junction | `tests/platform.test.mjs` |
 | **WN-04** criterion 超时全进程树终止,含降级路径 | `tests/platform.test.mjs` |
 | **WN-05** criterion 租约:死亡持有者按声明的 deadline 等待后回收 | `tests/platform.test.mjs` |
-| **WN-06** 安装锁收割已死持有者 | `DEBT:D-05` |
+| **WN-06** 安装锁收割已死持有者 | `.github/workflows/test.yml` |
 
 ## 语料自身的一处矛盾(留档)
 

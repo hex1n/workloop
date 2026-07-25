@@ -21,5 +21,10 @@
   "homepage": "https://github.com/hex1n/workloop#readme",
   "bin": {
     "workloop": "bin/workloop.mjs"
-  }
+  },
+  "files": [
+    "src",
+    "bin",
+    "greenfield/WORKFLOW.md"
+  ]
 }

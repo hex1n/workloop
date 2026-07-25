@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createStore } from "../src/store.mjs";
-import { assertClaims, claimIdentity, next, observe, openLoop, openLoopStore, ready, suspend } from "../src/domain/loop.mjs";
+import { assertClaims, claimIdentity, next, observe, openLoop, openLoopStore, ready, receipt, suspend } from "../src/domain/loop.mjs";
 import { EXIT, VERDICT_PREFIX } from "../src/domain/criterion.mjs";
 
 const CRITERION = `console.log("${VERDICT_PREFIX} " + JSON.stringify({ verdict: "unsatisfied", failures: [{ id: "x" }] })); process.exit(${EXIT.UNSATISFIED});`;
@@ -150,6 +150,87 @@ test("CC-01: one store carries several disjoint loops, each with its own identit
   assert.deepEqual(ready(session()).sort(), [alpha, beta].sort(), "both are on the frontier");
   assert.deepEqual(state.loops[alpha].claims, ["alpha"]);
   assert.deepEqual(state.loops[beta].claims, ["beta"]);
+});
+
+test("SL-06: a filesystem loop is certified on a snapshot of its artifacts", async (t) => {
+  const { root, session, criterionFile } = workspace(t);
+  fs.mkdirSync(path.join(root, "src"));
+  fs.writeFileSync(path.join(root, "src", "a.txt"), "todo\n");
+  const passing = path.join(root, "pass.mjs");
+  fs.writeFileSync(passing, `console.log("${VERDICT_PREFIX} " + JSON.stringify({ verdict: "satisfied", failures: [] })); process.exit(${EXIT.SATISFIED});`);
+  const loopId = openLoop(session(), {
+    root, goal: "g", claims: ["src"], criterionFile: passing, roundsBudget: 5,
+    session: "s1", reason: "fixture", grantedBy: "self", receipts: "fs", commandId: "open",
+  }).loopId;
+
+  // Satisfied is not enough on its own: a loop that declared an evidence
+  // regime is certified on evidence, whichever regime it declared.
+  await observe(session(), { root, loopId, session: "s1", criterionFile: passing, commandId: "o1" });
+  assert.equal(next(session(), { loopId }).decision, "produce_receipt");
+
+  const taken = receipt(session(), { root, loopId, mode: "snapshot", session: "s1", commandId: "r1" });
+  const payload = taken.records.at(-1).payload;
+  assert.equal(payload.status, "clean");
+  assert.equal(payload.commit_oid, null, "there is no commit here, and the receipt says so rather than inventing one");
+  assert.deepEqual(payload.paths, ["src/a.txt"]);
+  assert.match(payload.tree_digest, /^sha256:/u);
+
+  await observe(session(), { root, loopId, session: "s1", criterionFile: passing, commandId: "o2" });
+  const round = session().read().filter((entry) => entry.kind === "round_observed").at(-1).payload;
+  assert.equal(round.receipt_state, "in_force");
+  assert.equal(session().read().at(-1).payload.outcome, "achieved");
+});
+
+test("SL-06: a filesystem receipt stops holding the moment the artifacts move", async (t) => {
+  const { root, session } = workspace(t);
+  fs.mkdirSync(path.join(root, "src"));
+  fs.writeFileSync(path.join(root, "src", "a.txt"), "todo\n");
+  const passing = path.join(root, "pass.mjs");
+  fs.writeFileSync(passing, `console.log("${VERDICT_PREFIX} " + JSON.stringify({ verdict: "satisfied", failures: [] })); process.exit(${EXIT.SATISFIED});`);
+  const loopId = openLoop(session(), {
+    root, goal: "g", claims: ["src"], criterionFile: passing, roundsBudget: 5,
+    session: "s1", reason: "fixture", grantedBy: "self", receipts: "fs", commandId: "open",
+  }).loopId;
+  receipt(session(), { root, loopId, mode: "snapshot", session: "s1", commandId: "r1" });
+
+  // No history to be reachable from, so the only question a filesystem receipt
+  // can answer is whether the paths still hash to what it recorded.
+  fs.writeFileSync(path.join(root, "src", "a.txt"), "changed after the receipt\n");
+  await observe(session(), { root, loopId, session: "s1", criterionFile: passing, commandId: "o1" });
+  const round = session().read().find((entry) => entry.kind === "round_observed").payload;
+  assert.equal(round.verdict, "satisfied", "the check still passes");
+  assert.equal(round.receipt_state, "drifted");
+  assert.equal(session().read().some((entry) => entry.kind === "loop_terminal"), false, "and it is not certified");
+});
+
+test("SL-06: a filesystem receipt does not vouch for what it could not read", (t) => {
+  const { root, session } = workspace(t);
+  fs.mkdirSync(path.join(root, "src"));
+  fs.writeFileSync(path.join(root, "src", "a.txt"), "readable\n");
+  const locked = path.join(root, "src", "locked");
+  fs.mkdirSync(locked);
+  fs.writeFileSync(path.join(locked, "inside.txt"), "x\n");
+  fs.chmodSync(locked, 0o000);
+  // Running as root, or on a filesystem without POSIX modes, the directory
+  // stays readable and there is nothing here to observe.
+  let blocked = true;
+  try { fs.readdirSync(locked); blocked = false; } catch { /* as intended */ }
+  if (!blocked) { fs.chmodSync(locked, 0o755); return; }
+
+  const passing = path.join(root, "pass.mjs");
+  fs.writeFileSync(passing, `console.log("${VERDICT_PREFIX} " + JSON.stringify({ verdict: "satisfied", failures: [] })); process.exit(${EXIT.SATISFIED});`);
+  const loopId = openLoop(session(), {
+    root, goal: "g", claims: ["src"], criterionFile: passing, roundsBudget: 5,
+    session: "s1", reason: "fixture", grantedBy: "self", receipts: "fs", commandId: "open",
+  }).loopId;
+
+  const payload = receipt(session(), { root, loopId, mode: "snapshot", session: "s1", commandId: "r1" }).records.at(-1).payload;
+  // Same rule as the git side: an emptiness the runtime cannot account for is
+  // never clean. Here it is a directory it was not allowed to open — the
+  // receipt says which one rather than passing over it.
+  fs.chmodSync(locked, 0o755);
+  assert.equal(payload.status, "uncertain");
+  assert.match(payload.reasons.join(" "), /locked.*could not be read/u);
 });
 
 test("CC-04: a session is provenance, not routing — one may hold several loops at once", async (t) => {

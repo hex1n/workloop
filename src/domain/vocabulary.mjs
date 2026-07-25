@@ -24,7 +24,7 @@ export const KIND = Object.freeze({
 // opened and never inferred: this is the standard the loop is judged against,
 // and a standard that changes because somebody ran `git init` halfway through
 // is not a standard.
-export const RECEIPTS = Object.freeze({ NONE: "none", GIT: "git" });
+export const RECEIPTS = Object.freeze({ NONE: "none", GIT: "git", FS: "fs" });
 
 export const VERDICT = Object.freeze({ SATISFIED: "satisfied", UNSATISFIED: "unsatisfied", INDETERMINATE: "indeterminate" });
 

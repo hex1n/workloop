@@ -28,3 +28,14 @@ jobs:
       # the log kernel.
       - name: Gate
         run: npm test
+
+      # HF-06 / WN-01, without an installer: the distribution is an npm package
+      # with a bin, so what needs proving is that the packaged thing works once
+      # installed — on every platform, from the shell that platform gives you.
+      # A tarball that only runs from its source tree is not a release.
+      - name: Packaged binary runs where it is installed
+        run: |
+          npm pack --silent
+          npm install --no-save --global ./workloop-0.0.0.tgz
+          workloop --help
+          workloop frobnicate || test $? -eq 1
