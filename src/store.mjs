@@ -154,6 +154,7 @@ export function openStore(location, {
   lockTimeoutMs = 10_000,
   lockLeaseMs = 60_000,
   onPhase = () => {},
+  reducer = null,
 } = {}) {
   const manifest = readManifest(location);
   if (verifyAnchor && physicalAnchor(location) !== manifest.anchor) {
@@ -196,7 +197,7 @@ export function openStore(location, {
     const segments = listSegments(location);
     const records = [];
     const commands = new Map();
-    const snapshot = useSnapshot ? readNewestSnapshot(snapshotDirectory, manifest.store_id) : null;
+    const snapshot = useSnapshot ? readNewestSnapshot(snapshotDirectory, manifest.store_id, reducer) : null;
     let bytes = 0;
     let truncated = null;
     for (const segment of segments) {
@@ -361,7 +362,7 @@ export function openStore(location, {
           // does not exist yet.
           let state = loaded.state;
           for (const record of records) state = reduce(state, record);
-          writeSnapshot(snapshotDirectory, { storeId: manifest.store_id, seq: head.seq, headDigest: head.digest, state }, onPhase);
+          writeSnapshot(snapshotDirectory, { storeId: manifest.store_id, seq: head.seq, headDigest: head.digest, reducer, state }, onPhase);
           onPhase("snapshot_written");
         }
         onPhase("before_release");

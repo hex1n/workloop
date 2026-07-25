@@ -6,7 +6,9 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createHash } from "node:crypto";
 import { digestOf } from "../src/canonical.mjs";
+import { readNewestSnapshot, writeSnapshot } from "../src/snapshot.mjs";
 import { createStore, openStore } from "../src/store.mjs";
 
 const REQ = (value) => digestOf({ request: value });
@@ -107,4 +109,30 @@ test("a snapshot cannot hide later damage to the log", (t) => {
   bytes[bytes.length - 6] ^= 0xff;
   fs.writeFileSync(segment, bytes);
   assert.throws(() => open().replay(), (error) => error.code === "STORE_DAMAGED");
+});
+
+test("a snapshot is one reducer's output, and another reducer must not read it", (t) => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), "workloop-shape-"));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const written = { storeId: "s", seq: 3, headDigest: `sha256:${"a".repeat(64)}`, state: { kept: true } };
+
+  writeSnapshot(directory, { ...written, reducer: "shape-one" });
+  assert.ok(readNewestSnapshot(directory, "s", "shape-one"), "its own reducer reads it back");
+  // A reducer that writes different fields would read this one's missing keys
+  // as `undefined` and quietly lose whatever they meant. Skipping it costs a
+  // replay; reading it costs an answer nobody can tell is wrong.
+  assert.equal(readNewestSnapshot(directory, "s", "shape-two"), null);
+  assert.equal(readNewestSnapshot(directory, "s", null), null, "and one that was stamped by nobody is not a match either");
+});
+
+test("the projection cannot change shape without saying so", () => {
+  // The stamp is only a guard if it moves when the state does. Editing the
+  // projection without bumping it would hand the next version snapshots whose
+  // fields it does not have — which is exactly how a loop's retired judgments
+  // once came back to life, silently.
+  const source = fs.readFileSync(new URL("../src/domain/projection.mjs", import.meta.url), "utf8");
+  const body = source.replace(/^export const PROJECTION_SHAPE = "[^"]*";$/mu, "");
+  const digest = createHash("sha256").update(body).digest("hex").slice(0, 16);
+  assert.equal(digest, "ccf5d3c2883c1479",
+    `src/domain/projection.mjs changed. Bump PROJECTION_SHAPE if the shape of the state changed, then set this digest to ${digest}.`);
 });

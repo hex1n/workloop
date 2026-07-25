@@ -13,7 +13,7 @@ import { runCriterion } from "./criterion.mjs";
 import { LoopError, refuse } from "./error.mjs";
 import { decide, nextDirective, progressSignature } from "./policy.mjs";
 import { DEPENDENCY, assertEdges, claimConflicts, dependencyState, ready as readyLoops } from "./graph.mjs";
-import { EMPTY, EMPTY_STORE, isLive, reduceLoop, reduceStore, roundsSpent } from "./projection.mjs";
+import { EMPTY, EMPTY_STORE, PROJECTION_SHAPE, isLive, reduceLoop, reduceStore, roundsSpent } from "./projection.mjs";
 import { STANDING, isAncestorCommit, receiptStanding, takeReceipt } from "./receipt.mjs";
 import { DECISION, KIND, RECEIPTS, SUSPENSION, TERMINAL, VERDICT, loopVocabulary } from "./vocabulary.mjs";
 
@@ -24,7 +24,7 @@ export { LoopError };
 const checked = (kind, payload) => ({ kind, payload: loopVocabulary.assert(kind, payload) });
 
 export function openLoopStore(location, options = {}) {
-  return openStore(location, { reduce: reduceStore, initial: EMPTY_STORE, ...options });
+  return openStore(location, { reduce: reduceStore, initial: EMPTY_STORE, reducer: PROJECTION_SHAPE, ...options });
 }
 
 // A store holds a graph. Every verb but `open` names the loop it addresses,

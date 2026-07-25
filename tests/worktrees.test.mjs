@@ -9,7 +9,7 @@ import test from "node:test";
 import { createStore, openStore } from "../src/store.mjs";
 import { KIND, discover, siteForNewStore } from "../src/site.mjs";
 import { EXIT, VERDICT_PREFIX } from "../src/domain/criterion.mjs";
-import { next, observe, openLoop, openLoopStore } from "../src/domain/loop.mjs";
+import { amend, next, observe, openLoop, openLoopStore } from "../src/domain/loop.mjs";
 import { status } from "../src/domain/query.mjs";
 
 const git = (root, ...args) => {
@@ -174,6 +174,34 @@ test("WT-05: removing a worktree takes nothing away from the history it observed
   git(root, "worktree", "add", "-q", worktree, "-b", "side-again");
   assert.equal(fs.realpathSync(discover(worktree).location), fs.realpathSync(site.location), "same ledger");
   assert.equal(status(session(), { loopId, root }).rounds_spent, 1, "and the same single round");
+});
+
+test("SL-13: status marks the rounds an amendment retired, and keeps them", async (t) => {
+  const root = repo(t);
+  const site = init(root);
+  fs.mkdirSync(path.join(root, "work"));
+  fs.writeFileSync(path.join(root, "work", "a.txt"), "todo\n");
+  fs.writeFileSync(path.join(root, "old.mjs"), CRITERION);
+  fs.writeFileSync(path.join(root, "new.mjs"), `${CRITERION}\n// a different rule\n`);
+
+  const session = () => openLoopStore(site.location);
+  const loopId = openLoop(session(), {
+    root, goal: "g", claims: ["work"], criterionFile: path.join(root, "old.mjs"),
+    roundsBudget: 5, session: "s1", reason: "fixture", grantedBy: "self", receipts: "none", commandId: "open",
+  }).loopId;
+  await observe(session(), { root, loopId, session: "s1", criterionFile: path.join(root, "old.mjs"), commandId: "o1" });
+  assert.equal(status(session(), { loopId, root }).rounds[0].stale, false);
+
+  amend(session(), { loopId, criterionFile: path.join(root, "new.mjs"), reason: "different rule now", commandId: "am" });
+  const view = status(session(), { loopId, root });
+  // Marked, not removed: it happened, it cost a round, and it no longer
+  // answers the question the loop is now asking. A reader has to be able to
+  // see all three of those at once.
+  assert.equal(view.rounds.length, 1, "history is not rewritten");
+  assert.equal(view.rounds[0].stale, true);
+  assert.equal(view.rounds_spent, 1, "and the round is still spent");
+  assert.equal(view.next.decision, "implement");
+  assert.equal(view.next.feedback, null);
 });
 
 test("WT-05: a verb that needs the workspace refuses when the workspace is gone", async (t) => {

@@ -12,7 +12,7 @@ import path from "node:path";
 import test from "node:test";
 import { createStore } from "../src/store.mjs";
 import { EXIT, VERDICT_PREFIX } from "../src/domain/criterion.mjs";
-import { next, observe, openLoop, openLoopStore, receipt } from "../src/domain/loop.mjs";
+import { amend, next, observe, openLoop, openLoopStore, receipt } from "../src/domain/loop.mjs";
 import { MODE, STANDING, STATUS, receiptStanding, takeReceipt } from "../src/domain/receipt.mjs";
 import { DECISION, VERDICT } from "../src/domain/vocabulary.mjs";
 
@@ -288,6 +288,33 @@ test("a loop that claims the whole repository can still be certified", async (t)
   const round = session().read().find((entry) => entry.kind === "round_observed").payload;
   assert.equal(round.receipt_state, STANDING.IN_FORCE);
   assert.equal(session().read().at(-1).payload.outcome, "achieved");
+});
+
+test("SL-13: an amendment retires the judgments, not the evidence", async (t) => {
+  const { root, session, criterionFile } = repo(t);
+  const { loopId } = open(session(), ["src"], criterionFile);
+  // A round that fails, with a receipt in force behind it.
+  receipt(session(), { loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "commit" });
+  await observe(session(), { root, loopId, session: "s1", criterionFile, commandId: "observe-1" });
+  const before = session().read().find((entry) => entry.kind === "round_observed").payload;
+  assert.equal(before.verdict, VERDICT.UNSATISFIED);
+  assert.equal(before.receipt_state, STANDING.IN_FORCE);
+  assert.equal(next(session(), { root, loopId }).decision, DECISION.REPAIR);
+
+  const stricter = path.join(root, "stricter.mjs");
+  fs.writeFileSync(stricter, `${fs.readFileSync(criterionFile, "utf8")}\n// a different bar\n`);
+  amend(session(), { loopId, criterionFile: stricter, reason: "raise the bar", commandId: "am" });
+
+  // A receipt says what the artifacts are; a criterion says what would be good
+  // enough. Changing the second does not unmake the first — the receipt is
+  // still on the loop, and the next round will re-verify it as usual. What
+  // changed is that nothing has been judged under the new rule.
+  const state = session().replay().state.loops[loopId];
+  assert.ok(state.receipt, "the evidence is still there");
+  assert.equal(state.receipt.status, STATUS.CLEAN);
+  const directive = next(session(), { root, loopId });
+  assert.equal(directive.decision, DECISION.IMPLEMENT, "not produce_receipt: the loop is not missing evidence");
+  assert.equal(directive.feedback, null);
 });
 
 test("a loop that declared no receipt regime refuses to produce one", (t) => {

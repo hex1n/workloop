@@ -11,9 +11,19 @@ import path from "node:path";
 import { canonicalJson, digestOf } from "./canonical.mjs";
 
 const FILE_PATTERN = /^\d+\.json$/u;
-const body = (snapshot) => ({ store_id: snapshot.store_id, seq: snapshot.seq, head_digest: snapshot.head_digest, state: snapshot.state });
+const body = (snapshot) => ({ store_id: snapshot.store_id, seq: snapshot.seq, head_digest: snapshot.head_digest, reducer: snapshot.reducer ?? null, state: snapshot.state });
 
-export function readNewestSnapshot(directory, storeId) {
+/**
+ * The newest snapshot this reducer may read.
+ *
+ * A snapshot is one reducer's output, and a different reducer must not read
+ * it: the fields it wrote are the fields that reducer had. A version of this
+ * runtime that added a field found the old snapshots' missing key comparing as
+ * `undefined` and silently dropped a fact — the loop's retired judgments came
+ * back to life, with no error anywhere. So the reducer stamps its own identity
+ * on what it writes, and skips anything stamped by another.
+ */
+export function readNewestSnapshot(directory, storeId, reducer = null) {
   let names;
   try {
     names = fs.readdirSync(directory).filter((name) => FILE_PATTERN.test(name));
@@ -25,6 +35,7 @@ export function readNewestSnapshot(directory, storeId) {
       const snapshot = JSON.parse(fs.readFileSync(path.join(directory, `${seq}.json`), "utf8"));
       if (snapshot.store_id !== storeId) continue;
       if (snapshot.seq !== seq) continue;
+      if ((snapshot.reducer ?? null) !== reducer) continue;
       if (digestOf(body(snapshot)) !== snapshot.digest) continue;
       return snapshot;
     } catch {
@@ -34,8 +45,8 @@ export function readNewestSnapshot(directory, storeId) {
   return null;
 }
 
-export function writeSnapshot(directory, { storeId, seq, headDigest, state }, onPhase = () => {}) {
-  const content = { store_id: storeId, seq, head_digest: headDigest, state };
+export function writeSnapshot(directory, { storeId, seq, headDigest, reducer = null, state }, onPhase = () => {}) {
+  const content = { store_id: storeId, seq, head_digest: headDigest, reducer, state };
   const snapshot = { ...content, digest: digestOf(content) };
   const target = path.join(directory, `${seq}.json`);
   // Staged then renamed, so an interrupted write can only ever exist under a

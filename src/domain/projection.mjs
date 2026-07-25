@@ -9,6 +9,13 @@
 // revision below an entity-level version rather than a global clock.
 import { KIND, RECEIPTS, TERMINAL, VERDICT } from "./vocabulary.mjs";
 
+// Stamped onto every snapshot this reducer writes, and required to match
+// before one is read back. Bump it whenever the shape of the state changes —
+// a gate test in tests/store-snapshot.test.mjs refuses a change to this file
+// that leaves it untouched, so it cannot be forgotten. Discarding snapshots is
+// cheap: they are caches, and the log is the truth.
+export const PROJECTION_SHAPE = "loop-state-2";
+
 export const LIFECYCLE = Object.freeze({ ACTIVE: "active", SUSPENDED: "suspended", TERMINAL: "terminal" });
 
 export const EMPTY_STORE = Object.freeze({ loops: {} });
@@ -34,7 +41,7 @@ export const EMPTY = Object.freeze({
   // The seq of the last amendment that changed what "done" means. Every round
   // before it was judged by a different rule, or answered a different
   // question, and says so rather than passing for current.
-  amendedAt: 0,
+  amendedAtSeq: 0,
   rounds: [],
   // Who is entitled to move this loop. Membership is earned by opening it or
   // by observing a round, never by simply knowing its address.
@@ -146,7 +153,7 @@ export function reduceLoop(state = EMPTY, record) {
       // A budget change is not one of these. The budget says how much may
       // still be spent, never what counts as finished — a judgment does not
       // stop being true because the allowance moved.
-      if (payload.criterion_digest !== null || payload.goal !== null) next.amendedAt = record.seq;
+      if (payload.criterion_digest !== null || payload.goal !== null) next.amendedAtSeq = record.seq;
       break;
     default:
       // Kernel records (tail repairs, the store's own genesis) pass through:
@@ -160,7 +167,7 @@ export function reduceLoop(state = EMPTY, record) {
 // Rounds still judged by the terms in force. Spent rounds are counted
 // separately: an amendment invalidates a judgment, not the fact that the work
 // happened, and refunding the budget would be a back door around it.
-export const isStale = (state, round) => round.seq < state.amendedAt;
+export const isStale = (state, round) => round.seq < state.amendedAtSeq;
 export const standingRounds = (state) => state.rounds.filter((round) => !isStale(state, round));
 
 export const roundsSpent = (state) => state.rounds.length;
