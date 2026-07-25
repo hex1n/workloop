@@ -162,6 +162,11 @@ export function scanForStores(root, { maxDepth = MAX_SCAN_DEPTH, maxEntries = MA
     } catch {
       return;
     }
+    // A git ledger lives at `<repo>/.git/workloop`, inside the one directory a
+    // scan has every other reason to skip. Looked at directly rather than
+    // descended into: without this the scan cannot see git stores at all, and
+    // a store created above one would never learn it was there.
+    if (isStore(path.join(directory, ".git", GIT_DIRECTORY))) found.push(path.join(directory, ".git", GIT_DIRECTORY));
     for (const entry of names) {
       if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
       entries += 1;
@@ -188,10 +193,24 @@ export function scanForStores(root, { maxDepth = MAX_SCAN_DEPTH, maxEntries = MA
 // Whether a prospective store and one found above it describe different git
 // repositories. Both must be git-kind: only then is there a boundary that
 // something other than this runtime enforces.
-function separateRepositories(root, outer, chosenKind) {
-  if (chosenKind !== KIND.GIT || outer.kind !== KIND.GIT) return false;
+function separateRepositories(root, other, chosenKind) {
+  if (chosenKind !== KIND.GIT || other.kind !== KIND.GIT) return false;
   const mine = gitCommonDirectory(root);
-  return mine !== null && realOf(mine) !== realOf(path.dirname(outer.location));
+  return mine !== null && realOf(mine) !== realOf(path.dirname(other.location));
+}
+
+// What a scanned location actually is, read from the store rather than guessed
+// from the shape of its path. Guessing produced a regression: an fs ledger at
+// `<dir>/.workloop` was treated as a git one, and a git store created above it
+// was let through — two ledgers over one tree, which is the single thing this
+// check exists to prevent.
+function scannedStore(location) {
+  try {
+    const manifest = JSON.parse(fs.readFileSync(path.join(location, "manifest.json"), "utf8"));
+    return { kind: manifest.store_kind === KIND.GIT ? KIND.GIT : KIND.FS, location };
+  } catch {
+    return { kind: KIND.FS, location };
+  }
 }
 
 export function siteForNewStore(root, { kind } = {}) {
@@ -214,7 +233,9 @@ export function siteForNewStore(root, { kind } = {}) {
     if (above !== null && !separateRepositories(root, above, chosenKind)) {
       refuse("STORE_NESTED_INSIDE", `${root} lies inside ${directory}, which already holds a store over the same tree`);
     }
-    if (above !== null) break;
+    // An exempted ancestor is not the end of the walk. A store further up may
+    // still cover this tree — a filesystem ledger three levels above reaches
+    // straight through the repository boundary that exempted the nearer one.
     const parent = path.dirname(directory);
     if (parent === directory) break;
     directory = parent;
@@ -223,8 +244,9 @@ export function siteForNewStore(root, { kind } = {}) {
   const below = scanForStores(root).found.filter((location) => {
     // Same rule from the other side: a store belonging to a nested repository
     // describes a tree this one does not reach.
-    const nested = path.dirname(path.dirname(location));
-    return !separateRepositories(nested, { kind: KIND.GIT, location }, chosenKind);
+    const other = scannedStore(location);
+    const nested = other.kind === KIND.GIT ? path.dirname(path.dirname(location)) : path.dirname(location);
+    return !separateRepositories(nested, other, chosenKind);
   });
   if (below.length > 0) refuse("STORE_CONTAINS_NESTED", `${root} contains a store at ${below[0]} over the same tree`);
   if (scanForStores(root).exhausted) {

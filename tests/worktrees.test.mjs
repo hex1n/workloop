@@ -101,6 +101,46 @@ test("WT-02: a copy of a whole repository is a collision, and looking does not c
   assert.ok(openStore(site.location), "and the original is untouched");
 });
 
+test("WT-02: a filesystem ledger and a nested repository's ledger cannot coexist, in either order", (t) => {
+  // A filesystem checkpoint walks everything under its root, straight through
+  // the repository boundary that exempts one git ledger from another. So the
+  // arrangement is refused whichever end is built first — which is also what
+  // makes a three-level version of it unconstructible rather than merely
+  // undetected.
+  const top = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-top-")));
+  t.after(() => fs.rmSync(top, { recursive: true, force: true }));
+  init(top);
+  const middle = repo(t, path.join(top, "vendor", "mid"));
+  assert.throws(() => siteForNewStore(middle), (error) => error.code === "STORE_NESTED_INSIDE");
+
+  // The other order: the repository's ledger first, the filesystem one after.
+  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-order-")));
+  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
+  init(repo(t, path.join(other, "vendor", "mid")));
+  assert.throws(() => siteForNewStore(other, { kind: KIND.FS }), (error) => error.code === "STORE_CONTAINS_NESTED");
+});
+
+test("WT-02: a store is never created over a ledger it cannot see past", (t) => {
+  // The downward scan has to look inside `.git` on purpose — a git ledger
+  // lives in the one directory a scan otherwise skips, and a store created
+  // above one that it never saw is two ledgers over one tree.
+  const outer = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-over-")));
+  t.after(() => fs.rmSync(outer, { recursive: true, force: true }));
+  const inner = repo(t, path.join(outer, "sub"));
+  init(inner);
+  assert.throws(() => siteForNewStore(outer, { kind: KIND.FS }), (error) => error.code === "STORE_CONTAINS_NESTED");
+
+  // And the kind of what it finds is read, not inferred from the path shape:
+  // an fs ledger mistaken for a git one was let through by the exemption.
+  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-mixed-")));
+  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
+  const child = path.join(other, "child");
+  fs.mkdirSync(child);
+  init(child);
+  repo(t, other);
+  assert.throws(() => siteForNewStore(other), (error) => error.code === "STORE_CONTAINS_NESTED");
+});
+
 test("WT-05: removing a worktree takes nothing away from the history it observed", async (t) => {
   const root = repo(t);
   const site = init(root);

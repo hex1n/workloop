@@ -99,6 +99,27 @@ test("a retried round does not pay for the criterion a second time", async (t) =
   assert.equal(session().read().filter((entry) => entry.kind === "round_observed").length, 1);
 });
 
+test("a round already recorded stays readable after its workspace is gone", async (t) => {
+  const { root, session, criterionFile } = workspace(t);
+  const { loopId } = openLoop(session(), { root, ...valid(), criterionFile });
+  await observe(session(), { root, loopId, session: "s1", criterionFile, commandId: "round-1" });
+
+  // The workspace disappears after the round landed, and the host retries the
+  // same command. What happened, happened: refusing to confirm it would make a
+  // recorded fact unreadable, and a retry after a crash is exactly why the
+  // replay exists.
+  const gone = path.join(root, "removed");
+  const again = await observe(session(), { root: gone, loopId, session: "s1", criterionFile, commandId: "round-1" });
+  assert.equal(again.replayed, true);
+  assert.equal(session().replay().state.loops[loopId].rounds.length, 1);
+
+  // A *new* command against a workspace that is not there is still refused.
+  await assert.rejects(
+    () => observe(session(), { root: gone, loopId, session: "s1", criterionFile, commandId: "round-2" }),
+    (error) => error.code === "NO_SUCH_WORKSPACE",
+  );
+});
+
 test("a stream digest can be asked for twice", () => {
   // A hash can only be finalised once. Both the failure path and the close
   // path build an execution record, and a spawn that fails can run both — the

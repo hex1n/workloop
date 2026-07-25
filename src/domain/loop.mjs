@@ -282,11 +282,15 @@ export function receipt(store, { root, loopId, mode, session, commandId }) {
   const before = loopOf(store.replay().state, loopId);
   if (!isLive(before)) refuse("NOT_LIVE", `the loop is ${before.lifecycle}`);
   if (before.receipts !== RECEIPTS.GIT) refuse("NO_RECEIPT_REGIME", `this loop was opened with receipts: ${before.receipts}`);
-  assertWorkspace(root);
 
+  // Before anything is asked of the world. A command that already landed is
+  // answered from the log, so a retry after a crash still gets its result even
+  // if the workspace has since gone — what happened, happened, and refusing to
+  // confirm it would make a recorded fact unreadable.
   const replay = (records) => ({ seq: records.at(-1).seq, records, replayed: true });
   const applied = store.commandRecords(commandId);
   if (applied !== null) return replay(applied);
+  assertWorkspace(root);
 
   return store.withLock(CLASSES.GIT_INDEX, root, () => {
     // Checked again, now that nobody else can be mid-operation. The check
@@ -329,13 +333,15 @@ export async function observe(store, { root, loopId, session, commandId, timeout
   const storeState = store.replay().state;
   const before = loopOf(storeState, loopId);
   if (!isLive(before)) refuse("NOT_LIVE", `the loop is ${before.lifecycle}`);
-  assertWorkspace(root);
 
   // A retry of a round that already landed must not run the criterion again.
   // Discovering the replay only at the append layer would mean paying for the
   // whole check — minutes, sometimes — to be told the work was already done.
   const alreadyApplied = store.commandRecords(commandId);
   if (alreadyApplied !== null) return { seq: alreadyApplied.at(-1).seq, records: alreadyApplied, replayed: true };
+  // Checked after the replay, never before: a recorded round must stay
+  // readable even once the place it happened in is gone.
+  assertWorkspace(root);
 
   const expectedRevision = before.revision;
   const round = roundsSpent(before) + 1;
