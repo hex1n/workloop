@@ -10,10 +10,11 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createStore } from "../src/store.mjs";
+import { createStore, openStore } from "../src/store.mjs";
 import { EXIT, VERDICT_PREFIX, readVerdict } from "../src/domain/criterion.mjs";
 import { abandon, amend, join, next, observe, openLoop, openLoopStore, resume, suspend } from "../src/domain/loop.mjs";
-import { DECISION, VERDICT } from "../src/domain/vocabulary.mjs";
+import { DECISION, KIND, MAX_FAILURES, MAX_FAILURE_ID, VERDICT } from "../src/domain/vocabulary.mjs";
+import { progressSignature } from "../src/domain/policy.mjs";
 
 const OBSERVE_CHILD = path.resolve(import.meta.dirname, "helpers", "observe-child.mjs");
 
@@ -229,4 +230,64 @@ test("SL-10: success never happens by accident", () => {
   // read by an earlier, stale line.
   const twice = `${VERDICT_PREFIX} {"verdict":"unsatisfied","failures":[]}\n${VERDICT_PREFIX} {"verdict":"satisfied","failures":[]}\n`;
   assert.equal(readVerdict({ stdout: twice, code: EXIT.SATISFIED, signal: null }).verdict, VERDICT.SATISFIED);
+});
+
+test("the progress signature can be recomputed from the log alone", async (t) => {
+  // Axiom 1 says replay is truth. A value the log carries but cannot account
+  // for is a value nobody can check — and `progress_signature` is exactly that
+  // today: it is a digest over the criterion digest, the artifact checkpoint,
+  // the receipt digest, and the failure identifiers. The log holds the first
+  // three. It does not hold the fourth.
+  const { root, location, session, criterionFile } = workspace(t);
+  const { loopId } = openLoop(session(), { root, goal: "g", claims: ["work.txt"], criterionFile, roundsBudget: 3, session: "s1", reason: "fixture", grantedBy: "self", receipts: "none", commandId: "open" });
+  write(root, "gamma\n");
+  await observe(session(), { loopId, root, session: "s1", criterionFile, commandId: "observe-1" });
+
+  // Nothing but the log. No store handle, no live criterion, no memory of what
+  // the run reported — which is the position anyone auditing this is in.
+  const records = openStore(location).replay().records ?? openStore(location).read();
+  const opened = records.find((record) => record.kind === KIND.OPENED).payload;
+  const round = records.find((record) => record.kind === KIND.OBSERVED).payload;
+
+  assert.ok(round.progress_signature, "an unsatisfied round with named failures has a signature");
+  const recomputed = progressSignature({
+    criterionDigest: opened.criterion_digest,
+    artifactCheckpoint: round.artifact_checkpoint,
+    receiptDigest: round.receipt_digest,
+    failures: round.failures,
+  });
+  assert.equal(recomputed, round.progress_signature, "the log accounts for the signature it carries");
+});
+
+test("a chatty criterion cannot grow the record without bound", async (t) => {
+  // The identifiers now live in an append-only log, so what the criterion says
+  // is what the ledger carries forever. The bound is the criterion reader's,
+  // declared once beside the field that enforces it — and this is the test that
+  // the two agree, because a payload the vocabulary refuses is a record the
+  // runtime cannot write *after* the criterion has already run.
+  const { root, location, session } = workspace(t);
+  const chatty = path.join(root, "chatty.mjs");
+  fs.writeFileSync(chatty, `
+const failures = Array.from({ length: 400 }, (_, index) => ({ id: "f".repeat(300) + index }));
+console.log("${VERDICT_PREFIX} " + JSON.stringify({ verdict: "unsatisfied", failures }));
+// Not process.exit(): a large write to a pipe is buffered, and exiting
+// before it drains truncates the verdict line at 64K. Letting the process
+// end on its own flushes it — the trap WORKFLOW.md now names.
+process.exitCode = ${EXIT.UNSATISFIED};
+`);
+  const { loopId } = openLoop(session(), { root, goal: "g", claims: ["work.txt"], criterionFile: chatty, roundsBudget: 3, session: "s1", reason: "fixture", grantedBy: "self", receipts: "none", commandId: "open" });
+  const result = await observe(session(), { loopId, root, session: "s1", criterionFile: chatty, commandId: "observe-1" });
+
+  const round = result.records.find((record) => record.kind === KIND.OBSERVED).payload;
+  assert.equal(round.failures.length, MAX_FAILURES, "the list is capped where the reader caps it");
+  for (const id of round.failures) assert.ok(id.length <= MAX_FAILURE_ID, `an identifier ran to ${id.length}`);
+  // And the signature is still recomputable from what was kept, not from what
+  // the criterion originally said.
+  assert.equal(progressSignature({
+    criterionDigest: result.records.find((record) => record.kind === KIND.OPENED)?.payload.criterion_digest
+      ?? next(session(), { loopId }).criterion_digest,
+    artifactCheckpoint: round.artifact_checkpoint,
+    receiptDigest: round.receipt_digest,
+    failures: round.failures,
+  }), round.progress_signature);
 });

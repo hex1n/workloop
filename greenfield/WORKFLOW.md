@@ -63,7 +63,8 @@ if (run.status !== 0 && failures.length === 0) process.exit(1);   // → indeter
 console.log("WORKLOOP_VERDICT " + JSON.stringify({
   verdict: failures.length === 0 ? "satisfied" : "unsatisfied", failures,
 }));
-process.exit(failures.length === 0 ? 4 : 3);
+// exitCode,不是 exit():见下。
+process.exitCode = failures.length === 0 ? 4 : 3;
 ```
 
 三条经验:
@@ -78,6 +79,26 @@ process.exit(failures.length === 0 ? 4 : 3);
 **完成条件**:在**尚未修复**的仓库里手工跑判据,`echo $?` 是 3,且末行的
 `WORKLOOP_VERDICT` 里 `verdict` 是 `unsatisfied`、`failures` 非空。两条都对上,
 这个判据才可以拿去开单。
+
+### 2.3 两种让判据"说了等于没说"的写法
+
+**一、大量输出之后立刻 `process.exit()`。** 写向管道的输出是缓冲的,`exit()` 不等
+它排空。实测:一行 125KB 的 verdict,`console.log` 之后立刻 `process.exit(3)`,
+运行时只收到 **65536 字节**——verdict 行被从中间切断,读不出来,于是退回退出码。
+结果是一轮 `unsatisfied` 而**没有任何可辨识的失败**。
+
+用 `process.exitCode = N` 让进程自然结束,输出才会冲干净。
+
+**二、verdict 行超过 256KB。** 只有末尾 256KB 会被搜索 verdict 行(整份输出仍然
+进 digest)。失败清单本来就有界——最多 50 条、每条 id 200 字符,超出的由运行时截断
+——所以正常写法碰不到这条;把整份测试输出塞进 `failures` 才会。
+
+两种情形运行时都**降级而不是猜**:读不出 verdict 就退回退出码,说不出可辨识的失败
+就让签名为 null,而 null 永远不计入 stuck。**但降级之后你就只剩一个退出码了**,
+指令里那份"哪条检查失败了"也跟着空掉。
+
+**完成条件**:把判据的输出接到管道上跑一次(`node check.mjs | tail -1`),末行是一条
+**完整的** `WORKLOOP_VERDICT` JSON,不是被截断的半行。
 
 ## 每一轮
 

@@ -17,9 +17,9 @@ const fold = (records) => records.reduce((state, entry) => reduceLoop(state, ent
 const opened = (budget = 3, receipts = RECEIPTS.NONE) => record(KIND.OPENED, {
   goal: "make it green", claims: ["src"], criterion_digest: CRITERION, rounds_budget: budget, opened_by: "s1", receipts, depends_on: [],
 });
-const observed = (round, verdict, { signature = null, checkpoint = CHECKPOINT(round), receipt = digestOf({ r: round }), receiptState = "in_force", dependencyState = "none" } = {}) =>
+const observed = (round, verdict, { signature = null, failures = [], checkpoint = CHECKPOINT(round), receipt = digestOf({ r: round }), receiptState = "in_force", dependencyState = "none" } = {}) =>
   record(KIND.OBSERVED, {
-    round, verdict, progress_signature: signature, artifact_checkpoint: checkpoint,
+    round, verdict, progress_signature: signature, failures, artifact_checkpoint: checkpoint,
     receipt_digest: receipt, receipt_state: receiptState, dependency_state: dependencyState, summary: "", observed_by: "s1",
   });
 
@@ -249,4 +249,31 @@ test("the projection counts rounds and tracks revision", () => {
   // one this domain does not understand — makes a stale caller's view stale.
   assert.equal(state.revision, records.at(-1).seq);
   assert.equal(reduceLoop(state, { seq: 999, kind: "kernel_record_of_some_kind", payload: {} }).revision, 999);
+});
+
+test("a round written before failures were recorded still folds, and says nothing rather than undefined", () => {
+  // Records already in a log are never rewritten, so this shape is permanent.
+  // Adding a field to a projection is how retired judgments once came back to
+  // life (slice 8 §3.1); the snapshot stamp catches a stale cache, but nothing
+  // catches a reader that assumes every record has every field.
+  const { failures, ...withoutTheField } = observed(1, VERDICT.UNSATISFIED, { signature: digestOf({ f: "a" }) }).payload;
+  void failures;
+  const old = { seq: 99, kind: KIND.OBSERVED, payload: withoutTheField };
+  const state = fold([opened(), old]);
+
+  assert.deepEqual(state.rounds[0].failures, [], "absent is empty, not undefined");
+  const directive = nextDirective(state);
+  assert.deepEqual(directive.feedback.failures, [], "and the directive carries a list either way");
+  assert.equal(directive.decision, DECISION.REPAIR, "the rest of the round still reads normally");
+});
+
+test("the directive hands back what failed, not only the prose about it", () => {
+  const state = fold([opened(), observed(1, VERDICT.UNSATISFIED, { signature: digestOf({ f: "a" }), failures: ["missing-alpha", "missing-beta"] })]);
+  const directive = nextDirective(state);
+  assert.equal(directive.decision, DECISION.REPAIR);
+  assert.deepEqual(directive.feedback.failures, ["missing-alpha", "missing-beta"]);
+  // A copy: a caller that sorts or splices the directive must not reach back
+  // into the projection every later reader shares.
+  directive.feedback.failures.push("invented");
+  assert.deepEqual(nextDirective(state).feedback.failures, ["missing-alpha", "missing-beta"]);
 });

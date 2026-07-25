@@ -139,6 +139,6 @@ test("the projection cannot change shape without saying so", () => {
   const source = fs.readFileSync(new URL("../src/domain/projection.mjs", import.meta.url), "utf8").replace(/\r\n/gu, "\n");
   const body = source.replace(/^export const PROJECTION_SHAPE = "[^"]*";$/mu, "");
   const digest = createHash("sha256").update(body).digest("hex").slice(0, 16);
-  assert.equal(digest, "ccf5d3c2883c1479",
+  assert.equal(digest, "79e69ba999e84481",
     `src/domain/projection.mjs changed. Bump PROJECTION_SHAPE if the shape of the state changed, then set this digest to ${digest}.`);
 });

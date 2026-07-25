@@ -414,6 +414,10 @@ export async function observe(store, { root, loopId, session, commandId, timeout
         round,
         verdict: outcome.verdict,
         progress_signature: signature,
+        // The identifiers, not the whole failure records: `expected`/`actual`
+        // are the criterion's prose about one moment and already survive in
+        // the summary. What the log owes is the input to the digest it carries.
+        failures: outcome.failures.map((failure) => failure.id),
         artifact_checkpoint: checkpoint,
         receipt_digest: receiptDigest,
         receipt_state: standing.standing,

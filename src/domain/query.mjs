@@ -26,6 +26,9 @@ export function status(store, { loopId, root, ...options } = {}) {
     // the loop is now asking.
     stale: isStale(loop, round),
     verdict: round.verdict,
+    // So "which check failed in round 1" is a question the ledger answers,
+    // instead of one that sends the reader back into the summary text.
+    failures: [...round.failures],
     decision: round.decision,
     receipt_state: round.receiptState,
     dependency_state: round.dependencyState,

@@ -120,6 +120,10 @@ export function nextDirective(state, options = {}) {
     // which artifacts. Absent on the first round, which has nothing to repair.
     feedback: last === null ? null : {
       verdict: last.verdict,
+      // What failed, as the criterion named it. Handing back only the summary
+      // made a repairing agent re-parse prose the runtime had already parsed,
+      // and left `status` unable to answer which check failed in a given round.
+      failures: [...last.failures],
       progress_signature: last.progressSignature,
       artifact_checkpoint: last.artifactCheckpoint,
       summary: last.summary,

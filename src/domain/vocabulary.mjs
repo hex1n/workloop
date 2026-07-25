@@ -4,6 +4,14 @@
 // the kernel changes, and no validation code is written — that is the whole
 // point of the seam.
 import { createVocabulary } from "../vocabulary.mjs";
+
+// The bounds live here, beside the field that enforces them, and the criterion
+// reader imports them rather than keeping its own copy. Two numbers that must
+// agree and live apart are two numbers that will one day disagree — and the
+// half that loses is a record the runtime refuses to write after the criterion
+// has already run.
+export const MAX_FAILURES = 50;
+export const MAX_FAILURE_ID = 200;
 // The adapter owns these: it is what produces the values, so repeating the
 // literals here would let the log and the code that writes it drift apart.
 import { MAX_REASONS, MODE, STANDING, STATUS } from "./receipt.mjs";
@@ -92,6 +100,13 @@ export const loopVocabulary = createVocabulary({
       // Null when the criterion said nothing a signature could be built from.
       // A silent criterion must not look like a repeated failure.
       progress_signature: { type: "digest", nullable: true },
+      // The identifiers the signature above was built from. Without them the
+      // log carried a digest nobody could recompute — the other three inputs
+      // are in the log, and this one was thrown away after being folded in.
+      // A value the log cannot account for is not replay-as-truth, and it also
+      // left every `repair` directive handing an agent prose the runtime had
+      // already parsed. Bounded by what the criterion reader already enforces.
+      failures: { type: "strings", max: MAX_FAILURES, itemMax: MAX_FAILURE_ID },
       artifact_checkpoint: { type: "digest" },
       receipt_digest: { type: "digest", nullable: true },
       // Why the receipt is or is not in force. `receipt_digest: null` alone

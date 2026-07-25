@@ -11,7 +11,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import { digestOf } from "../canonical.mjs";
-import { VERDICT } from "./vocabulary.mjs";
+import { MAX_FAILURES, MAX_FAILURE_ID, VERDICT } from "./vocabulary.mjs";
 
 export const VERDICT_PREFIX = "WORKLOOP_VERDICT";
 
@@ -22,7 +22,6 @@ export const VERDICT_PREFIX = "WORKLOOP_VERDICT";
 export const EXIT = Object.freeze({ SATISFIED: 4, UNSATISFIED: 3 });
 
 export const OUTPUT_TAIL_BYTES = 4000;
-export const MAX_FAILURES = 50;
 // Enough to hold any verdict line a criterion could reasonably print, and
 // small enough that a runaway process cannot grow it without bound. Only this
 // much is searched for the verdict; everything else survives as a digest.
@@ -59,9 +58,9 @@ const bounded = (text) => (text.length <= OUTPUT_TAIL_BYTES ? text : `…${text.
 function normalizeFailures(raw) {
   if (!Array.isArray(raw)) return [];
   return raw.slice(0, MAX_FAILURES).flatMap((failure) => {
-    if (typeof failure === "string") return failure.length > 0 ? [{ id: failure.slice(0, 200) }] : [];
+    if (typeof failure === "string") return failure.length > 0 ? [{ id: failure.slice(0, MAX_FAILURE_ID) }] : [];
     if (failure === null || typeof failure !== "object") return [];
-    const id = typeof failure.id === "string" ? failure.id.slice(0, 200) : null;
+    const id = typeof failure.id === "string" ? failure.id.slice(0, MAX_FAILURE_ID) : null;
     if (id === null || id.length === 0) return [];
     return [{
       id,

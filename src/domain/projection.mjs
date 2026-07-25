@@ -14,7 +14,7 @@ import { KIND, RECEIPTS, TERMINAL, VERDICT } from "./vocabulary.mjs";
 // a gate test in tests/store-snapshot.test.mjs refuses a change to this file
 // that leaves it untouched, so it cannot be forgotten. Discarding snapshots is
 // cheap: they are caches, and the log is the truth.
-export const PROJECTION_SHAPE = "loop-state-2";
+export const PROJECTION_SHAPE = "loop-state-3";
 
 export const LIFECYCLE = Object.freeze({ ACTIVE: "active", SUSPENDED: "suspended", TERMINAL: "terminal" });
 
@@ -109,6 +109,11 @@ export function reduceLoop(state = EMPTY, record) {
         round: payload.round,
         verdict: payload.verdict,
         progressSignature: payload.progress_signature,
+        // Explicitly empty for rounds written before the field existed, rather
+        // than `undefined` leaking into a directive. Records already in a log
+        // are never rewritten, so the absence is permanent and has to be a
+        // value the readers below can handle rather than one they trip over.
+        failures: payload.failures ?? [],
         artifactCheckpoint: payload.artifact_checkpoint,
         receiptDigest: payload.receipt_digest,
         receiptState: payload.receipt_state,
