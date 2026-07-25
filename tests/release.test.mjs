@@ -80,10 +80,10 @@ const installedPackage = (prefix) => {
 };
 
 // The verb table the installed binary prints, so it can be compared with the
-// one this source tree defines. WN-01 asks the shells for "正确契约版本"; the
-// runtime reports no version number, and its contract surface is the verb
-// table — so that is what gets compared, and a stale or foreign workloop on
-// the machine cannot answer for this one.
+// one this source tree defines. WN-01 asks the shells for "正确契约版本", which
+// is two questions: which release, answered by `--version` below, and which
+// contract, answered here — a stale or foreign workloop on the machine can
+// share a version string, but not this source tree's verb table.
 const verbsOffered = (help) => new Set([...help.matchAll(/^\s{2}([a-z]+)\s{2,}--/gmu)].map((match) => match[1]));
 
 const inventory = (directory) => {
@@ -104,7 +104,9 @@ test("WN-01: the packed release installs into an awkward prefix and runs from ev
   const scratch = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-release-")));
   t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
 
-  const tarball = path.join(scratch, npmJson(["pack", "--pack-destination", scratch], { cwd: repoRoot })[0].filename);
+  const packed = npmJson(["pack", "--pack-destination", scratch], { cwd: repoRoot })[0];
+  const packedVersion = packed.version;
+  const tarball = path.join(scratch, packed.filename);
   assert.ok(fs.existsSync(tarball), `npm pack reported ${tarball}, which is not there`);
 
   // An empty cache and no network: a zero-dependency tarball has nothing to
@@ -139,6 +141,16 @@ test("WN-01: the packed release installs into an awkward prefix and runs from ev
   assert.equal(upgrade.status, 0, `installing over a dirtied package failed: ${upgrade.stderr}`);
   assert.equal(fs.existsSync(stale), false, "a file from a previous version survived the install");
   assert.deepEqual(inventory(prefix), afterFirst, "after installing over a dirtied package the tree is not the current release");
+
+  // What got installed can say which release it is. Compared with what `npm
+  // pack` reported rather than with a number written here: a version this test
+  // spelled out would be a third copy, and the one that drifts is always the
+  // copy nobody runs.
+  const shimForVersion = path.join(prefix, process.platform === "win32" ? "workloop.cmd" : path.join("bin", "workloop"));
+  const reported = spawnSync(process.execPath, [path.join(installedPackage(prefix), "bin", "workloop.mjs"), "--version"], { encoding: "utf8", timeout: 60_000 });
+  assert.equal(reported.status, 0, `--version failed: ${reported.stderr}`);
+  assert.equal(reported.stdout.trim(), packedVersion, "the installed runtime knows which release it is");
+  assert.ok(fs.existsSync(shimForVersion), "and the shim it was reached through is there");
 
   const scripts = path.join(scratch, "shell-checks");
   fs.mkdirSync(scripts);

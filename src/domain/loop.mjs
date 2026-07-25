@@ -36,6 +36,33 @@ export function loopOf(state, loopId) {
   return loop;
 }
 
+/**
+ * Expands an abbreviated loop id, the way git expands a short sha.
+ *
+ * Called once, at the edge, before anything is derived from the id — and never
+ * inside a verb. A payload built from an abbreviation would put it in the log;
+ * worse, `requestDigest` is computed from the id, so the same command typed two
+ * ways would be two different commands and a retry would be refused as a
+ * mismatch. Idempotence is not something an abbreviation may reach.
+ *
+ * Callers holding a whole digest — which is everyone who got it from `open` or
+ * `ready` — pass through the exact-match line and never touch the rest.
+ */
+export function resolveLoopId(state, input) {
+  if (typeof input !== "string" || input.length === 0) return input;
+  if (state.loops[input]?.opened) return input;
+  const matches = Object.values(state.loops).filter((loop) => loop.opened
+    && (loop.id.startsWith(input) || loop.id.slice("sha256:".length).startsWith(input)));
+  // Refused, not resolved to the first. Two loops answering to one name is
+  // exactly where picking one is worse than stopping.
+  if (matches.length > 1) {
+    refuse("AMBIGUOUS_LOOP", `${input} matches ${matches.length} loops: ${matches.map((loop) => loop.id.slice(0, 23)).sort().join(", ")}`);
+  }
+  // A miss is handed on unchanged, so the refusal comes from the verb that
+  // knows what it was looking for rather than from here.
+  return matches.length === 1 ? matches[0].id : input;
+}
+
 // The frontier. A read: it changes nothing, and it hands back ids, not work.
 export function ready(store, { root, ...options } = {}) {
   return readyLoops(store.replay().state, { ...options, ...ancestryCheck(root) });
@@ -261,7 +288,10 @@ export function next(store, { loopId, root, ...options } = {}) {
   const loop = loopOf(state, loopId);
   const checked_ = { ...options, ...ancestryCheck(root) };
   return {
-    loop_id: loopId,
+    // The loop that was found, not the string that was typed. Echoing the
+    // caller's input back was harmless while only whole digests were accepted
+    // and became a lie the moment an abbreviation could stand for one.
+    loop_id: loop.id,
     ...nextDirective(loop, { ...checked_, dependency: dependencyState(loop, state, checked_) }),
   };
 }

@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { createStore, openStore } from "./store.mjs";
 import { KIND, assertKind, discover, siteForNewStore, worktreeRoot } from "./site.mjs";
-import { abandon, amend, join, next, observe, openLoop, openLoopStore, ready, receipt, resume, suspend, tryCriterion } from "./domain/loop.mjs";
+import { abandon, amend, join, next, observe, openLoop, openLoopStore, ready, receipt, resolveLoopId, resume, suspend, tryCriterion } from "./domain/loop.mjs";
 import { exportStore, log, status } from "./domain/query.mjs";
 
 export const VERBS = Object.freeze([
@@ -145,12 +145,17 @@ export function run(argv, { cwd = process.cwd() } = {}) {
       root: named?.root ?? path.resolve(typeof options.root === "string" ? options.root : cwd),
       criterionFile: options.criterion,
       timeoutMs: integer(options.timeout),
-      ...(named === null ? {} : { store: named.store, loopId: options.loop }),
+      ...(named === null ? {} : { store: named.store, loopId: resolveLoopId(named.store.replay().state, options.loop) }),
     });
   }
 
   const { store, root } = resolve(options);
-  const common = commonOf(options, root);
+  // An abbreviation is a terminal affordance and it stops here. Everything
+  // below — payloads, request digests, records — sees only the whole digest,
+  // so neither the ledger nor an idempotence key can ever depend on how
+  // somebody chose to type.
+  const loop = options.loop === undefined ? undefined : resolveLoopId(store.replay().state, options.loop);
+  const common = commonOf({ ...options, loop }, root);
 
   switch (verb) {
     case "open": {
@@ -170,14 +175,14 @@ export function run(argv, { cwd = process.cwd() } = {}) {
     case "suspend": return suspend(store, { ...common, outcome: options.outcome, reason: options.reason });
     case "resume": return resume(store, { ...common, reason: options.reason });
     case "amend": return amend(store, {
-      loopId: options.loop, reason: options.reason, commandId: options.command,
+      loopId: loop, reason: options.reason, commandId: options.command,
       roundsBudget: options.budget === undefined ? null : Number(options.budget),
       criterionFile: options.criterion ?? null, goal: options.goal ?? null,
       ...(options["depends-on"] === undefined ? {} : { dependsOn: list(options["depends-on"]) }),
     });
     case "abandon": return abandon(store, { ...common, reason: options.reason });
     case "status": return status(store, common);
-    case "log": return log(store, { loopId: options.loop, fromSeq: integer(options.from, 1), limit: options.limit === undefined ? null : Number(options.limit) });
+    case "log": return log(store, { loopId: loop, fromSeq: integer(options.from, 1), limit: options.limit === undefined ? null : Number(options.limit) });
     case "ready": return ready(store, { root: common.root });
     case "export": return exportStore(store);
     default: throw new Error(`unreachable: ${verb}`);
@@ -185,6 +190,12 @@ export function run(argv, { cwd = process.cwd() } = {}) {
 }
 
 const HELP = new Set(["--help", "-h", "help", undefined]);
+const VERSION = new Set(["--version", "-v", "version"]);
+
+// Read from the package the runtime was installed from, never transcribed: a
+// version this file spelled out would be a second place to remember, and the
+// half that is forgotten is the half that answers the question.
+export const version = () => JSON.parse(fs.readFileSync(new URL("../package.json", import.meta.url), "utf8")).version;
 
 export async function main(argv) {
   // Asking what this is, is not an error. A first command that answers with a
@@ -192,6 +203,10 @@ export async function main(argv) {
   // anything else.
   if (argv.length === 0 || HELP.has(argv[0])) {
     write(process.stdout, `${usage()}\n`);
+    return 0;
+  }
+  if (VERSION.has(argv[0])) {
+    write(process.stdout, `${version()}\n`);
     return 0;
   }
   try {

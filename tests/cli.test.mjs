@@ -28,10 +28,10 @@ function workspace(t) {
   return root;
 }
 
-const open = (root) => run([
-  "open", "--root", root, "--goal", "work must say done", "--claim", "work",
+const open = (root, claim = "work") => run([
+  "open", "--root", root, "--goal", "work must say done", "--claim", claim,
   "--criterion", path.join(root, "check.mjs"), "--budget", "5", "--session", "s1",
-  "--reason", "fixture", "--granted-by", "self", "--receipts", "none", "--command", "open",
+  "--reason", "fixture", "--granted-by", "self", "--receipts", "none", "--command", `open-${claim}`,
 ]).loop_id;
 
 test("arguments parse as flags, in any order, with repeats collecting", () => {
@@ -350,5 +350,75 @@ test("HF-09: every step of the shipped workflow has a decidable completion condi
   const blocks = workflow.split(/^### /mu).slice(1);
   for (const [index, block] of blocks.entries()) {
     assert.match(block, /\*\*完成条件\*\*/u, `step ${index + 1} (${steps[index]}) has no completion condition`);
+  }
+});
+
+test("a loop can be named by any prefix that means one loop, and never by one that means two", async (t) => {
+  const root = workspace(t);
+  run(["init", "--root", root]);
+  const first = open(root);
+  const second = open(root, "elsewhere");
+  assert.notEqual(first, second);
+
+  // Deterministic, rather than hoping two digests happen to share a character:
+  // the index where they diverge is the boundary between ambiguous and not.
+  let split = 0;
+  while (first[split] === second[split]) split += 1;
+  const ambiguous = first.slice(0, split);
+  const unique = first.slice(0, split + 1);
+
+  assert.equal(run(["next", "--root", root, "--loop", unique]).loop_id, first, "one loop answers to it");
+  assert.equal(run(["next", "--root", root, "--loop", first]).loop_id, first, "and the whole digest still works");
+  // The `sha256:` part is a prefix of every loop there will ever be.
+  for (const shared of [ambiguous, "sha256:"]) {
+    assert.throws(() => run(["next", "--root", root, "--loop", shared]), (error) => error.code === "AMBIGUOUS_LOOP", shared);
+  }
+  assert.throws(() => run(["next", "--root", root, "--loop", "sha256:ffff"]), (error) => error.code === "NO_SUCH_LOOP");
+
+  // The bare hex, without the algorithm, because that is what a person reads
+  // off the screen and retypes.
+  assert.equal(run(["next", "--root", root, "--loop", unique.slice("sha256:".length)]).loop_id, first);
+
+  // What an abbreviation must never do is reach a record. The log is the thing
+  // that has to stay unambiguous forever.
+  await run(["observe", "--root", root, "--loop", unique, "--session", "s1", "--criterion", path.join(root, "check.mjs"), "--command", "o1"]);
+  const records = run(["log", "--root", root]).filter((record) => record.kind === "round_observed");
+  assert.equal(records.length, 1);
+  assert.equal(records[0].payload.loop_id, first, "the record carries the whole digest, not what was typed");
+});
+
+test("how a loop was typed reaches neither the ledger nor the idempotence key", async (t) => {
+  const root = workspace(t);
+  run(["init", "--root", root]);
+  const loopId = open(root);
+  const short = loopId.slice(0, 20);
+  const criterion = path.join(root, "check.mjs");
+
+  // Written with an abbreviation, retried under the same command id with the
+  // whole digest. `requestDigest` is built from the loop id, so a spelling that
+  // reached it would make these two different commands and the retry would be
+  // refused as a mismatch — axiom 4 broken by an autocomplete.
+  await run(["observe", "--root", root, "--loop", short, "--session", "s1", "--criterion", criterion, "--command", "o1"]);
+  const again = await run(["observe", "--root", root, "--loop", loopId, "--session", "s1", "--criterion", criterion, "--command", "o1"]);
+  assert.equal(again.replayed, true, "the same command, however it was typed");
+
+  // And the other way round, through a verb that builds its payload before the
+  // lock rather than inside it.
+  run(["join", "--root", root, "--loop", loopId, "--session", "s2", "--reason", "r", "--command", "j1"]);
+  const rejoined = run(["join", "--root", root, "--loop", short, "--session", "s2", "--reason", "r", "--command", "j1"]);
+  assert.equal(rejoined.replayed ?? true, true);
+
+  run(["suspend", "--root", root, "--loop", short, "--session", "s1", "--outcome", "needs_input", "--reason", "r", "--command", "s1"]);
+  run(["resume", "--root", root, "--loop", short, "--session", "s1", "--reason", "r", "--command", "r1"]);
+  run(["amend", "--root", root, "--loop", short, "--budget", "9", "--reason", "r", "--command", "a1"]);
+
+  // Nothing anywhere carries the abbreviation. This is the assertion that has
+  // to hold for every verb, not the ones this test happened to call — so it
+  // walks the whole log rather than the records it wrote.
+  const records = run(["log", "--root", root]);
+  const named = records.filter((record) => typeof record.payload?.loop_id === "string");
+  assert.ok(named.length >= 6, `only ${named.length} records name a loop`);
+  for (const record of named) {
+    assert.equal(record.payload.loop_id, loopId, `${record.kind} carries what was typed`);
   }
 });
