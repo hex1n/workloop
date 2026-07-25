@@ -216,6 +216,66 @@ test("releasing does not poison when the next holder takes the path immediately"
   assert.equal(other.poisoned, null);
 });
 
+// CI's first Windows run: `P7: concurrent processes serialize` died on
+// `EPERM: rename 'store-shared.lock' -> '...released...'`. Windows refuses to
+// rename a directory while a handle inside it is open, and every waiter reads
+// owner.json every 20ms — so the proof of a release loses a race with the
+// polling of the process waiting for that release. By LK-04 a failed release
+// poisons the manager, so one unlucky peek took the whole process down.
+//
+// Injected rather than raced: a test that waits for the collision would be
+// green on the machine that could not produce it, which is how this defect got
+// to CI in the first place.
+const failingRename = (times, code) => {
+  let left = times;
+  return (from, to) => {
+    if (left-- > 0) {
+      const error = new Error(`${code}: injected`);
+      error.code = code;
+      throw error;
+    }
+    fs.renameSync(from, to);
+  };
+};
+
+test("a release that loses a race with a reader is retried, not treated as lost", (t) => {
+  const dir = root(t);
+  const locks = createLockManager({
+    resolveLockPath: () => path.join(dir, "store-r.lock"),
+    defaults: { timeoutMs: 200, leaseMs: 30_000 },
+    rename: failingRename(3, "EPERM"),
+    platform: "win32",
+  });
+  assert.equal(locks.withLock(CLASSES.STORE, "r", () => "done"), "done");
+  assert.equal(locks.poisoned, null, "a reader in the way is contention, not a lost lock");
+  assert.equal(fs.existsSync(path.join(dir, "store-r.lock")), false, "and the lock really is released");
+});
+
+test("a rename that keeps failing still poisons, and only Windows retries at all", (t) => {
+  const dir = root(t);
+  // Retrying forever would turn a lock that cannot be released into a hang.
+  const stubborn = createLockManager({
+    resolveLockPath: () => path.join(dir, "a.lock"),
+    defaults: { timeoutMs: 200, leaseMs: 30_000 },
+    rename: failingRename(Number.MAX_SAFE_INTEGER, "EPERM"),
+    platform: "win32",
+  });
+  assert.throws(() => stubborn.withLock(CLASSES.STORE, "r", () => "x"), (error) => error.code === "LOCK_RELEASE_FAILED");
+  assert.ok(stubborn.poisoned);
+
+  // On POSIX the same code is permanent — an unwritable parent raises EACCES
+  // and always will — so it must fail on the first attempt, not after a wait.
+  let attempts = 0;
+  const posix = createLockManager({
+    resolveLockPath: () => path.join(dir, "b.lock"),
+    defaults: { timeoutMs: 200, leaseMs: 30_000 },
+    rename: (from, to) => { attempts += 1; return failingRename(1, "EACCES")(from, to); },
+    platform: "linux",
+  });
+  assert.throws(() => posix.withLock(CLASSES.STORE, "r", () => "x"), (error) => error.code === "LOCK_RELEASE_FAILED");
+  assert.equal(attempts, 1, "POSIX does not retry a permission failure");
+});
+
 test("when the action and the release both fail, neither error is lost", (t) => {
   const dir = root(t);
   const locks = managerAt(dir);

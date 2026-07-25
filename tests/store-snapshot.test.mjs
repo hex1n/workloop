@@ -130,7 +130,13 @@ test("the projection cannot change shape without saying so", () => {
   // projection without bumping it would hand the next version snapshots whose
   // fields it does not have — which is exactly how a loop's retired judgments
   // once came back to life, silently.
-  const source = fs.readFileSync(new URL("../src/domain/projection.mjs", import.meta.url), "utf8");
+  // Line endings normalised before anything else. Git checks out with CRLF on
+  // Windows by default, and a line ending is not a change in the shape of the
+  // state — so left alone this gate goes red on every Windows run for a reason
+  // it does not name. It fails twice over, in fact: `";$"` does not match
+  // `";\r\n"`, so the stamp line the digest is supposed to exclude stays in the
+  // string being hashed.
+  const source = fs.readFileSync(new URL("../src/domain/projection.mjs", import.meta.url), "utf8").replace(/\r\n/gu, "\n");
   const body = source.replace(/^export const PROJECTION_SHAPE = "[^"]*";$/mu, "");
   const digest = createHash("sha256").update(body).digest("hex").slice(0, 16);
   assert.equal(digest, "ccf5d3c2883c1479",

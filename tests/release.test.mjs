@@ -101,7 +101,7 @@ const inventory = (directory) => {
 };
 
 test("WN-01: the packed release installs into an awkward prefix and runs from every shell", (t) => {
-  const scratch = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-release-")));
+  const scratch = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-release-")));
   t.after(() => fs.rmSync(scratch, { recursive: true, force: true }));
 
   const tarball = path.join(scratch, npmJson(["pack", "--pack-destination", scratch], { cwd: repoRoot })[0].filename);

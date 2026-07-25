@@ -412,7 +412,22 @@ test("a receipt never reports clean over a claim it could not see", (t) => {
   git(root, "commit", "-q", "-m", "tracked as src");
   fs.renameSync(path.join(root, "src"), path.join(root, "tmp"));
   fs.renameSync(path.join(root, "tmp"), path.join(root, "Src"));
-  if (fs.readdirSync(root).find((entry) => entry.toLowerCase() === "src") !== "Src") return;
+
+  // The condition is whether git's spelling still reaches the directory, and
+  // the earlier check did not ask that. It looked for an entry named `Src`,
+  // which is there on every filesystem after the rename above — so it never
+  // fired, and on a case-sensitive volume the test went on to run an entirely
+  // different scenario: git sees `src/a.txt` deleted and `Src/a.txt` added, so
+  // there is no emptiness to be unaccountable about. It failed on the first
+  // Linux run CI ever did, which is the only reason anyone found out.
+  //
+  // Skipped rather than silently returned: a check that quietly does nothing
+  // is what this test was already guilty of. The assertion still runs in CI on
+  // the macOS legs, which are case-insensitive.
+  if (!fs.existsSync(path.join(root, "src"))) {
+    t.skip("this volume is case-sensitive, so renaming src to Src is a move git can see, not a spelling git has lost");
+    return;
+  }
 
   const { loopId } = open(session(), ["src"], criterionFile);
   fs.writeFileSync(path.join(root, "Src", "a.txt"), "uncommitted\n");

@@ -20,7 +20,7 @@ process.exit(failures.length === 0 ? ${EXIT.SATISFIED} : ${EXIT.UNSATISFIED});
 `;
 
 function workspace(t) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-cli-")));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-cli-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "work"));
   fs.writeFileSync(path.join(root, "work", "a.txt"), "todo\n");
@@ -209,9 +209,15 @@ const observeVia = (location, loopId, root) => run([
 test("an explicit --store takes its root from the store, not from where the caller stands", async (t) => {
   const root = workspace(t);
   const created = run(["init", "--root", root]);
+  // Registered before the directory it protects, because hooks run in
+  // registration order: this test later stands inside `elsewhere`, and Windows
+  // will not remove a directory that is some process's working directory. Put
+  // the other way round — which is how it was written — the cleanup runs first
+  // and fails with EBUSY on the only platform that enforces it.
+  t.after(() => process.chdir(repoRoot));
   // A bare directory: nothing here resembles the workspace, so a wrong root
   // cannot accidentally find something that looks right.
-  const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-elsewhere-")));
+  const elsewhere = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-elsewhere-")));
   t.after(() => fs.rmSync(elsewhere, { recursive: true, force: true }));
 
   // Standing somewhere unrelated, naming the store outright. The root that
@@ -240,7 +246,6 @@ test("an explicit --store takes its root from the store, not from where the call
   // where a wrong root shows: it would look for `work/a.txt` under whatever
   // directory the caller happened to be in and report an unknown instead.
   process.chdir(elsewhere);
-  t.after(() => process.chdir(repoRoot));
   const result = await observeVia(created.location, loopId, root);
   const round = result.records.find((record) => record.kind === "round_observed").payload;
   assert.equal(round.verdict, "unsatisfied", "the criterion found the workspace, so it could reach a verdict");

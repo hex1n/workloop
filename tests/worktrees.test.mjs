@@ -27,7 +27,7 @@ process.exit(failures.length === 0 ? ${EXIT.SATISFIED} : ${EXIT.UNSATISFIED});
 `;
 
 function repo(t, at = null) {
-  const root = at ?? fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-wt-")));
+  const root = at ?? fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-wt-")));
   if (at !== null) fs.mkdirSync(root, { recursive: true });
   if (at === null) t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   git(root, "init", "-q", ".");
@@ -67,7 +67,7 @@ test("WT-02: a nested repository keeps its own ledger; a nested directory does n
 
   // And below a *filesystem* store, which has no tree boundary of its own,
   // nesting is refused outright — its checkpoint walks everything under it.
-  const plainRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-plain-")));
+  const plainRoot = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-plain-")));
   t.after(() => fs.rmSync(plainRoot, { recursive: true, force: true }));
   init(plainRoot);
   const under = path.join(plainRoot, "child");
@@ -83,14 +83,14 @@ test("WT-02: discovery stops at the first store it meets and does not reach past
 
   const deep = path.join(inner, "src", "nested");
   fs.mkdirSync(deep, { recursive: true });
-  assert.equal(fs.realpathSync(discover(deep).location), fs.realpathSync(innerSite.location), "the nearest ledger wins");
-  assert.equal(fs.realpathSync(discover(outer).location), fs.realpathSync(outerSite.location));
+  assert.equal(fs.realpathSync.native(discover(deep).location), fs.realpathSync.native(innerSite.location), "the nearest ledger wins");
+  assert.equal(fs.realpathSync.native(discover(outer).location), fs.realpathSync.native(outerSite.location));
 });
 
 test("WT-02: a copy of a whole repository is a collision, and looking does not change it", (t) => {
   const root = repo(t);
   const site = init(root);
-  const elsewhere = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-copy-")));
+  const elsewhere = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-copy-")));
   t.after(() => fs.rmSync(elsewhere, { recursive: true, force: true }));
   fs.cpSync(root, path.join(elsewhere, "copy"), { recursive: true });
 
@@ -107,14 +107,14 @@ test("WT-02: a filesystem ledger and a nested repository's ledger cannot coexist
   // arrangement is refused whichever end is built first — which is also what
   // makes a three-level version of it unconstructible rather than merely
   // undetected.
-  const top = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-top-")));
+  const top = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-top-")));
   t.after(() => fs.rmSync(top, { recursive: true, force: true }));
   init(top);
   const middle = repo(t, path.join(top, "vendor", "mid"));
   assert.throws(() => siteForNewStore(middle), (error) => error.code === "STORE_NESTED_INSIDE");
 
   // The other order: the repository's ledger first, the filesystem one after.
-  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-order-")));
+  const other = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-order-")));
   t.after(() => fs.rmSync(other, { recursive: true, force: true }));
   init(repo(t, path.join(other, "vendor", "mid")));
   assert.throws(() => siteForNewStore(other, { kind: KIND.FS }), (error) => error.code === "STORE_CONTAINS_NESTED");
@@ -124,7 +124,7 @@ test("WT-02: a store is never created over a ledger it cannot see past", (t) => 
   // The downward scan has to look inside `.git` on purpose — a git ledger
   // lives in the one directory a scan otherwise skips, and a store created
   // above one that it never saw is two ledgers over one tree.
-  const outer = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-over-")));
+  const outer = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-over-")));
   t.after(() => fs.rmSync(outer, { recursive: true, force: true }));
   const inner = repo(t, path.join(outer, "sub"));
   init(inner);
@@ -132,7 +132,7 @@ test("WT-02: a store is never created over a ledger it cannot see past", (t) => 
 
   // And the kind of what it finds is read, not inferred from the path shape:
   // an fs ledger mistaken for a git one was let through by the exemption.
-  const other = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-mixed-")));
+  const other = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-mixed-")));
   t.after(() => fs.rmSync(other, { recursive: true, force: true }));
   const child = path.join(other, "child");
   fs.mkdirSync(child);
@@ -172,7 +172,7 @@ test("WT-05: removing a worktree takes nothing away from the history it observed
   // Rebuilding a worktree at the same path reuses no identity: the store's
   // comes from the common directory and the loop's from its opening record.
   git(root, "worktree", "add", "-q", worktree, "-b", "side-again");
-  assert.equal(fs.realpathSync(discover(worktree).location), fs.realpathSync(site.location), "same ledger");
+  assert.equal(fs.realpathSync.native(discover(worktree).location), fs.realpathSync.native(site.location), "same ledger");
   assert.equal(status(session(), { loopId, root }).rounds_spent, 1, "and the same single round");
 });
 

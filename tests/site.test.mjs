@@ -19,7 +19,7 @@ const git = (root, ...args) => {
 function scratch(t, name = "workloop-site-") {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), name));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  return fs.realpathSync(root);
+  return fs.realpathSync.native(root);
 }
 
 const init = (root, options = {}) => {
@@ -65,14 +65,14 @@ test("FS-01: a git workspace keeps its ledger in the common directory, shared by
 
   const site = init(root);
   assert.equal(site.kind, KIND.GIT);
-  assert.equal(fs.realpathSync(site.location), fs.realpathSync(path.join(root, ".git", "workloop")));
+  assert.equal(fs.realpathSync.native(site.location), fs.realpathSync.native(path.join(root, ".git", "workloop")));
 
   // A second worktree finds the same ledger: the history belongs to the
   // repository, not to whichever checkout happens to be on disk.
   const worktree = path.join(scratch(t), "wt");
   git(root, "worktree", "add", "-q", worktree, "-b", "side");
   const found = discover(worktree);
-  assert.equal(fs.realpathSync(found.location), fs.realpathSync(site.location));
+  assert.equal(fs.realpathSync.native(found.location), fs.realpathSync.native(site.location));
   assert.equal(openStore(found.location).manifest.store_kind, KIND.GIT);
 });
 
@@ -94,7 +94,7 @@ test("FS-01: a git store found from a subdirectory reports the worktree, not the
   fs.mkdirSync(deep, { recursive: true });
   const found = discover(deep);
   assert.equal(found.kind, KIND.GIT);
-  assert.equal(fs.realpathSync(found.root), root, "the workspace is the worktree, not where the search began");
+  assert.equal(fs.realpathSync.native(found.root), root, "the workspace is the worktree, not where the search began");
 });
 
 test("FS-02: the runtime's own files are never artifacts", (t) => {

@@ -29,7 +29,7 @@ process.exit(failures.length === 0 ? ${EXIT.SATISFIED} : ${EXIT.UNSATISFIED});
 `;
 
 test("WN-02: a path full of spaces and non-ASCII changes nothing about the semantics", async (t) => {
-  const parent = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-wn-")));
+  const parent = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-wn-")));
   t.after(() => fs.rmSync(parent, { recursive: true, force: true }));
   const root = path.join(parent, AWKWARD);
   fs.mkdirSync(path.join(root, "源 码"), { recursive: true });
@@ -64,7 +64,7 @@ test("WN-02: a path full of spaces and non-ASCII changes nothing about the seman
 });
 
 test("WN-02: the log holds one path form, whoever wrote it", (t) => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-form-")));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-form-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src", "nested"), { recursive: true });
 
@@ -94,7 +94,7 @@ test("WN-02: the log holds one path form, whoever wrote it", (t) => {
 });
 
 test("WN-02: two loops cannot hold a path and a path inside it", (t) => {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-nest-")));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-nest-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.mkdirSync(path.join(root, "src", "nested"), { recursive: true });
   fs.writeFileSync(path.join(root, "check.mjs"), "process.exit(3)");
@@ -168,13 +168,17 @@ test("WN-04: a kill mechanism that cannot even start counts as a failure, not a 
 });
 
 test("D-03: a criterion left running by a killed runtime is named, not killed", (t) => {
-  const dir = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-orphan-")));
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-orphan-")));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const pidFile = path.join(dir, "criterion.pid");
 
   // A real process standing in for the group a SIGKILLed runtime left behind.
   const orphan = spawn(process.execPath, ["-e", "setTimeout(() => {}, 60000)"], { stdio: "ignore", detached: true });
-  t.after(() => { try { process.kill(-orphan.pid, "SIGKILL"); } catch { /* already gone */ } });
+  // The pid itself, not the group. This stand-in starts nothing, so the group
+  // form reaped no more than the plain one — and Windows has no process groups
+  // at all, where `kill(-pid)` is simply ESRCH. The runtime's own tree kill is
+  // a different mechanism with its own platform branch and its own tests.
+  t.after(() => { try { process.kill(orphan.pid, "SIGKILL"); } catch { /* already gone */ } });
   fs.writeFileSync(pidFile, String(orphan.pid));
 
   assert.equal(findOrphanedCriterion(pidFile), orphan.pid, "it is found and named");
@@ -184,7 +188,7 @@ test("D-03: a criterion left running by a killed runtime is named, not killed", 
   // the whole group on the strength of it.
   assert.doesNotThrow(() => process.kill(orphan.pid, 0), "the process is left alone");
 
-  process.kill(-orphan.pid, "SIGKILL");
+  process.kill(orphan.pid, "SIGKILL");
   return new Promise((resolve) => setTimeout(resolve, 200)).then(() => {
     // A note whose process has already exited is the ordinary case: the file
     // outlived it, and that says nothing worth reporting.

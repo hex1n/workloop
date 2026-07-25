@@ -13,7 +13,7 @@ import { spawnSync } from "node:child_process";
 
 const realOf = (value) => {
   try {
-    return fs.realpathSync(value);
+    return fs.realpathSync.native(value);
   } catch {
     return null;
   }

@@ -11,7 +11,7 @@ import { EXIT, VERDICT_PREFIX } from "../src/domain/criterion.mjs";
 const CRITERION = `console.log("${VERDICT_PREFIX} " + JSON.stringify({ verdict: "unsatisfied", failures: [{ id: "x" }] })); process.exit(${EXIT.UNSATISFIED});`;
 
 function workspace(t) {
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-claims-")));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-claims-")));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   fs.writeFileSync(path.join(root, "check.mjs"), CRITERION);
   const location = path.join(root, ".workloop");
@@ -54,7 +54,7 @@ test("CC-03: a claim opened through a symlink is recorded as the physical path",
 
 test("CC-03: a symlink cannot walk a claim out of the workspace", (t) => {
   const { root, open } = workspace(t);
-  const outside = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-outside-")));
+  const outside = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-outside-")));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
   fs.symlinkSync(outside, path.join(root, "escape"));
 
@@ -91,9 +91,14 @@ test("CC-03: a path that does not exist yet keeps the spelling it was given", (t
   // Resolved as far as the disk can answer, and no further. Nobody has created
   // the rest, so nothing on disk can say what it will be called — a fact, not
   // a gap in the check.
-  assert.equal(claimIdentity(root, path.join("Src", "New", "feature")), path.join("Src", "New", "feature"));
+  // The input is a platform path, because that is what a caller has; the
+  // identity is canonical, because that is what goes in the log. Expecting
+  // `path.join` on both sides passed everywhere it was written and failed on
+  // the first Windows run — the identity is `Src/New/feature` there too, which
+  // is the whole point of storing one separator.
+  assert.equal(claimIdentity(root, path.join("Src", "New", "feature")), "Src/New/feature");
   if (caseInsensitive(root)) {
-    assert.equal(claimIdentity(root, path.join("src", "New", "feature")), path.join("Src", "New", "feature"), "the existing part still normalises");
+    assert.equal(claimIdentity(root, path.join("src", "New", "feature")), "Src/New/feature", "the existing part still normalises");
   }
 });
 

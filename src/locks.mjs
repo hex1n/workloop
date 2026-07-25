@@ -52,8 +52,38 @@ function readOwner(lockPath) {
   }
 }
 
-export function createLockManager({ resolveLockPath, now = () => Date.now(), defaults = {} } = {}) {
+// A rename can fail because somebody is *reading* the lock, not because the
+// lock was lost. Windows refuses to rename a directory while any handle inside
+// it is open, and every waiter peeks at owner.json every 20ms — so the proof of
+// a release races the polling of the very process waiting for it. Retrying the
+// proof is not a guess: mkdir still says this process holds the lock, and
+// nothing else can take the path until the rename succeeds.
+//
+// These are the codes Windows reports for that sharing violation, and the retry
+// is Windows-only on purpose. The same codes mean something permanent on POSIX
+// — an unwritable parent directory raises EACCES and will raise it forever —
+// so treating them as contention everywhere would turn "you may not do this"
+// into half a second of hope. The phenomenon is the platform's, and saying so
+// is truer than pretending the codes carry one meaning.
+const CONTENDED = new Set(["EPERM", "EACCES", "EBUSY"]);
+const RENAME_ATTEMPTS = 25;
+
+export function createLockManager({ resolveLockPath, now = () => Date.now(), defaults = {}, rename = fs.renameSync, platform = process.platform } = {}) {
   if (typeof resolveLockPath !== "function") refuse("INVALID_LOCK_MANAGER", "a lock manager needs resolveLockPath");
+
+  const renameContended = (from, to) => {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        rename(from, to);
+        return;
+      } catch (error) {
+        // Anything that is not a reader in the way is a real failure, and one
+        // more attempt would only delay saying so.
+        if (attempt >= RENAME_ATTEMPTS || platform !== "win32" || !CONTENDED.has(error.code)) throw error;
+        sleep(20);
+      }
+    }
+  };
   // Poisoning is per-manager and irreversible by design. A release we could not
   // verify means the lock's state is unknown; taking another one after that
   // would be a guess dressed up as mutual exclusion.
@@ -154,14 +184,19 @@ export function createLockManager({ resolveLockPath, now = () => Date.now(), def
     // somebody needs to read it.
     const tombstone = `${entry.lockPath}.released.${entry.token}`;
     try {
-      fs.renameSync(entry.lockPath, tombstone);
+      renameContended(entry.lockPath, tombstone);
     } catch (error) {
       poison = `could not release the ${entry.lockClass} lock: ${error.message}`;
       refuse("LOCK_RELEASE_FAILED", poison);
     }
     // The lock is already released; a tombstone that outlives us is litter,
     // not a correctness problem, and is not worth poisoning a healthy process.
-    fs.rmSync(tombstone, { recursive: true, force: true });
+    // `force` only forgives a missing path, so the same reader that delayed the
+    // rename could still make this throw — and throwing here would turn a
+    // completed release into an error the caller cannot act on.
+    try {
+      fs.rmSync(tombstone, { recursive: true, force: true });
+    } catch { /* litter */ }
   }
 
   return {

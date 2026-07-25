@@ -34,15 +34,34 @@ function fixture(t, { commands = 2, segmentMaxBytes } = {}) {
 }
 
 function crashAt(location, phase, commandId, { padding = 0, segmentMaxBytes } = {}) {
-  const result = spawnSync(process.execPath, [CHILD, location, phase, commandId, REQ(commandId), String(padding)], {
+  // Outside the store, so it cannot disturb the byte comparisons these tests
+  // are built on.
+  const marker = `${location}.reached-${commandId}`;
+  const result = spawnSync(process.execPath, [CHILD, location, phase, commandId, REQ(commandId), String(padding), marker], {
     encoding: "utf8",
     timeout: 20_000,
     env: { ...process.env, LOCK_LEASE_MS: String(LEASE_MS), ...(segmentMaxBytes === undefined ? {} : { SEGMENT_MAX_BYTES: String(segmentMaxBytes) }) },
   });
+
   // Proves the crash was the injected one. Without this, a child that died of
   // a syntax error would satisfy every "the child did not finish" assertion
   // below and the whole matrix would pass while testing nothing.
-  assert.equal(result.signal, "SIGKILL", `expected a kill at ${phase}, got signal=${result.signal} status=${result.status} stderr=${result.stderr}`);
+  //
+  // It used to be `signal === "SIGKILL"`, which was true only on POSIX: Windows
+  // has no signals, so `process.kill` there is TerminateProcess with exit code
+  // 1 — and the first Windows CI run took all nine of these down at once. The
+  // straight translation, `status === 1`, would have been worse than the bug:
+  // a Node syntax error also exits 1, so the assertion would have gone on
+  // passing while proving nothing at all. The marker says what the signal was
+  // only ever a proxy for — the child reached this exact phase and stopped.
+  const died = `status=${result.status} signal=${result.signal} stderr=${result.stderr}`;
+  // Existence first: reading a marker that is not there throws ENOENT, and the
+  // reader of that failure is by definition on a platform the author could not
+  // run. They get the child's own account instead.
+  assert.ok(fs.existsSync(marker), `the child never reached ${phase}: ${died}`);
+  assert.equal(fs.readFileSync(marker, "utf8"), phase, `the child stopped somewhere else: ${died}`);
+  fs.rmSync(marker, { force: true });
+  assert.notEqual(result.status, 0, `the child must die at ${phase}, not exit`);
   assert.equal(result.stderr.trim(), "", `the child must die at ${phase}, not fail: ${result.stderr}`);
   assert.equal(result.stdout.trim(), "", `the child must not have completed its append at ${phase}`);
   return result;
