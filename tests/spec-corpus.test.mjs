@@ -36,6 +36,42 @@ test("the design the corpus specifies is present and names the corpus", () => {
   assert.match(read("README.md"), /AUDIT-2026-07-25/u, "corpus README does not point at its audit");
 });
 
+test("every scenario the audit kept has somewhere to live", () => {
+  // The gate that "WN-04 is green" could not have survived: it was written in
+  // a revision log while no test named it. This proves a claim exists and
+  // points somewhere real — not that the assertions there are adequate, which
+  // is what review is for.
+  const root = path.resolve(import.meta.dirname, "..");
+  const coverage = fs.readFileSync(path.join(root, "greenfield", "COVERAGE.md"), "utf8");
+  const debts = new Set([...fs.readFileSync(path.join(root, "greenfield", "DEBT.md"), "utf8").matchAll(/^### (D-\d\d)/gmu)].map((match) => match[1]));
+  const ruledOut = new Set([...read("AUDIT-2026-07-25.md").matchAll(/\|\s*([A-Z]{2}-\d\d)[^|]*\|\s*M\d/gu)].map((match) => match[1]));
+
+  const claimed = new Map();
+  for (const row of coverage.matchAll(/^\| \*\*([A-Z]{2}-\d\d)\*\*[^|]*\| `([^`]+)` \|$/gmu)) {
+    assert.equal(claimed.has(row[1]), false, `${row[1]} is claimed twice`);
+    claimed.set(row[1], row[2]);
+  }
+
+  for (const name of files) {
+    for (const scenario of read(name).matchAll(/^### ([A-Z]{2}-\d\d)/gmu)) {
+      const id = scenario[1];
+      if (ruledOut.has(id)) {
+        assert.equal(claimed.has(id), false, `${id} was ruled out but the coverage map still claims it`);
+        continue;
+      }
+      assert.ok(claimed.has(id), `${id} survived the audit but nothing claims it`);
+    }
+  }
+
+  for (const [id, where] of claimed) {
+    if (where.startsWith("DEBT:")) {
+      assert.ok(debts.has(where.slice("DEBT:".length)), `${id} is deferred to ${where}, which is not in DEBT.md`);
+      continue;
+    }
+    assert.ok(fs.existsSync(path.join(root, where)), `${id} points at ${where}, which does not exist`);
+  }
+});
+
 test("no source file is binary, so nothing can hide from review", () => {
   // A stray control byte once made src/domain/criterion.mjs read as binary to
   // git and grep, which meant two review rounds never saw it. The gate now
