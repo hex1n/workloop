@@ -7,7 +7,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { digestOf, sha256Hex } from "../canonical.mjs";
 import { CLASSES } from "../locks.mjs";
-import { controlPlanePaths, realOf } from "../site.mjs";
+import { caseInsensitiveVolume, controlPlanePaths, realOf } from "../site.mjs";
 import { openStore } from "../store.mjs";
 import { runCriterion } from "./criterion.mjs";
 import { LoopError, refuse } from "./error.mjs";
@@ -127,6 +127,16 @@ export function artifactCheckpoint(root, claims, { storeLocation = null } = {}) 
  * volumes can be sensitive and Windows directories can be — so it is resolved,
  * never assumed.
  */
+// On a volume that does not tell `Src` from `src`, two claims that differ only
+// in case name one directory. Identity resolves that for paths already on
+// disk; for a path nobody has created yet there is nothing to resolve against,
+// so the comparison folds instead — otherwise two loops could claim `Src/new`
+// and `src/new` today and find themselves sharing a tree tomorrow.
+export const folder = (root) => (caseInsensitiveVolume(root) ? (value) => value.toLowerCase() : (value) => value);
+
+export const overlaps = (left, right) =>
+  left === right || left === "." || right === "." || left.startsWith(`${right}${path.sep}`) || right.startsWith(`${left}${path.sep}`);
+
 export function claimIdentity(root, claim) {
   const normalized = path.normalize(claim);
   const base = realOf(root);
@@ -149,7 +159,14 @@ export function claimIdentity(root, claim) {
   return identity.length === 0 ? "." : identity;
 }
 
-export function assertClaims(root, claims) {
+/**
+ * Validates a loop's claims and returns their identities, in a stable order.
+ *
+ * Shape first (relative, literal, distinct), then physical identity, then
+ * overlap — because "is this the same path" only means something once both
+ * sides have been resolved to what is actually on disk.
+ */
+export function assertClaims(root, claims, { storeLocation = null } = {}) {
   if (!Array.isArray(claims) || claims.length === 0) refuse("CLAIMS_REQUIRED", "a loop needs at least one write claim");
   for (const claim of claims) {
     if (typeof claim !== "string" || claim.length === 0) refuse("CLAIM_SHAPE", "a claim must be a non-empty path");
@@ -159,14 +176,22 @@ export function assertClaims(root, claims) {
     if (normalized.split(path.sep).includes("..")) refuse("CLAIM_SHAPE", `${claim} escapes the workspace root`);
   }
   const normalized = claims.map((claim) => claimIdentity(root, claim));
-  if (new Set(normalized).size !== normalized.length) refuse("CLAIM_SHAPE", "claims must be distinct");
+  // The runtime's own files are excluded from every checkpoint and receipt
+  // (FS-02), so a loop that claimed them would be one that can never observe
+  // or vouch for its own scope — an unwinnable loop, accepted in silence.
+  const control = controlPlanePaths(root, storeLocation);
+  for (const claim of normalized) {
+    if (control.some((entry) => claim === entry || claim.startsWith(`${entry}${path.sep}`))) {
+      refuse("CLAIM_IS_CONTROL_PLANE", `${claim} belongs to the runtime, which never treats it as work`);
+    }
+  }
+  const fold = folder(root);
+  if (new Set(normalized.map(fold)).size !== normalized.length) refuse("CLAIM_SHAPE", "claims must be distinct");
   // Overlap makes "my paths" undecidable, which is the one thing claims exist
   // to make decidable.
   for (const outer of normalized) {
     for (const inner of normalized) {
-      if (outer !== inner && (inner === outer || inner.startsWith(`${outer}${path.sep}`))) {
-        refuse("CLAIM_OVERLAP", `${inner} lies inside ${outer}`);
-      }
+      if (outer !== inner && overlaps(fold(inner), fold(outer))) refuse("CLAIM_OVERLAP", `${inner} lies inside ${outer}`);
     }
   }
   // Code unit order, never `localeCompare`: this ordering goes into a digest,
@@ -193,7 +218,7 @@ export function openLoop(store, { root, goal, claims, criterionFile, roundsBudge
   // filesystem there is nothing to resolve it against.
   if (typeof root !== "string" || root.length === 0) refuse("ROOT_REQUIRED", "opening a loop needs the workspace root its claims are relative to");
   const criterionDigest = criterionDigestOf(criterionFile);
-  const wanted = assertClaims(root, claims);
+  const wanted = assertClaims(root, claims, { storeLocation: store.location });
   const base = {
     goal, claims: wanted, criterion_digest: criterionDigest,
     rounds_budget: roundsBudget, opened_by: session, reason, granted_by: grantedBy, receipts,
@@ -204,7 +229,7 @@ export function openLoop(store, { root, goal, claims, criterionFile, roundsBudge
     prepare: (state) => {
       // Both checks refuse before anything is written, so a rejected open
       // leaves the log byte-for-byte unchanged.
-      const conflicts = claimConflicts(wanted, state);
+      const conflicts = claimConflicts(wanted, state, { fold: folder(root) });
       if (conflicts.length > 0) {
         refuse("CLAIM_TAKEN", `${conflicts[0].claim} is already claimed by loop ${conflicts[0].loop_id.slice(0, 19)}`);
       }

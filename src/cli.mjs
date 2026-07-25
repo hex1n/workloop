@@ -91,11 +91,14 @@ function resolve(options) {
   return { store, root: site.root, location: site.location };
 }
 
+// `--root` says where to start looking; the store's own root is what every
+// verb then works against. Letting the flag override it would resolve claims
+// against a filesystem the store does not describe.
 const commonOf = (options, root) => ({
   loopId: options.loop,
   session: options.session,
   commandId: options.command,
-  root: options.root === undefined ? root : path.resolve(options.root),
+  root,
 });
 
 export function run(argv, { cwd = process.cwd() } = {}) {

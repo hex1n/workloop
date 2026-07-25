@@ -172,7 +172,7 @@ const observeVia = (location, loopId, root) => run([
   "--criterion", path.join(root, "check.mjs"), "--command", "o-via-store",
 ]);
 
-test("an explicit --store takes its root from the store, not from where the caller stands", (t) => {
+test("an explicit --store takes its root from the store, not from where the caller stands", async (t) => {
   const root = workspace(t);
   const created = run(["init", "--root", root]);
   // A bare directory: nothing here resembles the workspace, so a wrong root
@@ -189,17 +189,27 @@ test("an explicit --store takes its root from the store, not from where the call
     "--reason", "fixture", "--granted-by", "self", "--receipts", "none", "--command", "open",
   ]).loop_id;
   assert.deepEqual(run(["ready", "--store", created.location]), [loopId]);
-  assert.notEqual(elsewhere, root);
+
+  // `--root` says where to start looking. With the store named outright there
+  // is nothing left to look for, and letting the flag win would resolve claims
+  // against a filesystem the store does not describe.
+  const misled = await run([
+    "observe", "--store", created.location, "--root", elsewhere, "--loop", loopId,
+    "--session", "s1", "--criterion", path.join(root, "check.mjs"), "--command", "o-with-wrong-root",
+  ]);
+  // The criterion runs with the workspace as its working directory. Had the
+  // flag won, it would have looked for the task's files under a directory that
+  // has none and come back unable to say anything.
+  assert.equal(misled.records.find((record) => record.kind === "round_observed").payload.verdict, "unsatisfied");
 
   // The criterion runs with the workspace as its working directory, so this is
   // where a wrong root shows: it would look for `work/a.txt` under whatever
   // directory the caller happened to be in and report an unknown instead.
   process.chdir(elsewhere);
   t.after(() => process.chdir(repoRoot));
-  return observeVia(created.location, loopId, root).then((result) => {
-    const round = result.records.find((record) => record.kind === "round_observed").payload;
-    assert.equal(round.verdict, "unsatisfied", "the criterion found the workspace, so it could reach a verdict");
-  });
+  const result = await observeVia(created.location, loopId, root);
+  const round = result.records.find((record) => record.kind === "round_observed").payload;
+  assert.equal(round.verdict, "unsatisfied", "the criterion found the workspace, so it could reach a verdict");
 });
 
 test("HF-08: what ships is only what is implemented", () => {

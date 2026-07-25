@@ -178,14 +178,28 @@ export function takeReceipt({ root, mode, claims, storeLocation }) {
     parentOid = parent.status === 0 ? parent.stdout.trim() : null;
   }
 
-  // Read after the operation, deliberately: `--only` leaves foreign entries
-  // staged, so what remains is precisely the content this receipt cannot
-  // account for.
-  // Built under one bound, on purpose. An earlier shape added a note after the
-  // cap and could exceed what the vocabulary carries — so a repository with
-  // enough foreign staged files made the git operation happen and *then* made
-  // recording it throw, which is the one outcome this runtime must never have.
+  const paths = touched.filter(inScope);
+
+  // A claim that exists on disk but contributed nothing is an emptiness the
+  // runtime cannot account for — and an unaccountable emptiness must never
+  // read as `clean`. The case that found this: a directory renamed by case
+  // only, which git still tracks under the old spelling, so every pathspec
+  // matched nothing and a receipt that staged nothing reported that everything
+  // was fine. The rule is written against that shape rather than that cause,
+  // so the next cause with the same shape is caught too. A claim that names
+  // nothing yet is a different thing and stays clean: `live` already excludes it.
+  const silent = live.filter((claim) => !paths.some((entry) => claim === "." || entry === claim || entry.startsWith(`${claim}/`)));
+
+  // The staged set is read after the operation, deliberately: `--only` leaves
+  // foreign entries staged, so what remains is precisely the content this
+  // receipt cannot account for.
+  //
+  // All the notes are built under one bound. An earlier shape appended after
+  // the cap and could exceed what the vocabulary carries — so a repository
+  // with enough foreign staged files made the git operation happen and *then*
+  // made recording it throw, which is the one outcome this must never have.
   const notes = [
+    ...silent.map((claim) => `${claim} exists but git matched nothing under it; a case-only rename git was never told about does this`),
     // Only meaningful for a commit, where `touched` is what the commit itself
     // carries. In stage mode `touched` is the whole index, so this would just
     // restate the line below about every foreign entry — and word it as though
@@ -195,7 +209,6 @@ export function takeReceipt({ root, mode, claims, storeLocation }) {
   ];
   const reasons = notes.slice(0, MAX_REASONS);
   if (notes.length > MAX_REASONS) reasons.push(`and ${notes.length - MAX_REASONS} more`);
-  const paths = touched.filter(inScope);
 
   return {
     mode,

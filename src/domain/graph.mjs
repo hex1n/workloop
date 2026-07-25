@@ -110,12 +110,12 @@ export function ready(state, options = {}) {
 // Every loop whose claims would collide with the ones being proposed. Two
 // loops that claim the same path cannot both be told what "my paths" means,
 // and each would count the other's work as foreign content in its receipts.
-export function claimConflicts(claims, { loops }) {
+export function claimConflicts(claims, { loops }, { fold = (value) => value } = {}) {
   const overlaps = (left, right) => left === right || left === "." || right === "."
     || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
   return Object.values(loops)
     .filter((loop) => loop.opened && loop.lifecycle !== "terminal")
     .flatMap((loop) => loop.claims
-      .filter((held) => claims.some((wanted) => overlaps(held, wanted)))
+      .filter((held) => claims.some((wanted) => overlaps(fold(held), fold(wanted))))
       .map((held) => ({ loop_id: loop.id, claim: held })));
 }

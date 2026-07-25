@@ -320,6 +320,29 @@ test("work the host committed itself can still be receipted", (t) => {
   assert.equal(receiptStanding({ root, receipt: attested, claims: ["src"], storeLocation: session().location }).standing, STANDING.IN_FORCE);
 });
 
+test("a receipt never reports clean over a claim it could not see", (t) => {
+  const { root, session, criterionFile } = repo(t);
+  // git tracks `Src/a.txt`; the directory is then renamed by case only, which
+  // git is never told about. Every pathspec built from the disk spelling now
+  // matches nothing git knows.
+  git(root, "add", "src/a.txt");
+  git(root, "commit", "-q", "-m", "tracked as src");
+  fs.renameSync(path.join(root, "src"), path.join(root, "tmp"));
+  fs.renameSync(path.join(root, "tmp"), path.join(root, "Src"));
+  if (fs.readdirSync(root).find((entry) => entry.toLowerCase() === "src") !== "Src") return;
+
+  const { loopId } = open(session(), ["src"], criterionFile);
+  fs.writeFileSync(path.join(root, "Src", "a.txt"), "uncommitted\n");
+  const stage = payloadOf(receipt(session(), { loopId, root, mode: MODE.STAGE, session: "s1", commandId: "stage" }));
+
+  // Staging nothing while the task's own file is modified is not a clean tree.
+  // It is a tree the runtime could not see, and those are different answers.
+  assert.deepEqual(stage.paths, []);
+  assert.equal(stage.status, STATUS.UNCERTAIN, "an emptiness nobody can account for is never clean");
+  assert.match(stage.reasons.join(" "), /matched nothing under it/u);
+  assert.match(git(root, "status", "--porcelain"), /a\.txt/iu, "and the change really is still sitting there, unstaged");
+});
+
 test("git failures are refused rather than turned into a receipt", (t) => {
   const { root, session, criterionFile } = repo(t);
   const { loopId } = openLoop(session(), {

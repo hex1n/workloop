@@ -76,6 +76,29 @@ export const realOf = (target) => {
   try { return fs.realpathSync.native(target); } catch { return path.resolve(target); }
 };
 
+const swapCase = (name) => [...name].map((ch) => (ch === ch.toLowerCase() ? ch.toUpperCase() : ch.toLowerCase())).join("");
+
+/**
+ * Whether this volume tells `Src` and `src` apart.
+ *
+ * Asked of the volume, never inferred from the platform: macOS volumes can be
+ * case-sensitive and Windows directories can be, so a platform check is a
+ * check that is wrong on somebody's machine. Read-only — it looks for an
+ * existing name under a second spelling rather than creating one.
+ */
+export function caseInsensitiveVolume(root) {
+  const candidates = [path.basename(root), ...(() => {
+    try { return fs.readdirSync(root).slice(0, 64); } catch { return []; }
+  })()];
+  for (const name of candidates) {
+    const swapped = swapCase(name);
+    if (swapped === name) continue;
+    const base = name === path.basename(root) ? path.dirname(root) : root;
+    return fs.existsSync(path.join(base, swapped));
+  }
+  return false;
+}
+
 export function sitesFor(root) {
   const common = gitCommonDirectory(root);
   return {

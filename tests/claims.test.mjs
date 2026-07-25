@@ -115,6 +115,29 @@ test("CC-03: claims sort by code unit, so the same claims digest the same anywhe
   assert.equal(["B", "a"].sort().join(","), "B,a");
 });
 
+test("CC-03: two loops cannot claim one directory that neither has created yet", (t) => {
+  const { root, open } = workspace(t);
+  if (!caseInsensitive(root)) return;
+  // Nothing on disk to resolve against, so identity alone cannot close this.
+  // Left open, the two loops would find themselves sharing a tree the moment
+  // either created it — which is the situation claims exist to prevent, only
+  // deferred by a day.
+  open(["Src/new"]);
+  assert.throws(() => open(["src/new"], { commandId: "second" }), (error) => error.code === "CLAIM_TAKEN");
+  assert.throws(() => assertClaims(root, ["Dir", "dir"]), (error) => error.code === "CLAIM_SHAPE");
+});
+
+test("a loop cannot claim the runtime's own files", (t) => {
+  const { root, open } = workspace(t);
+  fs.mkdirSync(path.join(root, ".git"));
+  for (const claim of [".workloop", ".git", path.join(".workloop", "segments")]) {
+    // Control-plane paths are excluded from every checkpoint and receipt, so a
+    // loop that claimed them could never observe or vouch for its own scope.
+    // Accepting that quietly hands somebody an unwinnable loop.
+    assert.throws(() => open([claim], { commandId: `claim-${claim}` }), (error) => error.code === "CLAIM_IS_CONTROL_PLANE", claim);
+  }
+});
+
 test("CC-01: one store carries several disjoint loops, each with its own identity", (t) => {
   const { root, open, session } = workspace(t);
   for (const name of ["alpha", "beta"]) fs.mkdirSync(path.join(root, name));
