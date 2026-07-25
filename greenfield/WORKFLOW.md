@@ -76,8 +76,25 @@ process.exitCode = failures.length === 0 ? 4 : 3;
 - **先让它红一次。** 在开单之前手工跑一遍,确认它对着一个已知坏掉的仓库真的说
   unsatisfied。一个从没红过的判据,和没有判据是一样的。
 
-**完成条件**:在**尚未修复**的仓库里手工跑判据,`echo $?` 是 3,且末行的
-`WORKLOOP_VERDICT` 里 `verdict` 是 `unsatisfied`、`failures` 非空。两条都对上,
+**完成条件**:见下一节——用 `workloop try` 问,而不是手工核对。
+
+### 2.2 先试跑判据(免费,不进账)
+
+```
+workloop try --root <path> --criterion <可执行文件> [--loop <loop_id>]
+```
+
+照 `observe` 的方式跑一次:**工作目录设为工作区、同样的超时、同样杀整个进程组、
+同样的输出截断窗口**——然后把读出的东西打印出来,**零记录零字节**。
+
+自己手跑一遍判据不是同一回事。手跑用的是你所站的目录、没有超时、留全部输出;
+**手跑绿而运行时红,是最难查的那种红。**
+
+不需要账本:判据还在写的时候循环通常还不存在,而那正是最该问的时候。给了
+`--loop` 时,它顺便告诉你这是不是那个循环开单时钉住的判据(`loop.matches`)。
+
+**完成条件**:在**尚未修复**的仓库上 `try`,输出里 `verdict` 是 `unsatisfied`、
+`failures` 非空、`exit_code` 是 3、`output_truncated` 是 `false`。四条都对上,
 这个判据才可以拿去开单。
 
 ### 2.3 两种让判据"说了等于没说"的写法
@@ -97,8 +114,8 @@ process.exitCode = failures.length === 0 ? 4 : 3;
 就让签名为 null,而 null 永远不计入 stuck。**但降级之后你就只剩一个退出码了**,
 指令里那份"哪条检查失败了"也跟着空掉。
 
-**完成条件**:把判据的输出接到管道上跑一次(`node check.mjs | tail -1`),末行是一条
-**完整的** `WORKLOOP_VERDICT` JSON,不是被截断的半行。
+**完成条件**:`workloop try` 的输出里 `output_truncated` 是 `false`,且 `verdict`
+不是 `indeterminate`——运行时替你回答这两条,不用去数字节。
 
 ## 每一轮
 

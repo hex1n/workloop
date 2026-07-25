@@ -339,6 +339,51 @@ export function receipt(store, { root, loopId, mode, session, commandId, onPhase
  * change to *this* loop cannot be silently overwritten.
  */
 
+/**
+ * Runs a criterion the way `observe` would and reports what it said. Records
+ * nothing.
+ *
+ * The runtime cannot tell a criterion that is consistently wrong from one that
+ * is right — it only catches one contradicting its own exit code. That makes
+ * host inspection the single defence, and until this verb existed the only way
+ * to see what the runtime saw was to spend a round of the budget on it.
+ *
+ * Running the criterion by hand is not the same check: the runtime sets the
+ * working directory to the workspace, bounds the run, kills the whole process
+ * group, and keeps only a window of the output. Green by hand and red here is
+ * the worst kind of red to chase, so this goes through the same call.
+ */
+export async function tryCriterion({ root, criterionFile, timeoutMs, store = null, loopId = null }) {
+  if (typeof criterionFile !== "string" || criterionFile.length === 0) refuse("CRITERION_REQUIRED", "there is nothing to try without a criterion");
+  assertWorkspace(root);
+  const criterionDigest = criterionDigestOf(criterionFile);
+
+  // Only when a loop was named: this is asked before a loop exists as often as
+  // after, and requiring one would put the check out of reach exactly when it
+  // is most useful — while the criterion is still being written.
+  const pinned = store === null ? null : (() => {
+    const loop = loopOf(store.replay().state, loopId);
+    return { loop_id: loop.id, criterion_digest: loop.criterionDigest, matches: loop.criterionDigest === criterionDigest };
+  })();
+
+  const outcome = await runCriterion({ executable: process.execPath, args: [criterionFile], cwd: root, timeoutMs });
+  return {
+    recorded: false,
+    criterion_digest: criterionDigest,
+    verdict: outcome.verdict,
+    // The whole failure records, not just the identifiers the log keeps: this
+    // is for a person fixing a criterion, and `expected`/`actual` are the part
+    // that says whether it is reading what it thinks it is reading.
+    failures: outcome.failures,
+    exit_code: outcome.execution.exit_code,
+    signal: outcome.execution.signal,
+    duration_ms: outcome.execution.duration_ms,
+    output_truncated: outcome.execution.output_truncated,
+    output_tail: outcome.execution.output_tail,
+    ...(pinned === null ? {} : { loop: pinned }),
+  };
+}
+
 export async function observe(store, { root, loopId, session, commandId, timeoutMs, criterionFile, stuckThreshold }) {
   if (typeof session !== "string" || session.length === 0) refuse("SESSION_REQUIRED", "an observation records who made it");
   const storeState = store.replay().state;

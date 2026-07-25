@@ -147,8 +147,48 @@ test("the read-only verbs change not one byte", async (t) => {
     run(["log", "--root", root]);
     run(["ready", "--root", root]);
     run(["export", "--root", root]);
+    // `try` starts a real process, which is exactly why it belongs in this
+    // test rather than beside it: the verb whose whole purpose is to be free
+    // is the one that would be worth nothing if it quietly cost something.
+    await run(["try", "--root", root, "--loop", loopId, "--criterion", path.join(root, "check.mjs")]);
   }
   assert.equal(JSON.stringify(snapshot()), before, "reading is not writing");
+});
+
+test("try runs the criterion the way observe would, and records nothing", async (t) => {
+  const root = workspace(t);
+
+  // Before any ledger exists — which is when a criterion is actually being
+  // written, and the moment the check is most worth having.
+  const early = await run(["try", "--root", root, "--criterion", path.join(root, "check.mjs")]);
+  assert.equal(early.recorded, false);
+  assert.equal(early.verdict, "unsatisfied", "the work file still says todo");
+  assert.deepEqual(early.failures.map((failure) => failure.id), ["not-done"]);
+  assert.equal(early.exit_code, EXIT.UNSATISFIED);
+  assert.equal(fs.existsSync(path.join(root, ".workloop")), false, "and asking created no ledger");
+
+  // The working directory is the workspace, not wherever the caller stands —
+  // the difference that makes "green by hand, red in the runtime" possible.
+  const elsewhere = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "workloop-try-")));
+  t.after(() => { process.chdir(repoRoot); fs.rmSync(elsewhere, { recursive: true, force: true }); });
+  process.chdir(elsewhere);
+  assert.equal((await run(["try", "--root", root, "--criterion", path.join(root, "check.mjs")])).verdict, "unsatisfied");
+  process.chdir(repoRoot);
+
+  // Named against a loop, it says whether this is the criterion that loop was
+  // opened with. A criterion that has drifted is the one whose verdict means
+  // least, so the comparison is reported rather than assumed.
+  run(["init", "--root", root]);
+  const loopId = open(root);
+  const bound = await run(["try", "--root", root, "--loop", loopId, "--criterion", path.join(root, "check.mjs")]);
+  assert.equal(bound.loop.matches, true);
+  assert.equal(bound.loop.criterion_digest, bound.criterion_digest);
+
+  const other = path.join(root, "other.mjs");
+  fs.writeFileSync(other, CRITERION.replace("not-done", "renamed"));
+  const drifted = await run(["try", "--root", root, "--loop", loopId, "--criterion", other]);
+  assert.equal(drifted.loop.matches, false, "a different file is a different criterion, and it says so");
+  assert.notEqual(drifted.criterion_digest, bound.criterion_digest);
 });
 
 test("log hands back records, and export hands back a ledger that verifies on its own", async (t) => {
@@ -255,13 +295,27 @@ test("HF-08: what ships is only what is implemented", () => {
   const repoRoot = path.resolve(import.meta.dirname, "..");
   const readFile = (relative) => fs.readFileSync(path.join(repoRoot, relative), "utf8");
 
-  // The verb list the shell offers must be the verbs the service layer has —
-  // taken from the module, never transcribed, because a transcript drifts.
-  const service = new Set([...readFile("src/domain/loop.mjs").matchAll(/^export (?:async )?function (\w+)/gmu)].map((match) => match[1]));
+  // Two derived checks, where there used to be one convention and a list of
+  // three names that did not fit it. A verb whose service function cannot be
+  // named after it — `try` is a reserved word, so it never could be — was
+  // indistinguishable from a verb nothing implements, and the fix on offer was
+  // to lengthen the transcript. A transcript drifts; that is why it was already
+  // being avoided one line above.
+  const shell = readFile("src/cli.mjs");
+
+  // 1. Every verb the shell offers is dispatched somewhere in the shell.
   for (const verb of VERBS) {
-    if (verb === "init") continue;
-    const implemented = service.has(verb) || service.has(`${verb}Loop`) || ["status", "log", "export"].includes(verb);
-    assert.ok(implemented, `the shell offers \`${verb}\` but no service function backs it`);
+    const dispatched = shell.includes(`case "${verb}":`) || shell.includes(`verb === "${verb}"`);
+    assert.ok(dispatched, `the shell offers \`${verb}\` but never dispatches it`);
+  }
+
+  // 2. Everything the shell imports from the service layer is really exported
+  // there — so a dispatch cannot call into a name nobody wrote.
+  for (const [, names, module_] of shell.matchAll(/^import \{([^}]+)\} from "(\.\/domain\/[\w.]+)";$/gmu)) {
+    const exported = new Set([...readFile(`src/${module_.slice(2)}`).matchAll(/^export (?:async )?(?:function|const) (\w+)/gmu)].map((match) => match[1]));
+    for (const name of names.split(",").map((entry) => entry.trim()).filter(Boolean)) {
+      assert.ok(exported.has(name), `the shell imports ${name} from ${module_}, which does not export it`);
+    }
   }
 
   // The concepts the audit ruled out must not have crept back in.

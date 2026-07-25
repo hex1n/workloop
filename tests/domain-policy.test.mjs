@@ -277,3 +277,23 @@ test("the directive hands back what failed, not only the prose about it", () => 
   directive.feedback.failures.push("invented");
   assert.deepEqual(nextDirective(state).feedback.failures, ["missing-alpha", "missing-beta"]);
 });
+
+test("an indeterminate round costs a round of the budget, like any other", () => {
+  // The ruling, not an accident of `rounds.length`. A round that reached no
+  // judgment still started the criterion and still took the time; refunding it
+  // would open a way to run criteria outside the budget entirely — the same
+  // reason an amendment does not refund the rounds spent under the old terms.
+  //
+  // It is only a fair ruling because `workloop try` exists: debugging a
+  // criterion no longer has to go through `observe`, so the budget is spent on
+  // the work rather than on the host's own tooling mistakes.
+  const state = fold([opened(2), observed(1, VERDICT.INDETERMINATE, { signature: null })]);
+  assert.equal(roundsSpent(state), 1);
+  assert.equal(decide(state).decision, DECISION.COLLECT_EVIDENCE);
+
+  const spent = fold([opened(2), observed(1, VERDICT.INDETERMINATE, { signature: null }), observed(2, VERDICT.INDETERMINATE, { signature: null })]);
+  assert.equal(roundsSpent(spent), 2);
+  const outcome = decide(spent);
+  assert.equal(outcome.decision, DECISION.SUSPEND, "two silences exhaust a budget of two");
+  assert.equal(outcome.suspension, SUSPENSION.OUT_OF_BUDGET);
+});

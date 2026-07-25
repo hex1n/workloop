@@ -7,12 +7,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { createStore, openStore } from "./store.mjs";
 import { KIND, assertKind, discover, siteForNewStore, worktreeRoot } from "./site.mjs";
-import { abandon, amend, join, next, observe, openLoop, openLoopStore, ready, receipt, resume, suspend } from "./domain/loop.mjs";
+import { abandon, amend, join, next, observe, openLoop, openLoopStore, ready, receipt, resume, suspend, tryCriterion } from "./domain/loop.mjs";
 import { exportStore, log, status } from "./domain/query.mjs";
 
 export const VERBS = Object.freeze([
   "init", "open", "next", "observe", "receipt", "join", "suspend", "resume",
-  "amend", "abandon", "status", "log", "ready", "export",
+  "amend", "abandon", "status", "log", "ready", "export", "try",
 ]);
 
 // `--flag value`, `--flag=value`, and repeatable flags that collect. No
@@ -63,6 +63,7 @@ const FLAGS = Object.freeze({
   log: ["store", "root", "loop", "from", "limit"],
   ready: ["store", "root"],
   export: ["store", "root"],
+  try: ["store", "root", "loop", "criterion", "timeout"],
 });
 
 // Resolving the store is the one thing every verb but `init` needs. Explicit
@@ -133,6 +134,19 @@ export function run(argv, { cwd = process.cwd() } = {}) {
     createStore({ location: site.location, storeKind: site.kind, commandId: options.command ?? `init-${site.kind}` });
     const store = openStore(site.location);
     return { store_id: store.manifest.store_id, store_kind: site.kind, location: site.location, root: site.root };
+  }
+
+  if (verb === "try") {
+    // The one verb that may run without a ledger: it is asked while the
+    // criterion is still being written, which is before there is a loop to
+    // name. A `--loop` is what makes a store necessary, and only then.
+    const named = options.loop === undefined ? null : resolve(options);
+    return tryCriterion({
+      root: named?.root ?? path.resolve(typeof options.root === "string" ? options.root : cwd),
+      criterionFile: options.criterion,
+      timeoutMs: integer(options.timeout),
+      ...(named === null ? {} : { store: named.store, loopId: options.loop }),
+    });
   }
 
   const { store, root } = resolve(options);
