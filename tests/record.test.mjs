@@ -7,12 +7,13 @@ import { digestOf } from "../src/canonical.mjs";
 import { RecordError, assertChain, assertRecordShape, buildRecord, digestBody } from "../src/record.mjs";
 
 const GENESIS = digestOf({ genesis: true });
+const REQ = digestOf({ request: "example" });
 
 function chainOf(count, anchor = GENESIS) {
   const records = [];
   let prev = anchor;
   for (let index = 0; index < count; index += 1) {
-    const record = buildRecord({ seq: index + 1, prev, cmd: `cmd-${index}`, kind: "example", payload: { index } });
+    const record = buildRecord({ seq: index + 1, prev, cmd: `cmd-${index}`, req: REQ, kind: "example", payload: { index } });
     records.push(record);
     prev = record.digest;
   }
@@ -109,13 +110,24 @@ test("records with missing or extra fields are refused", () => {
   assert.throws(() => assertRecordShape(missing), (error) => error.code === "RECORD_FIELDS");
 });
 
+test("a record carries the request that produced it, so a retry is decidable", () => {
+  const [record] = chainOf(1);
+  assert.equal(record.req, REQ);
+  // Without a durable copy of the request, a later process could not tell a
+  // retry of the same command from a different command reusing its id.
+  const { req, ...without } = record;
+  void req;
+  assert.throws(() => assertRecordShape(without), (error) => error.code === "RECORD_FIELDS");
+});
+
 test("building refuses inputs that could never be replayed", () => {
-  const valid = { seq: 1, prev: GENESIS, cmd: "c", kind: "k", payload: {} };
+  const valid = { seq: 1, prev: GENESIS, cmd: "c", req: REQ, kind: "k", payload: {} };
   const cases = [
     [{ seq: 0 }, "INVALID_SEQ"],
     [{ seq: 1.5 }, "INVALID_SEQ"],
     [{ prev: "nope" }, "INVALID_PREV"],
     [{ cmd: "" }, "INVALID_COMMAND_ID"],
+    [{ req: "nope" }, "INVALID_REQUEST_DIGEST"],
     [{ kind: "" }, "INVALID_KIND"],
     [{ payload: [] }, "INVALID_PAYLOAD"],
     [{ payload: null }, "INVALID_PAYLOAD"],

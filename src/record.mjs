@@ -8,7 +8,11 @@
 import { canonicalJson, digestOf, isPlainObject } from "./canonical.mjs";
 
 export const RECORD_SCHEMA = 1;
-const FIELDS = ["v", "seq", "prev", "cmd", "kind", "payload", "digest"];
+// `req` is the digest of the request that produced this record. It is what
+// makes a retry decidable: the same command id arriving with a different
+// request is a caller mistake, not a retry, and only a durable copy of the
+// original request lets a later process tell those two apart.
+const FIELDS = ["v", "seq", "prev", "cmd", "req", "kind", "payload", "digest"];
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/u;
 
 export class RecordError extends Error {
@@ -38,13 +42,14 @@ export function digestBody(record) {
   return digestOf(body);
 }
 
-export function buildRecord({ seq, prev, cmd, kind, payload }) {
+export function buildRecord({ seq, prev, cmd, req, kind, payload }) {
   if (!Number.isSafeInteger(seq) || seq < 1) refuse("INVALID_SEQ", "seq must be a positive integer");
   if (!DIGEST_PATTERN.test(prev)) refuse("INVALID_PREV", "prev must be a sha256 digest", seq);
   if (!isNonEmptyString(cmd)) refuse("INVALID_COMMAND_ID", "cmd must be a non-empty string", seq);
+  if (!DIGEST_PATTERN.test(req)) refuse("INVALID_REQUEST_DIGEST", "req must be a sha256 digest", seq);
   if (!isNonEmptyString(kind)) refuse("INVALID_KIND", "kind must be a non-empty string", seq);
   if (!isPlainObject(payload)) refuse("INVALID_PAYLOAD", "payload must be a plain object", seq);
-  const body = { v: RECORD_SCHEMA, seq, prev, cmd, kind, payload };
+  const body = { v: RECORD_SCHEMA, seq, prev, cmd, req, kind, payload };
   // Canonicalizing here rather than at write time means an unrepresentable
   // payload is refused while the caller can still do something about it.
   canonicalJson(body);
@@ -62,6 +67,7 @@ export function assertRecordShape(record) {
   if (!DIGEST_PATTERN.test(record.prev)) refuse("INVALID_PREV", "prev must be a sha256 digest", record.seq);
   if (!DIGEST_PATTERN.test(record.digest)) refuse("INVALID_DIGEST", "digest must be a sha256 digest", record.seq);
   if (!isNonEmptyString(record.cmd)) refuse("INVALID_COMMAND_ID", "cmd must be a non-empty string", record.seq);
+  if (!DIGEST_PATTERN.test(record.req)) refuse("INVALID_REQUEST_DIGEST", "req must be a sha256 digest", record.seq);
   if (!isNonEmptyString(record.kind)) refuse("INVALID_KIND", "kind must be a non-empty string", record.seq);
   if (!isPlainObject(record.payload)) refuse("INVALID_PAYLOAD", "payload must be a plain object", record.seq);
   if (digestBody(record) !== record.digest) refuse("DIGEST_MISMATCH", "record digest does not match its content", record.seq);
