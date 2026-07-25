@@ -41,14 +41,21 @@ export function decide(state, { stuckThreshold = DEFAULT_STUCK_THRESHOLD } = {})
   }
 
   const last = lastRound(state);
+  // Evidence that arrived after the last round is evidence no judgment has
+  // seen. Without this the runtime answers "produce a receipt" to a host that
+  // just produced one, and the directive never leads anywhere new.
+  const unjudgedReceipt = last !== null && state.receipt !== null && state.receipt.seq > last.seq;
+  const wantsReceipt = state.receipts === RECEIPTS.GIT && last !== null && last.receiptDigest === null;
+  const evidenceStep = () => (unjudgedReceipt
+    ? { decision: DECISION.JUDGE, reason: "a receipt was produced that no round has been judged against" }
+    : { decision: DECISION.PRODUCE_RECEIPT, reason: `no receipt is in force (${last.receiptState})` });
+
   if (last !== null && last.verdict === VERDICT.SATISFIED) {
     // A satisfied criterion is half of an achievement. Under the git regime
     // the other half is evidence that still describes the task paths — a
     // receipt that has drifted, been rebased away, or never landed leaves the
     // loop with a passing check over artifacts nothing vouches for.
-    if (state.receipts === RECEIPTS.GIT && last.receiptDigest === null) {
-      return { decision: DECISION.PRODUCE_RECEIPT, reason: `the criterion is satisfied but no receipt is in force (${last.receiptState})` };
-    }
+    if (wantsReceipt) return evidenceStep();
     return { decision: DECISION.ACHIEVED, reason: "the criterion is satisfied", terminal: true };
   }
 
@@ -67,12 +74,13 @@ export function decide(state, { stuckThreshold = DEFAULT_STUCK_THRESHOLD } = {})
   if (repeats >= stuckThreshold) {
     return { decision: DECISION.STUCK, reason: `the same failure survived ${repeats} rounds with no change in the artifacts`, terminal: false };
   }
+  // A receipt taken since the last round is unjudged evidence whatever the
+  // last verdict was: the agent repaired, receipted, and is owed a judgment.
+  if (unjudgedReceipt) return evidenceStep();
   // Only loops that declared the git regime are asked for receipts. A loop
   // opened with `receipts: none` has no way to produce one, and asking anyway
   // would hand its host a directive it can never discharge.
-  if (state.receipts === RECEIPTS.GIT && last.receiptDigest === null) {
-    return { decision: DECISION.PRODUCE_RECEIPT, reason: `the last round changed things without a receipt in force (${last.receiptState})` };
-  }
+  if (wantsReceipt) return evidenceStep();
   return { decision: DECISION.REPAIR, reason: "the criterion is unsatisfied and the failure is new" };
 }
 

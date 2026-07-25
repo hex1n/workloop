@@ -4,6 +4,9 @@
 // the kernel changes, and no validation code is written — that is the whole
 // point of the seam.
 import { createVocabulary } from "../vocabulary.mjs";
+// The adapter owns these: it is what produces the values, so repeating the
+// literals here would let the log and the code that writes it drift apart.
+import { MAX_REASONS, MODE, STANDING, STATUS } from "./receipt.mjs";
 
 export const KIND = Object.freeze({
   OPENED: "loop_opened",
@@ -30,6 +33,11 @@ export const DECISION = Object.freeze({
   PRODUCE_RECEIPT: "produce_receipt",
   REPAIR: "repair",
   COLLECT_EVIDENCE: "collect_evidence",
+  // Evidence exists that no judgment has seen yet. The design's decision table
+  // has always listed this ("有 receipt 未判断 → judge"); dropping it is what
+  // let the runtime keep telling a host to produce a receipt it had already
+  // produced, with nothing in the directive to lead the loop back out.
+  JUDGE: "judge",
   // `review` is deliberately absent. The design lists it as an option beside
   // `stuck`, but nothing in this slice can produce a reviewer, and vocabulary
   // that nothing writes is exactly the residue the audit spent its time
@@ -68,7 +76,7 @@ export const loopVocabulary = createVocabulary({
       // cannot tell "no receipt was ever produced" from "one was, and it has
       // since drifted" — two very different situations for whoever is reading
       // the log to find out what went wrong.
-      receipt_state: { type: "enum", values: ["none", "in_force", "uncertain", "unlanded", "drifted"] },
+      receipt_state: { type: "enum", values: Object.values(STANDING) },
       summary: { type: "string", max: 2000, min: 0 },
       observed_by: { type: "string", max: 200 },
     },
@@ -121,11 +129,13 @@ export const loopVocabulary = createVocabulary({
   },
   [KIND.RECEIPT]: {
     fields: {
-      mode: { type: "enum", values: ["stage", "commit"] },
+      mode: { type: "enum", values: Object.values(MODE) },
       // Two states, because the runtime does not own the index and cannot
       // honestly offer a third. `clean` is witnessed, never inferred.
-      status: { type: "enum", values: ["clean", "uncertain"] },
-      reasons: { type: "strings", max: 21 },
+      status: { type: "enum", values: Object.values(STATUS) },
+      // One more than the adapter's cap, for the line that says how many were
+      // dropped.
+      reasons: { type: "strings", max: MAX_REASONS + 1 },
       paths: { type: "strings", max: 4096 },
       head_before: { type: "string", max: 64, nullable: true },
       commit_oid: { type: "string", max: 64, nullable: true },

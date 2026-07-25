@@ -29,7 +29,10 @@ export const STANDING = Object.freeze({
 });
 
 const MAX_GIT_OUTPUT = 16 * 1024 * 1024;
-const MAX_REASONS = 20;
+// Bounds the reasons list. The vocabulary allows one more, for the line that
+// says how many were dropped — and it reads that bound from here, so the two
+// cannot drift into a receipt that the log then refuses to carry.
+export const MAX_REASONS = 20;
 
 function git(cwd, args, { tolerate = [] } = {}) {
   const result = spawnSync("git", args, { cwd, encoding: "utf8", maxBuffer: MAX_GIT_OUTPUT });
@@ -94,6 +97,18 @@ const scopeOf = (claims, excluded) => {
 
 const stagedPaths = (root) => lines(git(root, ["diff", "--cached", "--name-only"]).stdout);
 
+// Claims name intent, so a claim may legitimately point at nothing yet — the
+// agent has not created that directory on its first round. git refuses a
+// pathspec that matches nothing at all, which would turn "this loop has not
+// produced its files yet" into a hard failure of the whole receipt. A claim
+// git already knows about stays in even when it is gone from disk, so that a
+// deletion is still staged as the change it is.
+function livePathspecs(root, claims) {
+  return claims.filter((claim) =>
+    fs.existsSync(path.join(root, claim))
+    || lines(git(root, ["ls-files", "--", claim]).stdout).length > 0);
+}
+
 const headOid = (root) => {
   const result = git(root, ["rev-parse", "HEAD"], { tolerate: [128] });
   return result.status === 0 ? result.stdout.trim() : null;
@@ -127,7 +142,8 @@ export function takeReceipt({ root, mode, claims, storeLocation }) {
   if (mode !== MODE.STAGE && mode !== MODE.COMMIT) refuse("UNKNOWN_RECEIPT_MODE", `${mode} is not a receipt mode`);
   assertGitWorkspace(root);
   const excluded = controlPlane(root, storeLocation);
-  const specs = ["--", ...claims, ...excludeSpecs(excluded)];
+  const live = livePathspecs(root, claims);
+  const specs = ["--", ...live, ...excludeSpecs(excluded)];
   const inScope = scopeOf(claims, excluded);
   const headBefore = headOid(root);
 
@@ -144,30 +160,56 @@ export function takeReceipt({ root, mode, claims, storeLocation }) {
   // receipt over a file the loop has just created would fail without this.
   // Staging first is also what makes the two modes mean the same thing about
   // scope: the add is the operation that decides what "the task's paths" are.
-  git(root, ["add", ...specs]);
+  if (live.length > 0) git(root, ["add", ...specs]);
 
   if (mode === MODE.STAGE) {
     touched = stagedPaths(root);
+  } else if (live.length === 0) {
+    refuse("NOTHING_TO_COMMIT", "the claimed paths exist neither on disk nor in git");
   } else {
     // `--only` is git's default when paths are given: it commits the named
     // paths and leaves every other index entry staged, which is exactly the
     // task-scoped isolation this receipt is about.
     const attempt = git(root, ["commit", "--only", "-m", "workloop receipt", ...specs], { tolerate: [1] });
-    if (attempt.status !== 0) refuse("NOTHING_TO_COMMIT", "the task paths hold nothing new to commit");
-    commitOid = git(root, ["rev-parse", "HEAD"]).stdout.trim();
+    if (attempt.status === 0) {
+      commitOid = git(root, ["rev-parse", "HEAD"]).stdout.trim();
+      touched = lines(git(root, ["diff-tree", "-r", "--no-commit-id", "--name-only", "--root", commitOid]).stdout);
+    } else {
+      // Nothing left to commit. That is not a failure: the host owns git and
+      // may have committed the work by hand, which the host contract expressly
+      // permits. Refusing here would leave such a loop unable to ever produce
+      // evidence, and so unable to ever be certified. The runtime attests the
+      // commit that already holds the task paths instead — it verified that
+      // fact itself, which is all the anchor axiom asks. `commit_oid` equal to
+      // `head_before` is what tells a reader the two cases apart.
+      if (headBefore === null) refuse("NOTHING_TO_COMMIT", "the task paths are in no commit and there is nothing to commit");
+      commitOid = headBefore;
+      touched = lines(git(root, ["ls-tree", "-r", "--name-only", commitOid, "--", ...claims]).stdout);
+      if (touched.filter(inScope).length === 0) {
+        refuse("NOTHING_TO_COMMIT", "the task paths hold nothing to commit and appear in no commit");
+      }
+    }
     const parent = git(root, ["rev-parse", `${commitOid}^`], { tolerate: [128] });
     parentOid = parent.status === 0 ? parent.stdout.trim() : null;
-    touched = lines(git(root, ["diff-tree", "-r", "--no-commit-id", "--name-only", "--root", commitOid]).stdout);
   }
 
   // Read after the operation, deliberately: `--only` leaves foreign entries
   // staged, so what remains is precisely the content this receipt cannot
   // account for.
-  const foreign = stagedPaths(root).filter((entry) => !inScope(entry));
-  const reasons = foreign.slice(0, MAX_REASONS).map((entry) => `${entry} is staged but lies outside this loop's claims`);
-  if (foreign.length > MAX_REASONS) reasons.push(`and ${foreign.length - MAX_REASONS} more`);
-  const unscoped = touched.filter((entry) => !inScope(entry));
-  if (unscoped.length > 0) reasons.push(`${unscoped[0]} entered the operation without being claimed`);
+  // Built under one bound, on purpose. An earlier shape added a note after the
+  // cap and could exceed what the vocabulary carries — so a repository with
+  // enough foreign staged files made the git operation happen and *then* made
+  // recording it throw, which is the one outcome this runtime must never have.
+  const notes = [
+    // Only meaningful for a commit, where `touched` is what the commit itself
+    // carries. In stage mode `touched` is the whole index, so this would just
+    // restate the line below about every foreign entry — and word it as though
+    // the loop's own add had pulled in a file it never went near.
+    ...(mode === MODE.COMMIT ? touched.filter((entry) => !inScope(entry)).map((entry) => `${entry} is in the commit but lies outside this loop's claims`) : []),
+    ...stagedPaths(root).filter((entry) => !inScope(entry)).map((entry) => `${entry} is staged but lies outside this loop's claims`),
+  ];
+  const reasons = notes.slice(0, MAX_REASONS);
+  if (notes.length > MAX_REASONS) reasons.push(`and ${notes.length - MAX_REASONS} more`);
   const paths = touched.filter(inScope);
 
   return {

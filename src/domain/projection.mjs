@@ -56,11 +56,15 @@ export function reduceLoop(state = EMPTY, record) {
       if (!next.participants.includes(payload.recorded_by)) next.participants.push(payload.recorded_by);
       // Only the newest receipt stands. An older one describes a state of the
       // task paths that a later receipt has already superseded.
-      next.receipt = { ...payload, digest: record.digest ?? null };
+      // The seq is what lets the policy tell "no receipt yet" from "a receipt
+      // arrived after the last round was judged" — a distinction the loop
+      // cannot escape a directive loop without.
+      next.receipt = { ...payload, digest: record.digest ?? null, seq: record.seq };
       break;
     case KIND.OBSERVED:
       if (!next.participants.includes(payload.observed_by)) next.participants.push(payload.observed_by);
       next.rounds.push({
+        seq: record.seq,
         round: payload.round,
         verdict: payload.verdict,
         progressSignature: payload.progress_signature,

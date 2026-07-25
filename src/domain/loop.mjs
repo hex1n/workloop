@@ -145,6 +145,55 @@ export function next(store, options = {}) {
 }
 
 /**
+ * Produces a receipt: the runtime performs one task-scoped git operation and
+ * records what it saw.
+ *
+ * Held under the git_index lock, which is declared outer to the store lock, so
+ * the order here is git_index → store. The criterion runs outside every lock
+ * because it takes minutes; this takes milliseconds, and the index is the one
+ * piece of genuinely shared mutable state in the picture.
+ *
+ * Unlike the criterion, this leaves a mark on the world before it can be
+ * written down. Everything below is arranged so that the gap between the two
+ * cannot produce a commit nobody recorded.
+ */
+export function receipt(store, { root, mode, session, commandId }) {
+  if (typeof session !== "string" || session.length === 0) refuse("SESSION_REQUIRED", "a receipt records who took it");
+  const before = store.replay().state;
+  if (!before.opened) refuse("NOT_OPEN", "no loop has been opened in this store");
+  if (!isLive(before)) refuse("NOT_LIVE", `the loop is ${before.lifecycle}`);
+  if (before.receipts !== RECEIPTS.GIT) refuse("NO_RECEIPT_REGIME", `this loop was opened with receipts: ${before.receipts}`);
+
+  const replay = (records) => ({ seq: records.at(-1).seq, records, replayed: true });
+  const applied = store.commandRecords(commandId);
+  if (applied !== null) return replay(applied);
+
+  return store.withLock(CLASSES.GIT_INDEX, root, () => {
+    // Checked again, now that nobody else can be mid-operation. The check
+    // outside the lock only saves work; this one is what stops a retry racing
+    // its original from committing twice and having the second commit thrown
+    // away as a duplicate at the append. Untested: reaching it needs two
+    // callers to interleave *and* the working tree to move between them, which
+    // no test here can force. Kept because it is cheap and the alternative is
+    // a commit nobody recorded.
+    const raced = store.commandRecords(commandId);
+    if (raced !== null) return replay(raced);
+
+    const taken = takeReceipt({ root, mode, claims: before.claims, storeLocation: store.location });
+    const payload = { ...taken, recorded_by: session };
+    return store.append({
+      commandId,
+      requestDigest: digestOf({ mode, session, claims: before.claims }),
+      // No liveness check here, deliberately. If the loop was ended while the
+      // git operation ran, the commit still happened, and refusing to write it
+      // down would leave the repository holding a change the ledger denies. A
+      // receipt is a fact about git, not a transition of the loop.
+      prepare: () => [checked(KIND.RECEIPT, payload)],
+    });
+  });
+}
+
+/**
  * Submits the result of a round: the host says what it did, the runtime runs
  * the criterion itself and records the judgment and the decision that follows.
  *
@@ -154,38 +203,6 @@ export function next(store, options = {}) {
  * written — so work happening elsewhere cannot invalidate this round, and a
  * change to *this* loop cannot be silently overwritten.
  */
-/**
- * Produces a receipt: the runtime performs one task-scoped git operation and
- * records what it saw.
- *
- * Held under the git_index lock, which is declared outer to the store lock, so
- * the order here is git_index → store. The criterion runs outside every lock
- * because it takes minutes; this takes milliseconds, and the index is the one
- * piece of genuinely shared mutable state in the picture.
- */
-export function receipt(store, { root, mode, session, commandId }) {
-  if (typeof session !== "string" || session.length === 0) refuse("SESSION_REQUIRED", "a receipt records who took it");
-  const before = store.replay().state;
-  if (!before.opened) refuse("NOT_OPEN", "no loop has been opened in this store");
-  if (!isLive(before)) refuse("NOT_LIVE", `the loop is ${before.lifecycle}`);
-  if (before.receipts !== RECEIPTS.GIT) refuse("NO_RECEIPT_REGIME", `this loop was opened with receipts: ${before.receipts}`);
-
-  const applied = store.commandRecords(commandId);
-  if (applied !== null) return { seq: applied.at(-1).seq, records: applied, replayed: true };
-
-  return store.withLock(CLASSES.GIT_INDEX, root, () => {
-    const taken = takeReceipt({ root, mode, claims: before.claims, storeLocation: store.location });
-    const payload = { ...taken, recorded_by: session };
-    return store.append({
-      commandId,
-      requestDigest: digestOf({ mode, session, claims: before.claims }),
-      prepare: (state) => {
-        if (!isLive(state)) refuse("NOT_LIVE", `the loop is ${state.lifecycle}`);
-        return [checked(KIND.RECEIPT, payload)];
-      },
-    });
-  });
-}
 
 export async function observe(store, { root, session, commandId, timeoutMs, criterionFile, stuckThreshold }) {
   if (typeof session !== "string" || session.length === 0) refuse("SESSION_REQUIRED", "an observation records who made it");
