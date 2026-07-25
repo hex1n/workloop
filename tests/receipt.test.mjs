@@ -10,6 +10,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { digestOf } from "../src/canonical.mjs";
 import { createStore } from "../src/store.mjs";
 import { EXIT, VERDICT_PREFIX } from "../src/domain/criterion.mjs";
 import { amend, next, observe, openLoop, openLoopStore, receipt } from "../src/domain/loop.mjs";
@@ -498,6 +499,44 @@ test("a retry racing its original still commits once", async (t) => {
   assert.equal(Number(git(root, "rev-list", "--count", "HEAD")), before + 1, `one commit, not ${outcomes}`);
   assert.equal(outcomes.filter((line) => line === "recorded").length, 1, `exactly one caller recorded it: ${outcomes}`);
   assert.equal(session().read().filter((entry) => entry.kind === "loop_receipt").length, 1);
+});
+
+test("a retry that arrives while the original holds the lock commits once", (t) => {
+  const { root, session, criterionFile } = repo(t);
+  const { loopId } = open(session(), ["src"], criterionFile);
+  fs.writeFileSync(path.join(root, "src", "a.txt"), "done\n");
+  const commits = () => Number(git(root, "rev-list", "--count", "HEAD"));
+  const before = commits();
+
+  // The window: both callers passed the check outside the lock, one is inside,
+  // and the other's record lands before it looks again. Waiting for that to
+  // happen by itself is not a test — so the moment is named and stepped into.
+  let landed = null;
+  const result = receipt(session(), {
+    loopId, root, mode: MODE.COMMIT, session: "s1", commandId: "shared",
+    onPhase: (phase) => {
+      if (phase !== "git_index_locked" || landed !== null) return;
+      landed = takeReceipt({ root, mode: MODE.COMMIT, claims: ["src"], storeLocation: session().location, loopId, commandId: "shared" });
+      openLoopStore(session().location).append({
+        commandId: "shared",
+        requestDigest: digestOf({ loopId, mode: MODE.COMMIT, session: "s1", claims: ["src"] }),
+        prepare: () => [{ kind: "loop_receipt", payload: { ...landed, loop_id: loopId, recorded_by: "s2" } }],
+      });
+      // And the work moves on. Without this the caller inside the lock would
+      // find nothing left to commit and attest the other's commit — the same
+      // answer by a different route, which is why the guard looked untestable.
+      // With it, a caller that does not look again makes a second commit whose
+      // record the append then throws away as a duplicate: a commit nobody
+      // recorded, which is the one outcome this runtime must never produce.
+      fs.writeFileSync(path.join(root, "src", "a.txt"), "and then some more\n");
+    },
+  });
+
+  assert.ok(landed, "the other caller really did get there first");
+  assert.equal(result.replayed, true, "so this one answers from the log instead of committing again");
+  assert.equal(result.records.at(-1).payload.recorded_by, "s2", "and hands back the record that landed");
+  assert.equal(commits(), before + 1, "one commit, not two");
+  assert.match(git(root, "status", "--porcelain", "--", "src"), /^.?M src\/a\.txt$/mu, "the later change is left for the next round, not silently committed");
 });
 
 test("a retried receipt does not commit twice", (t) => {

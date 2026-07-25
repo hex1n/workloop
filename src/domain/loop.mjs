@@ -274,7 +274,7 @@ export function next(store, { loopId, root, ...options } = {}) {
  * written down. Everything below is arranged so that the gap between the two
  * cannot produce a commit nobody recorded.
  */
-export function receipt(store, { root, loopId, mode, session, commandId }) {
+export function receipt(store, { root, loopId, mode, session, commandId, onPhase = () => {} }) {
   if (typeof session !== "string" || session.length === 0) refuse("SESSION_REQUIRED", "a receipt records who took it");
   const before = loopOf(store.replay().state, loopId);
   if (!isLive(before)) refuse("NOT_LIVE", `the loop is ${before.lifecycle}`);
@@ -290,13 +290,16 @@ export function receipt(store, { root, loopId, mode, session, commandId }) {
   assertWorkspace(root);
 
   return store.withLock(CLASSES.GIT_INDEX, root, () => {
+    // Named so the race below can be pointed at. The hook is inert in
+    // production and exists for the same reason the kernel's crash phases do:
+    // "a retry racing its original commits once" is only credible when the
+    // moment they race can be made to happen, rather than waited for.
+    onPhase("git_index_locked");
+
     // Checked again, now that nobody else can be mid-operation. The check
     // outside the lock only saves work; this one is what stops a retry racing
     // its original from committing twice and having the second commit thrown
-    // away as a duplicate at the append. Untested: reaching it needs two
-    // callers to interleave *and* the working tree to move between them, which
-    // no test here can force. Kept because it is cheap and the alternative is
-    // a commit nobody recorded.
+    // away as a duplicate at the append.
     const raced = store.commandRecords(commandId);
     if (raced !== null) return replay(raced);
 
