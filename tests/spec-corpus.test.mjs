@@ -70,8 +70,18 @@ test("every scenario the audit kept has somewhere to live", () => {
     }
     // A ruling is a third honest destination — the audit itself is one — but
     // it has to point at a document that exists and says so.
-    const target = where.startsWith("RULED:") ? where.slice("RULED:".length) : where;
-    assert.ok(fs.existsSync(path.join(root, target)), `${id} points at ${target}, which does not exist`);
+    if (where.startsWith("RULED:")) {
+      const target = where.slice("RULED:".length);
+      assert.ok(fs.existsSync(path.join(root, target)), `${id} is ruled at ${target}, which does not exist`);
+      continue;
+    }
+    // Otherwise it is a test file, and it has to actually be one. WN-01 spent a
+    // slice pointing at a CI workflow: a real path, so this gate passed, and a
+    // file no `node --test` run has ever opened. The header says three
+    // destinations and no fourth; checking only that the path exists let a
+    // fourth in through the front door.
+    assert.match(where, /^tests\/[\w-]+\.test\.mjs$/u, `${id} points at ${where}, which is not one of the three destinations`);
+    assert.ok(fs.existsSync(path.join(root, where)), `${id} points at ${where}, which does not exist`);
   }
 });
 

@@ -122,7 +122,7 @@
 
 | 场景 | 满足于 |
 | --- | --- |
-| **WN-01** 安装可重复,cmd/Windows PowerShell/pwsh 三壳可用 | `.github/workflows/test.yml` |
+| **WN-01** 安装可重复,cmd/Windows PowerShell/pwsh 三壳可用 | `tests/release.test.mjs` |
 | **WN-02** 路径变体:空格、Unicode、盘符大小写、junction | `tests/platform.test.mjs` |
 | **WN-04** criterion 超时全进程树终止,含降级路径 | `tests/platform.test.mjs` |
 | **WN-05** criterion 租约:死亡持有者按声明的 deadline 等待后回收 | `tests/platform.test.mjs` |

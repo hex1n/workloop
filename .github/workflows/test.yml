@@ -23,54 +23,16 @@ jobs:
           node-version: ${{ matrix.node }}
       - name: Runtime
         run: node --version
-      # Bare `node --test` discovers every *.test.mjs: a test that exists is a
-      # test that runs. Today that is the spec-integrity check; slice 1 adds
-      # the log kernel.
+
+      # One step, because there is one gate. Bare `node --test` discovers every
+      # *.test.mjs: a test that exists is a test that runs — including WN-01,
+      # which packs the release, installs it into a prefix with a space and CJK
+      # in it, and calls the binary from every shell the platform provides.
+      #
+      # That check used to live here, as four YAML steps. It never ran once —
+      # this branch has no CI history — and its Windows half was written in
+      # POSIX syntax that could not have passed under the runner's default
+      # shell. An assertion only CI can run is an assertion nobody can probe;
+      # in the gate it goes red on a developer's machine before reaching here.
       - name: Gate
         run: npm test
-
-      # WN-01, without an installer: the distribution is an npm package with a
-      # bin, so what needs proving is that the packaged thing works once
-      # installed — from each shell the platform actually gives people, and
-      # from a prefix whose path has a space and non-ASCII in it. A tarball
-      # that only runs from its source tree, or only from bash, is not a
-      # release.
-      - name: Pack and install
-        shell: bash
-        run: |
-          npm pack --silent
-          mkdir -p "$RUNNER_TEMP/前缀 with space"
-          npm install --no-save --global --prefix "$RUNNER_TEMP/前缀 with space" ./workloop-0.0.0.tgz
-          npm install --no-save --global --prefix "$RUNNER_TEMP/前缀 with space" ./workloop-0.0.0.tgz
-
-      - name: Installed binary runs (bash)
-        if: runner.os != 'Windows'
-        shell: bash
-        run: |
-          "$RUNNER_TEMP/前缀 with space/bin/workloop" --help
-          "$RUNNER_TEMP/前缀 with space/bin/workloop" frobnicate && exit 1 || test $? -eq 1
-
-      - name: Installed binary runs (cmd)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: |
-          "%RUNNER_TEMP%\前缀 with space\workloop.cmd" --help || exit /b 1
-          "%RUNNER_TEMP%\前缀 with space\workloop.cmd" frobnicate && exit /b 1 || exit /b 0
-
-      - name: Installed binary runs (Windows PowerShell)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          & "$env:RUNNER_TEMP\前缀 with space\workloop.cmd" --help
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          & "$env:RUNNER_TEMP\前缀 with space\workloop.cmd" frobnicate
-          if ($LASTEXITCODE -ne 1) { exit 1 }
-
-      - name: Installed binary runs (pwsh)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          & "$env:RUNNER_TEMP\前缀 with space\workloop.cmd" --help
-          if ($LASTEXITCODE -ne 0) { exit 1 }
-          & "$env:RUNNER_TEMP\前缀 with space\workloop.cmd" frobnicate
-          if ($LASTEXITCODE -ne 1) { exit 1 }
