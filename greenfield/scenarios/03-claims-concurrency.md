@@ -3,6 +3,11 @@
 来源主体:`tests/git-partitioned-multitask-authority.test.mjs`。
 具体措辞/错误码/枚举/数值按 README「语义不变式与旧世界任意值」默认规则为旧值锚。
 
+**审计处置**([AUDIT-2026-07-25](AUDIT-2026-07-25.md)):5 保留 / 1 改写 / 2 出局。
+改写:**CC-04**(删会话唯一性与会话路由判据,只留参与者记账——会话唯一性
+与图目标冲突,见 M7)。出局:**CC-06**(随 M2 目标优先路由)、**CC-08**(随
+M1 证据通道)。WT-01 的"claims 范围内路径归属该节点"语义并入 CC-02。
+
 ### CC-01 一个 attachment 承载多个不相交节点
 来源:git-partitioned「one attachment hosts disjoint tasks…」
 - 断言:同仓两个不相交 claims 的 open 共享 store 与 attachment,节点 id 不同;
@@ -21,12 +26,14 @@
   确定性、与 locale 无关(code unit 序);字面目录名 `...` 不做展开,按
   普通目录处理。
 
-### CC-04 会话绑定:一会话一活动节点,路由按会话隔离
-来源:git-partitioned(session uniqueness、session_task_mismatch)
-- 断言:同 attachment 内一个会话已有活动节点时,该会话再 open/join 其他节点
-  拒绝(会话唯一性);A 会话查询 B 节点范围 → 不可路由,原因 = 会话不匹配;
-  无节点范围可归属的目标 → 原因 = 范围未认领(reason token 为旧值锚,可判别
-  的原因区分集见 README 表)。
+### CC-04 会话身份只是 provenance,不限制并发也不参与路由〔审计改写〕
+来源:git-partitioned(session uniqueness、session_task_mismatch)——**原断言
+已作废**,旧世界的"一会话一活动节点"只为让旁路证据无歧义归属而存在(审计 M7),
+且与图正面冲突。
+- 断言:**一个会话可以同时持有并推进多个活动节点**(图工程常态,GE 族前提);
+  每个变更命令记录发起会话,open 记录创建者、join 记录参与者,均可查;
+  生命周期变更要求发起者是该节点的参与会话(SL-11),这是**授权**判据而非
+  **路由**判据;寻址一律显式(store + loop id),不存在"按会话猜节点"的路径。
 
 ### CC-05 join 增加参与会话,溯源必填
 来源:git-partitioned(join-beta)、git-linked(join-moved-replay)

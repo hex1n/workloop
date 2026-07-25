@@ -6,6 +6,17 @@
 具体措辞/错误码/枚举/数值按 README 默认规则为旧值锚;例外:证据通道释放的
 **退出码 0 + 空 stdout** 是宿主协议〔冻结〕。
 
+**审计处置**([AUDIT-2026-07-25](AUDIT-2026-07-25.md)):2 保留 / 1 改写 / 6 出局
+——**证据通道(M1)整体出局**,本族主体随之作废。
+出局:**HF-01 ~ HF-05、HF-07**。推导:hook 证据"永不做控制"⇒ 对循环判断
+零贡献;它买到的只是"agent 越界"的**提前量**,而 receipt 时刻同样会发现
+(GR-01/03/04),运行时本来也无力阻止。代价却是整套目标优先路由本体论。
+上面那条〔冻结〕的宿主协议随本族一并冻结,flip 时原样恢复。
+改写:**HF-06**(删宿主 hook 配置协商,保留安装幂等与版本化激活)。
+保留:HF-08(打包闭包)、HF-09(skill 工作流完成条件)。
+**Flip 条件**:若判定 claims 边界需要实时拦截写入,本族整体恢复——但那同时
+要求修订"宿主拥有执行审批"的公理。
+
 ## 证据通道
 
 ### HF-01 证据事件按目标路由,默认模式永不阻断
@@ -43,13 +54,15 @@ profile」「Stop releases before validating stale Hook mode or profile configur
 
 ## 安装与打包(新世界等价物)
 
-### HF-06 安装幂等、版本化激活、从不改写宿主 Hook 配置
+### HF-06 安装幂等、版本化激活、从不改写宿主配置〔审计改写〕
 来源:provider-installer「provider installer activates an exact current release
 without mutating valid host Hooks」「…never rewrites the source repository Git hook
-configuration」、windows(repeatable install)
+configuration」、windows(repeatable install)——**hook 配置协商半边已作废**
+(随 M1);"不改写宿主配置"的不变式本身保留并**加强为不碰**。
 - 断言:重复安装幂等;升级切换 release 原子(激活清单指向唯一现行版本,旧
-  版本清理);宿主既有 Hook 配置与源仓 git hooks 字节不变;安装锁遇已死持有
-  者可收割(引用 LK-04 的 owner 记账)。
+  版本清理);**宿主的任何 hook 配置与源仓 git hooks 字节不变——不是"只改
+  自己的部分",而是根本不读不写**;安装锁遇已死持有者可收割(引用 LK-04 的
+  owner 记账)。
 
 ### HF-07 安装前置拒绝歧义 Hook 配置
 来源:provider-installer「provider installer refuses stale or ambiguous Hook

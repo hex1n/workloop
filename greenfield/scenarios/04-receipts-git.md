@@ -4,6 +4,10 @@
 clean/uncertain 二态语义与任务范围隔离全部保留。
 具体措辞/错误码/枚举/数值按 README「语义不变式与旧世界任意值」默认规则为旧值锚。
 
+**审计处置**([AUDIT-2026-07-25](AUDIT-2026-07-25.md)):7 条**全数保留**。
+receipt 的 clean/uncertain 二态是世界性质(运行时不控制 index,只能诚实报告);
+GR-01 同时是 claims 得以保留的理由——没有 claims,receipt 无法界定"我的路径"。
+
 ### GR-01 任务范围 stage 保留他人 index 条目,commit 只带任务路径
 来源:git-task-receipts「task-scoped stage preserves another task index entry and
 commit leaves it staged」

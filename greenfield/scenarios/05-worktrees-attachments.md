@@ -4,6 +4,21 @@
 `tests/git-exclusive-worktree-authority.test.mjs`、`tests/attachment-recovery-authority.test.mjs`。
 具体措辞/错误码/枚举/数值按 README「语义不变式与旧世界任意值」默认规则为旧值锚。
 
+**审计处置**([AUDIT-2026-07-25](AUDIT-2026-07-25.md)):5 保留 / 3 改写 / 7 出局
+——**本族是继承污染最重的一族**。
+出局:**WT-01**(路由矩阵,随 M2)、**WT-07 / WT-08 / WT-10**(exclusive
+placement 整机制,随 M4:创建 worktree 与分支是执行,与"运行时永不拥有执行"
+的公理冲突;上一版新增的"放弃出口"随之作废——那是给不该存在的机制补逃生口)、
+**WT-11 / WT-12**(reattach / fork-identity,随 M5)、**WT-14**(不兼容归档,
+迁移遗物)。
+改写:**WT-02**(只留"整仓复制体 → 碰撞")、**WT-06**(改述为"复制的 store
+不能冒充原身份",机制换成物理锚比对)、**WT-15**(删 locator 半边,留"append
+失败不留半个状态")。
+保留:WT-03 / WT-04 / WT-05(git 多 worktree 共享 store、移动保身份、移除后
+unavailable——这些是 git 的性质)、**WT-09**(只读校验既有 worktree 的
+branch/base,校验不是执行)、WT-13(export,降级为非首切片;它同时是 M3 取舍
+下的唯一留档手段)。
+
 ## 路由矩阵
 
 ### WT-01 目标优先路由覆盖 tracked/untracked/ignored/未创建路径
@@ -12,13 +27,14 @@ git-partitioned「tracked state never selects authority…」
 - 断言:claim 范围内四类目标(已跟踪、未跟踪、被忽略、尚不存在)全部路由到
   同一节点;Git tracked 状态从不参与 store 选择。
 
-### WT-02 别名、大小写、嵌套仓、仓外与控制目标各归其位
+### WT-02 嵌套子仓是独立 store;整仓复制体判碰撞〔审计改写〕
 来源:git-main「target-first routing covers canonical aliases, case, nesting,
-external and control targets」
-- 断言:符号链接别名路由等价物理路径;大小写变体在 win32/darwin 路由等价、
-  linux 拒绝;仓外目标拒绝;git 控制文件、运行时控制目录、投影文件作为目标
-  一律以失败退出码拒绝且零日志变化;嵌套子仓是独立 store(不路由父仓节点);
-  整仓复制体 → routable=false,reason=attachment_collision,且查询不改副本字节。
+external and control targets」——**路由矩阵半边已作废**(随 M2 目标优先路由
+出局);别名与大小写的规范化语义并入 CC-03(claim 身份),控制目标排除随
+证据通道一并出局。
+- 断言:嵌套子仓有自己的 store,向上发现在遇到的第一个 store 处停止,不穿透
+  到父仓;整仓复制体的 store 物理锚与 genesis 记录不符 → 判碰撞、拒绝写入,
+  且任何查询不改副本字节。
 
 ## 主/链接工作树
 
@@ -40,11 +56,14 @@ reusing attachment identity」
   节点记录保留;同路径新 worktree 的 open 得新 attachment 新节点;旧 attachment
   永久 unavailable(anchor_mismatch);prune 同理;目录清单如实列出全部代际。
 
-### WT-06 复制的 locator 不能在别的活体锚上路由旧历史
-来源:git-linked「a copied locator cannot route old task history at another live
-Git admin anchor」、filesystem「copied locator is never accepted as an automatic move」
-- 断言:把 locator 复制进另一 worktree/根后,查询识别出同 store 同 attachment
-  但 routable=false,reason=attachment_collision;原根消失也不自动转正。
+### WT-06 复制的 store 不能冒充原身份,原根消失也不自动转正〔审计改写〕
+来源:git-linked「a copied locator cannot route old task history…」、filesystem
+「copied locator is never accepted as an automatic move」——**机制换血**:
+不再是 locator 被复制,而是 store 目录随根被整体复制(随 M3)。
+- 断言:复制得到的 store 携带与原 store 相同的 id,但其所在位置的物理锚与
+  genesis 记录的锚不符 → 判碰撞,拒绝一切写入,读取带明确诊断;**原根被删除
+  之后副本仍不自动转正**(身份不能靠"原件不在了"继承);转正必须是人的显式
+  动作(user 溯源),且该动作在首切片不提供——先诚实拒绝。
 
 ## exclusive placement
 
@@ -108,9 +127,10 @@ opaquely with explicit user provenance」
   (self 拒绝零创建),字节不透明复制 + manifest sha256,源文件原位保留;
   归档后 open 放行;旧状态在归档后再被改动 → 一切动词重新拒绝。
 
-### WT-15 locator/append 冲突从不伪造成功,可显式恢复
-来源:git-main「append and locator conflicts never fabricate a successful format open」
-- 断言:locator 位被外来文件占据 → open 失败,日志停在 intent 前缀,状态
-  reason=attachment_pending;他人 open 被 pending 拒绝且零日志增长;移除
-  障碍后原 command 重跑走完(幂等续行);store 目录位被文件占据 → append
-  失败且不留半个 locator。
+### WT-15 append 冲突从不伪造成功,原命令重跑幂等续行〔审计改写〕
+来源:git-main「append and locator conflicts never fabricate a successful format
+open」——**locator 半边已作废**(随 M3)。
+- 断言:store 目录位被外来文件占据 → open 以失败退出码拒绝,不创建任何半成品
+  (无空目录、无孤立段文件、无部分 manifest);移除障碍后**同 command_id 原样
+  重跑走完**(幂等续行,不需要独立恢复动词);中断发生在 append 中途时按
+  LK-14 的崩溃语义处理。

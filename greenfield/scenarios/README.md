@@ -60,7 +60,7 @@ kind 名、routing reason 等枚举 token、CLI 动词与选项名、退出码�
 | --- | --- |
 | authority / authority journal | store / segmented log(账本) |
 | task | loop(图的节点) |
-| attachment | attachment(工作现场绑定,保留) |
+| attachment | **Site(现场)**〔审计 M5 改名〕——保留"一 store 多现场"这个 git 性质,去掉 locator 时代的 epoch/claim token/reattach/fork 恢复机制;非 git 场景下 Site 与 Store 一一对应 |
 | write claims | claims |
 | open / join / suspend / resume / abandon | 同名动词 |
 | stage / commit(任务范围 Git receipt) | `receipt`(git receipt 适配器动词) |
@@ -81,6 +81,18 @@ kind 名、routing reason 等枚举 token、CLI 动词与选项名、退出码�
    是"两个 store 不可同持""同步临界区"这类可测不变式,新内核必须显式继承。
 3. **exclusive placement 的 pending intent 需要公开放弃出口**(05 族 WT-08),
    旧世界缺此出口是已定位缺陷,新世界从第一天就有。
+
+## 文件索引
+
+## 审计状态(2026-07-25)
+
+语料已过一轮[第一性推导审计](AUDIT-2026-07-25.md):**59 保留 / 7 改写 /
+20 出局**。出局由 8 条机制裁决驱动,其中影响最大的三条是证据通道(hook)、
+目标优先路由+locator、exclusive placement 创建。每个场景文件头部带本族处置,
+出局场景**原文保留并标注驱动机制**,以便 flip 条件触发时整族恢复。
+
+设计稿 `docs/plans/2026-07-25-greenfield-redesign.md` 有 7 处待改点(见审计
+§三),**修订完成前不开工切片 1**。
 
 ## 文件索引
 

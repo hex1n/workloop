@@ -5,6 +5,11 @@
 全族 `skip: 非 win32`,但路径规范化断言(WN-02)在三平台都跑其可跑子集。
 具体措辞/错误码/枚举/数值按 README「语义不变式与旧世界任意值」默认规则为旧值锚。
 
+**审计处置**([AUDIT-2026-07-25](AUDIT-2026-07-25.md)):5 保留 / 1 出局。
+出局:**WN-03**(hook 命令三壳透传,随 M1 证据通道)。
+保留:WN-01/02/04/05/06——路径变体、进程树终止、租约回收、安装锁都是平台
+性质,与内核形态无关。
+
 ### WN-01 安装可重复,cmd/Windows PowerShell/pwsh 三壳可用
 来源:windows「Windows install is repeatable and exposes workloop to cmd and both
 PowerShell editions」

@@ -5,6 +5,10 @@
 (重复锚)。新增:分段、储备、崩溃注入、性质测试。
 具体措辞/错误码/枚举/数值按 README「语义不变式与旧世界任意值」默认规则为旧值锚。
 
+**审计处置**([AUDIT-2026-07-25](AUDIT-2026-07-25.md)):13 保留 / 1 出局。
+出局:**LK-06**(多 store 顺序操作,随 M1 证据通道)。
+另:LK-01 的锁分类集与 LK-05 的相位数随 M6/M11 收缩,不变式不变。
+
 ## 锁协议
 
 ### LK-01 锁分类有全序,违序与重入即抛
@@ -89,8 +93,8 @@ torn tails recover by exact authority selector…」
 
 ### LK-11 只读动词零持久化字节变化
 来源:git-main「query verbs observe authority and collisions without changing durable bytes」
-- 断言:status/audit/log/ready 前后,日志、locator、快照、投影文件字节与 mtime
-  全部不变;对碰撞副本的查询也不改副本的任何字节。
+- 断言:status/audit/log/ready 前后,日志段、manifest、快照与任何投影文件的
+  字节与 mtime 全部不变;对碰撞副本的查询也不改副本的任何字节。
 
 ### LK-12 投影是可弃缓存,损坏不毒化、删除可重建、绝不静默改写
 来源:git-main「…replays after disposable projections are removed」「Git outcome
